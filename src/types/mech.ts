@@ -44,7 +44,10 @@ export type WeaponKind =
   | 'lrm_homing'
   | 'energy'
   | 'missile'
-  | 'melee';
+  | 'melee'
+  | 'ams'
+  | 'bap';
+export type LrmFireMode = 'salvo' | 'stream';
 export type LegStyle = 'biped' | 'reverse_joint' | 'quad' | 'hover';
 export type ArenaPresetId = 'plains_ridge' | 'twin_mesas' | 'urban_pillars' | 'valley_basin';
 
@@ -57,44 +60,6 @@ export interface Vec3 {
 /* -------------------------------------------------------------------------- */
 /* Hardware Parts Catalog Specs                                               */
 /* -------------------------------------------------------------------------- */
-
-export interface HeadPartSpec {
-  id: string;
-  name: string;
-  weight: number;
-  cost: number;
-  enDrain: number;
-  structureHp: number;
-  maxArmor: number;
-  radarRange: number;
-  lockSpeedMult: number;
-  description: string;
-}
-
-export interface TorsoPartSpec {
-  id: string;
-  name: string;
-  weight: number;
-  cost: number;
-  enCapacity: number;
-  enRegenPerSec: number;
-  structureHp: number;
-  maxFrontArmor: number;
-  maxRearArmor: number;
-  description: string;
-}
-
-export interface ShoulderPartSpec {
-  id: string;
-  name: string;
-  weight: number;
-  cost: number;
-  enDrain: number;
-  structureHp: number;
-  maxFrontArmor: number;
-  maxRearArmor: number;
-  description: string;
-}
 
 export interface WeaponPartSpec {
   id: string;
@@ -119,26 +84,10 @@ export interface WeaponPartSpec {
   canRicochet: boolean;
   ricochetAngleDeg: number;
   homingTurnDegPerSec: number;
+  streamIntervalTicks?: number;
   ammoPerTon?: number;
   partStructureHp: number; // arm structure contributed when mounted in arm slot
   maxPartArmor: number;
-  description: string;
-}
-
-export interface LegPartSpec {
-  id: string;
-  name: string;
-  style: LegStyle;
-  weight: number;
-  cost: number;
-  loadCapacity: number;
-  enDrain: number;
-  structureHpEach: number;
-  maxArmorEach: number;
-  walkSpeed: number;
-  strafeSpeed: number;
-  jumpImpulse: number;
-  turnDegPerSec: number;
   description: string;
 }
 
@@ -158,6 +107,8 @@ export interface MechChassisSpec {
   id: string;
   name: string;
   weightClass: MechWeightClass;
+  legStyle: LegStyle;
+  sizeScale: number;
   maxTonnage: number;
   skeletonWeight: number;
   cost: number;
@@ -171,6 +122,7 @@ export interface MechChassisSpec {
   maxHeat: number;
   baseHeatDissipation: number;
   radarRange: number;
+  radarSignatureRange: number;
   walkSpeed: number;
   strafeSpeed: number;
   turnDegPerSec: number;
@@ -180,6 +132,8 @@ export interface MechChassisSpec {
   hasJumpBoosterMount: boolean;
   boosterModuleWeight: number;
   boosterSpecId: string | null;
+  hasEcmMount: boolean;
+  ecmModuleWeight: number;
   jumpImpulse: number;
   structureHp: Record<MechPartId, number>;
   maxArmor: MechArmorAllocation;
@@ -286,7 +240,10 @@ export type MechSubroutineOp =
   | 'if_right_armor_weaker'
   | 'if_ammo_empty'
   | 'if_airborne'
-  | 'if_incoming_fire';
+  | 'if_incoming_fire'
+  | 'if_target_locked'
+  | 'if_incoming_missile'
+  | 'if_ecm_jammed';
 
 export interface MechSubroutineCell {
   row: number;
@@ -315,6 +272,8 @@ export interface MechBlueprint {
   color: string;
   chassisId: string;
   boosterEnabled: boolean;
+  ecmEnabled?: boolean;
+  lrmFireMode?: LrmFireMode;
   extraHeatSinks?: number;
   extraAmmo?: Partial<Record<WeaponSlotId, number>>;
   parts: MechPartsSelection;
@@ -326,6 +285,7 @@ export interface MechBlueprint {
 export interface MechComputedStats {
   chassisId: string;
   weightClass: MechWeightClass;
+  sizeScale: number;
   totalWeight: number;
   loadCapacity: number;
   skeletonWeight: number;
@@ -336,6 +296,11 @@ export interface MechComputedStats {
   armorWeight: number;
   hasBoosterMount: boolean;
   boosterActive: boolean;
+  hasEcmMount: boolean;
+  ecmActive: boolean;
+  ecmWeight: number;
+  hasBap: boolean;
+  hasAms: boolean;
   overweight: boolean;
   overweightRatio: number;
   totalCost: number;
@@ -353,6 +318,7 @@ export interface MechComputedStats {
   torsoTwistRateDegPerSec: number;
   visionFovHalfDeg: number;
   radarRange: number;
+  radarSignatureRange: number;
   totalArmorPoints: number;
   totalStructureHp: number;
   validationErrors: string[];
@@ -393,6 +359,9 @@ export type PilotGridOp =
   | 'if_part_destroyed'
   | 'if_torso_hp_below'
   | 'if_incoming_fire'
+  | 'if_target_locked'
+  | 'if_incoming_missile'
+  | 'if_ecm_jammed'
   | 'if_enemy_hp_below'
   | 'if_flag_a'
   | 'if_flag_b';
@@ -427,6 +396,7 @@ export type WeaponReadyReason =
   | 'ready'
   | 'cooldown'
   | 'out_of_arc'
+  | 'out_of_range'
   | 'blocked_los'
   | 'no_ammo'
   | 'destroyed'
@@ -556,6 +526,7 @@ export interface MechSensorState {
   torsoYawDeg: number;
   torsoYawOffsetDeg: number;
   effectiveRadarRange: number;
+  effectiveOmniRadarScale: number;
   effectiveVisionFovHalfDeg: number;
   grounded: boolean;
   enRatio: number;
@@ -569,12 +540,29 @@ export interface MechSensorState {
   totalHpRatio: number;
   incomingFire: boolean;
   incomingFireRelBearingDeg: number | null;
+  incomingMissile: boolean;
+  lockTargetId: string | null;
+  lockProgressRatio: number;
+  targetLocked: boolean;
+  ecmActive: boolean;
+  ecmJammed: boolean;
+  bapActive: boolean;
   destroyedParts: MechPartId[];
   visibleEnemies: VisibleEnemyInfo[];
   radarContacts: VisibleEnemyInfo[];
   nearestEnemy: VisibleEnemyInfo | null;
   nearestRadarEnemy: VisibleEnemyInfo | null;
   nearestFlankEnemy: VisibleEnemyInfo | null;
+}
+
+export interface SalvoQueueItem {
+  slot: WeaponSlotId;
+  weaponId: string;
+  remainingShots: number;
+  ticksUntilNext: number;
+  targetId: string | null;
+  isIndirect: boolean;
+  guided: boolean;
 }
 
 export interface MechRuntimeState {
@@ -608,6 +596,13 @@ export interface MechRuntimeState {
   lastHitTick: number;
   lastAttackerId: string | null;
   lastHitRelBearingDeg: number | null;
+  lockTargetId: string | null;
+  lockProgressSec: number;
+  lockRequiredSec: number;
+  lockDecayGraceSec: number;
+  lockComplete: boolean;
+  ecmDisruptedTicks: number;
+  salvoQueue: SalvoQueueItem[];
   damageDealt: number;
   damageTaken: number;
   kills: number;
@@ -632,6 +627,8 @@ export interface ProjectileState {
   optimalRange: number;
   maxRange: number;
   ttlTicks: number;
+  hp: number;
+  loftTicksRemaining: number;
 }
 
 export interface ActiveBeamState {
@@ -662,7 +659,9 @@ export type SimCombatEventType =
   | 'en_overheat'
   | 'thermal_shutdown'
   | 'heat_damage'
-  | 'terrain_hit';
+  | 'terrain_hit'
+  | 'missile_intercepted'
+  | 'ecm_disrupted';
 
 export interface SimCombatEvent {
   tick: number;

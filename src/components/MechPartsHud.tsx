@@ -157,9 +157,19 @@ export function MechPartsHud({ mech }: MechPartsHudProps) {
             {' / '}
             腰 {mech.torsoYawOffsetDeg >= 0 ? `+${Math.round(mech.torsoYawOffsetDeg)}` : Math.round(mech.torsoYawOffsetDeg)}°
             {' / '}
-            視野 ±{Math.round(mech.stats.visionFovHalfDeg * (mech.parts.head.destroyed ? 0.55 : 1))}°
+            視野 {Math.round(mech.stats.visionFovHalfDeg * (mech.parts.head.destroyed ? 0.55 : 1)) * 2}° ({Math.round(mech.stats.radarRange * (mech.parts.head.destroyed ? 0.4 : 1))}m)
             {' / '}
-            レーダー {Math.round(mech.stats.radarRange * (mech.parts.head.destroyed ? 0.4 : 1))}m
+            全周RCS {mech.stats.radarSignatureRange}m
+            {mech.stats.ecmActive &&
+              (mech.ecmDisruptedTicks > 0 ? ' / ECM:EMP停止' : ' / ECM稼働')}
+            {mech.stats.hasBap && ' / BAP'}
+            {mech.stats.hasAms && ' / AMS'}
+            {mech.lockTargetId &&
+              ` / LOCK ${Math.round(
+                mech.lockRequiredSec > 0
+                  ? Math.min(100, (mech.lockProgressSec / mech.lockRequiredSec) * 100)
+                  : 0
+              )}%`}
             ]
           </span>
         </div>

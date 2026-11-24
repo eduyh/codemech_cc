@@ -159,7 +159,7 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
       seed: 40,
       entries: [
         { id: 'me', name: 'Me', teamId: 'A', blueprint: bp },
-        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: STARTER_MECHS[1] },
+        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: STARTER_MECHS[2] }, // Fortress (400m omni RCS)
       ],
     });
     sim.terrain.obstacles = [];
@@ -227,5 +227,85 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
     expect(ctrl3.fireRightArm).toBe(true);
     expect(ctrl3.fireLeftArm).toBe(true);
     expect(ctrl3.fireRightShoulder).toBe(false);
+  });
+
+  it('aligns if_group_1_ready with LOS blocking and optimal-to-max extended range', () => {
+    const bp = structuredClone(PRESET_VANGUARD); // G1 = rightArm (AC/5: opt 380, max 680) + leftArm (M-Laser: opt 280, max 420)
+    const sim = createSimulation({
+      seed: 55,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
+      entries: [
+        { id: 'me', name: 'Me', teamId: 'A', blueprint: bp },
+        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: STARTER_MECHS[2] }, // Fortress (400m omni RCS)
+      ],
+    });
+    sim.terrain.obstacles = [
+      { id: 'wall', x: 550, y: 490, width: 100, height: 25, baseZ: 0, topZ: 28 },
+    ];
+    const me = sim.mechs[0];
+    const enemy = sim.mechs[1];
+    me.pos = { x: 600, y: 600, z: 0 };
+    me.yawDeg = 0;
+
+    const branchSub: MechSubroutine = {
+      slotId: 'S5',
+      name: 'G1判定',
+      gridSize: 4,
+      cells: [
+        { row: 0, col: 0, op: 'start', dir: 'E' },
+        { row: 0, col: 1, op: 'if_group_1_ready', dir: 'E', elseDir: 'S' },
+        { row: 0, col: 2, op: 'fire_group_1', dir: 'S', durationSec: 0.4 },
+        { row: 1, col: 1, op: 'wait', dir: 'S', durationSec: 0.2 },
+      ],
+    };
+
+    // 1. Blocked by wall at 200m (in omni radar, no LOS) -> false (skips fire)
+    enemy.pos = { x: 600, y: 400, z: 0 };
+    let sensor = buildMechSensorState(sim, me.id);
+    const ctrlBlocked = { ...EMPTY_CONTROL_INPUT };
+    stepSubroutineExecution(
+      branchSub,
+      startSubroutineExec(branchSub),
+      ctrlBlocked,
+      sensor,
+      me,
+      sim,
+      sensor.nearestRadarEnemy,
+      1
+    );
+    expect(ctrlBlocked.fireRightArm).toBe(false);
+
+    // 2. Clear LOS in extended falloff range (450m: beyond AC/5 optimal 380m, within max 680m) -> true!
+    sim.terrain.obstacles = [];
+    enemy.pos = { x: 600, y: 150, z: 0 };
+    sensor = buildMechSensorState(sim, me.id);
+    const ctrlExtended = { ...EMPTY_CONTROL_INPUT };
+    stepSubroutineExecution(
+      branchSub,
+      startSubroutineExec(branchSub),
+      ctrlExtended,
+      sensor,
+      me,
+      sim,
+      sensor.nearestEnemy,
+      1
+    );
+    expect(ctrlExtended.fireRightArm).toBe(true);
+
+    // 3. Beyond maxRange (700m > 680m) -> false
+    enemy.pos = { x: 600, y: -100, z: 0 };
+    sensor = buildMechSensorState(sim, me.id);
+    const ctrlOut = { ...EMPTY_CONTROL_INPUT };
+    stepSubroutineExecution(
+      branchSub,
+      startSubroutineExec(branchSub),
+      ctrlOut,
+      sensor,
+      me,
+      sim,
+      sensor.nearestEnemy,
+      1
+    );
+    expect(ctrlOut.fireRightArm).toBe(false);
   });
 });

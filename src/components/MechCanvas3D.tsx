@@ -98,6 +98,7 @@ export function MechCanvas3D({
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
   const terrainGroupRef = useRef<THREE.Group | null>(null);
   const terrainKeyRef = useRef<string>('');
   const tacticalGroupRef = useRef<THREE.Group | null>(null);
@@ -110,7 +111,7 @@ export function MechCanvas3D({
   const orbitStateRef = useRef({
     yaw: 0.55,
     pitch: 0.62,
-    overviewDist: 340,
+    overviewDist: 680,
     orbitDist: 95,
     dragging: false,
     downX: 0,
@@ -142,6 +143,23 @@ export function MechCanvas3D({
       scene.add(nextTerrain);
       terrainGroupRef.current = nextTerrain;
       terrainKeyRef.current = tKey;
+
+      orbitStateRef.current.overviewDist = Math.round(state.terrain.width * 0.68);
+      if (dirLightRef.current) {
+        const dir = dirLightRef.current;
+        const shadowBound = Math.max(380, state.terrain.width * 0.62);
+        dir.position.set(
+          state.terrain.width * 0.3,
+          Math.max(340, state.terrain.width * 0.55),
+          state.terrain.depth * 0.28
+        );
+        dir.shadow.camera.left = -shadowBound;
+        dir.shadow.camera.right = shadowBound;
+        dir.shadow.camera.top = shadowBound;
+        dir.shadow.camera.bottom = -shadowBound;
+        dir.shadow.camera.far = Math.max(1200, state.terrain.width * 2.2);
+        dir.shadow.camera.updateProjectionMatrix();
+      }
     }
 
     // 2. Sync mech rigs (create/replace if match entries or blueprints changed)
@@ -240,6 +258,13 @@ export function MechCanvas3D({
             color: '#ef4444',
             createdTick: state.tick,
           });
+        } else if (ev.type === 'ecm_disrupted') {
+          storedPopupsRef.current.push({
+            worldPos: { ...ev.pos, z: ev.pos.z + 10 },
+            text: 'ECM妨害!',
+            color: '#c084fc',
+            createdTick: state.tick,
+          });
         }
       }
 
@@ -279,11 +304,15 @@ export function MechCanvas3D({
     if (tacticalGroupRef.current) {
       const tacGroup = tacticalGroupRef.current;
       if (showTacticalRef.current && focusedMech && focusedMech.alive) {
-        const effectiveRadar =
-          focusedMech.stats.radarRange * (focusedMech.parts.head.destroyed ? 0.4 : 1.0);
+        const headRadarMult = focusedMech.parts.head.destroyed ? 0.4 : 1.0;
+        const effectiveRadar = focusedMech.stats.radarRange * headRadarMult;
         const effectiveFovHalf =
           focusedMech.stats.visionFovHalfDeg * (focusedMech.parts.head.destroyed ? 0.55 : 1.0);
-        const specKey = `${Math.round(effectiveRadar)}_${Math.round(effectiveFovHalf)}`;
+        const aimY = 6.8 * focusedMech.stats.sizeScale;
+        const ecmUp = focusedMech.stats.ecmActive && focusedMech.ecmDisruptedTicks <= 0;
+        const amsUp = focusedMech.stats.hasAms;
+        const bapUp = focusedMech.stats.hasBap;
+        const specKey = `${Math.round(effectiveRadar)}_${Math.round(effectiveFovHalf)}_${headRadarMult}_${focusedMech.stats.sizeScale}_${ecmUp ? 1 : 0}_${amsUp ? 1 : 0}_${bapUp ? 1 : 0}`;
         if (tacGroup.children.length === 0 || tacticalSpecKeyRef.current !== specKey) {
           while (tacGroup.children.length > 0) {
             const c = tacGroup.children[0];
@@ -291,7 +320,7 @@ export function MechCanvas3D({
             disposeObject3D(c);
           }
 
-          // Optical FOV sector wedge
+          // Optical FOV sector wedge (800m forward visual cone)
           const fovSegments = 28;
           const halfRad = degToRad(effectiveFovHalf);
           const fovVerts: number[] = [];
@@ -307,7 +336,7 @@ export function MechCanvas3D({
           const fovMat = new THREE.MeshBasicMaterial({
             color: '#38bdf8',
             transparent: true,
-            opacity: 0.13,
+            opacity: 0.12,
             side: THREE.DoubleSide,
             depthWrite: false,
           });
@@ -315,25 +344,53 @@ export function MechCanvas3D({
           fovMesh.position.y = 0.6;
           tacGroup.add(fovMesh);
 
-          // 360-deg Radar ring
-          const ringPts: THREE.Vector3[] = [];
-          for (let i = 0; i <= 48; i++) {
-            const th = (i / 48) * Math.PI * 2;
-            ringPts.push(new THREE.Vector3(Math.cos(th) * effectiveRadar, 0.5, Math.sin(th) * effectiveRadar));
+          // 360-deg Omni Radar rings (120m Light RCS inner, 400m Assault RCS outer)
+          const omniBands: Array<{ radius: number; opacity: number }> = [
+            { radius: 120 * headRadarMult, opacity: 0.45 },
+            { radius: 400 * headRadarMult, opacity: 0.24 },
+          ];
+          for (const band of omniBands) {
+            const ringPts: THREE.Vector3[] = [];
+            for (let i = 0; i <= 48; i++) {
+              const th = (i / 48) * Math.PI * 2;
+              ringPts.push(new THREE.Vector3(Math.cos(th) * band.radius, 0.5, Math.sin(th) * band.radius));
+            }
+            const ringGeo = new THREE.BufferGeometry().setFromPoints(ringPts);
+            const ringMat = new THREE.LineBasicMaterial({
+              color: '#f59e0b',
+              transparent: true,
+              opacity: band.opacity,
+            });
+            tacGroup.add(new THREE.Line(ringGeo, ringMat));
           }
-          const ringGeo = new THREE.BufferGeometry().setFromPoints(ringPts);
-          const ringMat = new THREE.LineBasicMaterial({
-            color: '#f59e0b',
-            transparent: true,
-            opacity: 0.36,
-          });
-          tacGroup.add(new THREE.Line(ringGeo, ringMat));
+
+          // Optional ECM (130m purple), AMS (80m green), BAP (240m cyan) rings
+          const moduleRings: Array<{ active: boolean; radius: number; color: string; opacity: number }> = [
+            { active: ecmUp, radius: 130, color: '#c084fc', opacity: 0.48 },
+            { active: amsUp, radius: 80, color: '#4ade80', opacity: 0.45 },
+            { active: bapUp, radius: 240, color: '#22d3ee', opacity: 0.35 },
+          ];
+          for (const mr of moduleRings) {
+            if (!mr.active) continue;
+            const ringPts: THREE.Vector3[] = [];
+            for (let i = 0; i <= 48; i++) {
+              const th = (i / 48) * Math.PI * 2;
+              ringPts.push(new THREE.Vector3(Math.cos(th) * mr.radius, 0.7, Math.sin(th) * mr.radius));
+            }
+            const rGeo = new THREE.BufferGeometry().setFromPoints(ringPts);
+            const rMat = new THREE.LineBasicMaterial({
+              color: mr.color,
+              transparent: true,
+              opacity: mr.opacity,
+            });
+            tacGroup.add(new THREE.Line(rGeo, rMat));
+          }
 
           // Torso aim line
-          const aimLen = Math.min(220, effectiveRadar);
+          const aimLen = Math.min(350, effectiveRadar);
           const aimGeo = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(0, 6.8, 0),
-            new THREE.Vector3(0, 6.8, -aimLen),
+            new THREE.Vector3(0, aimY, 0),
+            new THREE.Vector3(0, aimY, -aimLen),
           ]);
           const aimMat = new THREE.LineBasicMaterial({
             color: '#38bdf8',
@@ -394,7 +451,7 @@ export function MechCanvas3D({
     for (const mech of state.mechs) {
       if (!mech.alive) continue;
       simToThreePos(mech.pos, state.terrain, projVec);
-      projVec.y += 12.2;
+      projVec.y += 12.2 * mech.stats.sizeScale;
       projVec.project(camera);
       if (projVec.z > 1 || projVec.z < -1) continue;
 
@@ -462,9 +519,9 @@ export function MechCanvas3D({
     host.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2('#070d1a', 0.00024);
+    scene.fog = new THREE.FogExp2('#070d1a', 0.00009);
 
-    const camera = new THREE.PerspectiveCamera(48, width / height, 1, 2400);
+    const camera = new THREE.PerspectiveCamera(48, width / height, 1, 6500);
     const ambient = new THREE.AmbientLight('#cbd5e1', 0.42);
     const hemi = new THREE.HemisphereLight('#dbeafe', '#1e293b', 0.9);
     const dir = new THREE.DirectionalLight('#ffffff', 1.35);
@@ -473,13 +530,14 @@ export function MechCanvas3D({
     dir.shadow.mapSize.width = 1024;
     dir.shadow.mapSize.height = 1024;
     dir.shadow.camera.near = 40;
-    dir.shadow.camera.far = 1200;
-    const shadowBound = 380;
+    dir.shadow.camera.far = 2200;
+    const shadowBound = 620;
     dir.shadow.camera.left = -shadowBound;
     dir.shadow.camera.right = shadowBound;
     dir.shadow.camera.top = shadowBound;
     dir.shadow.camera.bottom = -shadowBound;
     dir.shadow.bias = -0.0008;
+    dirLightRef.current = dir;
     const rim = new THREE.DirectionalLight('#38bdf8', 0.45);
     rim.position.set(-200, 140, -180);
     scene.add(ambient, hemi, dir, rim);
@@ -560,7 +618,8 @@ export function MechCanvas3D({
       if (cameraModeRef.current === 'orbit') {
         orb.orbitDist = clamp(orb.orbitDist + e.deltaY * 0.12, 30, 260);
       } else {
-        orb.overviewDist = clamp(orb.overviewDist + e.deltaY * 0.35, 120, 760);
+        const maxDist = Math.max(760, simRef.current.terrain.width * 1.45);
+        orb.overviewDist = clamp(orb.overviewDist + e.deltaY * 0.65, 120, maxDist);
       }
       renderFrame();
     };
@@ -601,6 +660,7 @@ export function MechCanvas3D({
       sceneRef.current = null;
       cameraRef.current = null;
       rendererRef.current = null;
+      dirLightRef.current = null;
       effectsRef.current = null;
     };
   }, [renderFrame]);

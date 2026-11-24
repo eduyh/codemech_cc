@@ -99,6 +99,23 @@ export function MechGarage({ blueprint, onChange, onLoadPreset }: MechGarageProp
     });
   };
 
+  const handleToggleEcm = () => {
+    if (!chassis.hasEcmMount) return;
+    onChange({
+      ...blueprint,
+      chassisId: chassis.id,
+      ecmEnabled: !blueprint.ecmEnabled,
+    });
+  };
+
+  const handleSetLrmMode = (mode: 'salvo' | 'stream') => {
+    onChange({
+      ...blueprint,
+      chassisId: chassis.id,
+      lrmFireMode: mode,
+    });
+  };
+
   const WEAPON_KEY_TO_SLOT: Record<
     'rightArmWeapon' | 'leftArmWeapon' | 'rightShoulderWeapon' | 'leftShoulderWeapon',
     WeaponSlotId
@@ -255,12 +272,14 @@ export function MechGarage({ blueprint, onChange, onLoadPreset }: MechGarageProp
 
         <div className="cm-weight-breakdown">
           内訳: 骨格 {stats.skeletonWeight.toFixed(1)}t ＋ ブースト {stats.boosterWeight.toFixed(1)}t ＋
-          冷却器 {stats.heatSinkWeight.toFixed(1)}t ＋ 弾薬 {stats.ammoWeight.toFixed(1)}t ＋ 武装{' '}
-          {stats.weaponsWeight.toFixed(1)}t ＋ 装甲 {stats.armorWeight.toFixed(1)}t
+          ECM {stats.ecmWeight.toFixed(1)}t ＋ 冷却器 {stats.heatSinkWeight.toFixed(1)}t ＋ 弾薬{' '}
+          {stats.ammoWeight.toFixed(1)}t ＋ 武装 {stats.weaponsWeight.toFixed(1)}t ＋ 装甲{' '}
+          {stats.armorWeight.toFixed(1)}t
         </div>
 
         <div className="cm-stat-pills">
           <span>階級: {WEIGHT_CLASS_LABEL[stats.weightClass]}</span>
+          <span>体格: {(stats.sizeScale * 10).toFixed(1)}m (×{stats.sizeScale.toFixed(2)})</span>
           <span>冷却: -{stats.heatDissipationPerSec.toFixed(1)}熱/s (上限{stats.maxHeat})</span>
           <span>前進/後退: {stats.walkSpeed.toFixed(1)} / {(stats.walkSpeed * 0.65).toFixed(1)}</span>
           <span>
@@ -273,7 +292,9 @@ export function MechGarage({ blueprint, onChange, onLoadPreset }: MechGarageProp
           </span>
           <span>旋回: {Math.round(stats.turnDegPerSec)}°/s (停止時超信地)</span>
           <span>腰旋回: ±{stats.torsoTwistMaxDeg}° ({stats.torsoTwistRateDegPerSec}°/s)</span>
-          <span>光学視野: ±{stats.visionFovHalfDeg}° / レーダー {stats.radarRange}m</span>
+          <span>
+            光学視界: {stats.visionFovHalfDeg * 2}° (±{stats.visionFovHalfDeg}° / {stats.radarRange}m) ・ 被探知RCS {stats.radarSignatureRange}m
+          </span>
           <span>総装甲/構造: {stats.totalArmorPoints}/{stats.totalStructureHp}</span>
         </div>
 
@@ -339,7 +360,33 @@ export function MechGarage({ blueprint, onChange, onLoadPreset }: MechGarageProp
           )}
 
           <div className="cm-subhead" style={{ marginTop: '0.35rem' }}>
-            2b. 追加ヒートシンク（排熱強化）
+            2b. 電子戦装備（ECM スイート）
+          </div>
+          {chassis.hasEcmMount ? (
+            <div className="cm-booster-box">
+              <label className="cm-check-inline">
+                <input
+                  type="checkbox"
+                  checked={Boolean(blueprint.ecmEnabled)}
+                  onChange={handleToggleEcm}
+                />
+                <span>
+                  ECM ジャミングスイートを<strong>{blueprint.ecmEnabled ? 'ON' : 'OFF'}</strong>
+                  （+{chassis.ecmModuleWeight.toFixed(1)}t / 半径130m）
+                </span>
+              </label>
+              <div className="cm-booster-note">
+                ※ 周囲130mの味方被探知RCS半減・味方データリンク遮断・敵ロック時間2倍（120m接近・BAP・PPC被弾で無効化）
+              </div>
+            </div>
+          ) : (
+            <div className="cm-booster-locked">
+              未装着（この機体フレームには ECM スイートを搭載できません）
+            </div>
+          )}
+
+          <div className="cm-subhead" style={{ marginTop: '0.35rem' }}>
+            2c. 追加ヒートシンク（排熱強化）
           </div>
           <div className="cm-stepper-row">
             <span>
@@ -369,6 +416,27 @@ export function MechGarage({ blueprint, onChange, onLoadPreset }: MechGarageProp
 
           <div className="cm-subhead" style={{ marginTop: '0.35rem' }}>
             3. 武装カスタマイズ（4枠）＋追加弾薬
+          </div>
+          <div className="cm-stepper-row" style={{ marginBottom: '0.35rem' }}>
+            <span>LRM 発射モード</span>
+            <div className="cm-seg">
+              <button
+                type="button"
+                className={(blueprint.lrmFireMode ?? 'salvo') === 'salvo' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
+                onClick={() => handleSetLrmMode('salvo')}
+                title="全弾同時発射：AMS を飽和突破しやすい"
+              >
+                一斉斉射 (Salvo)
+              </button>
+              <button
+                type="button"
+                className={blueprint.lrmFireMode === 'stream' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
+                onClick={() => handleSetLrmMode('stream')}
+                title="連続垂れ流し：高精度で断続的に制圧（AMS に落とされやすい）"
+              >
+                垂れ流し (Stream)
+              </button>
+            </div>
           </div>
           {(
             [
@@ -419,13 +487,20 @@ export function MechGarage({ blueprint, onChange, onLoadPreset }: MechGarageProp
                         p.maxRange && p.maxRange > p.range
                           ? `射程${p.range}-${p.maxRange}m`
                           : p.range > 0
-                            ? `射程${p.range}m`
+                            ? `${p.kind === 'ams' || p.kind === 'bap' ? '効果' : '射程'}${p.range}m`
                             : '';
                       const burnTxt = p.burnDurationSec ? ` / 照射${p.burnDurationSec}s` : '';
+                      const ammoTxt =
+                        p.maxAmmo > 0
+                          ? `${p.maxAmmo}発`
+                          : p.kind === 'ams' || p.kind === 'bap'
+                            ? '常時'
+                            : p.damage > 0
+                              ? '∞'
+                              : '-';
                       return (
                         <option key={p.id} value={p.id}>
-                          {p.name} ({p.weight.toFixed(1)}t / 熱{p.heatCost} /{' '}
-                          {p.maxAmmo > 0 ? `${p.maxAmmo}発` : p.damage > 0 ? '∞' : '-'}
+                          {p.name} ({p.weight.toFixed(1)}t / 熱{p.heatCost} / {ammoTxt}
                           {rangeTxt ? ` / ${rangeTxt}` : ''}
                           {burnTxt})
                         </option>
@@ -478,11 +553,12 @@ export function MechGarage({ blueprint, onChange, onLoadPreset }: MechGarageProp
                 { slot: 'leftShoulder', label: '左胴', spec: getShoulderWeaponSpec(blueprint.parts.leftShoulderWeapon), noneId: 'shd_none' },
               ] as const
             ).map((row) => {
-              const equipped = row.spec.id !== row.noneId;
+              const isPassive = row.spec.kind === 'ams' || row.spec.kind === 'bap';
+              const equipped = row.spec.id !== row.noneId && !isPassive;
               return (
                 <div key={row.slot} className={`cm-wgroup-row ${equipped ? '' : 'is-empty-slot'}`}>
                   <span className="cm-wgroup-slot-label">
-                    <b>{row.label}</b>: {equipped ? row.spec.name : '未装備'}
+                    <b>{row.label}</b>: {row.spec.id !== row.noneId ? row.spec.name : '未装備'}
                   </span>
                   <div className="cm-wgroup-btns">
                     {WEAPON_GROUP_IDS.map((gid) => {
@@ -491,9 +567,10 @@ export function MechGarage({ blueprint, onChange, onLoadPreset }: MechGarageProp
                         <button
                           key={gid}
                           type="button"
+                          disabled={isPassive}
                           className={`cm-wgroup-btn ${active ? `is-active is-${gid.toLowerCase()}` : ''}`}
                           onClick={() => toggleGroupMember(gid, row.slot)}
-                          title={`${gid} に ${row.label} を含める/外す`}
+                          title={isPassive ? '常時稼働モジュールのためグループ対象外' : `${gid} に ${row.label} を含める/外す`}
                         >
                           {gid}
                         </button>

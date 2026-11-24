@@ -7,112 +7,111 @@ import {
 } from '../types/mech';
 import { clamp, deriveEntityRngSeed, nextMulberry32, vectorToAngle2D } from './math';
 
+export function computeRecommendedArenaSize(mechCount: number): number {
+  if (mechCount <= 2) return 1000;
+  if (mechCount <= 4) return 1200;
+  if (mechCount <= 6) return 1500;
+  if (mechCount <= 9) return 1750;
+  return 2000;
+}
+
+function buildProportionalObstacle(
+  terrainDraft: TerrainConfig,
+  id: string,
+  cx: number,
+  cy: number,
+  sx: number,
+  sy: number,
+  ox: number,
+  oy: number,
+  w: number,
+  h: number,
+  clearHeight: number
+): TerrainObstacle {
+  const x = cx + ox * sx;
+  const y = cy + oy * sy;
+  const width = Math.max(8, w * sx);
+  const height = Math.max(8, h * sy);
+  const localH = getGroundHeight(terrainDraft, x + width * 0.5, y + height * 0.5);
+  return {
+    id,
+    x,
+    y,
+    width,
+    height,
+    baseZ: 0,
+    topZ: Math.round((localH + clearHeight) * 10) / 10,
+  };
+}
+
 export function createTerrain(
   presetId: ArenaPresetId,
-  width = 600,
-  depth = 600,
+  width = 1000,
+  depth = 1000,
   seed = 1
 ): TerrainConfig {
   const cx = width * 0.5;
   const cy = depth * 0.5;
+  const sx = width / 600;
+  const sy = depth / 600;
+  const ampScale = clamp(Math.pow(width / 600, 0.55), 0.75, 2.2);
   const obstacles: TerrainObstacle[] = [];
 
   if (presetId === 'plains_ridge') {
-    obstacles.push(
-      {
-        id: 'cover_nw',
-        x: cx - 140,
-        y: cy - 110,
-        width: 36,
-        height: 16,
-        baseZ: 0,
-        topZ: 11,
-      },
-      {
-        id: 'cover_se',
-        x: cx + 104,
-        y: cy + 94,
-        width: 36,
-        height: 16,
-        baseZ: 0,
-        topZ: 11,
-      }
-    );
-    return {
+    const draft: TerrainConfig = {
       id: presetId,
       width,
       depth,
-      heightAmplitude: 16,
+      heightAmplitude: Math.round(16 * ampScale * 10) / 10,
       ridgeType: 'central_ridge',
       obstacles,
       seed,
     };
+    const specs: Array<[string, number, number, number, number, number]> = [
+      // Mid full-body cover (13m)
+      ['cover_nw', -140, -110, 36, 16, 13],
+      ['cover_se', 104, 94, 36, 16, 13],
+      // Low hull-down cover (6m: shields legs while allowing torso/arm fire)
+      ['hulldown_n', -32, -82, 64, 14, 6],
+      ['hulldown_s', -32, 68, 64, 14, 6],
+      // Tall monoliths (32m: blocks direct LOS, jump-jets, and low arcs)
+      ['spire_w', -215, -22, 28, 44, 32],
+      ['spire_e', 187, -22, 28, 44, 32],
+    ];
+    for (const [id, ox, oy, w, h, ch] of specs) {
+      obstacles.push(buildProportionalObstacle(draft, id, cx, cy, sx, sy, ox, oy, w, h, ch));
+    }
+    return draft;
   }
 
   if (presetId === 'twin_mesas') {
-    obstacles.push(
-      {
-        id: 'mesa_w',
-        x: cx - 155,
-        y: cy - 55,
-        width: 90,
-        height: 110,
-        baseZ: 0,
-        topZ: 14,
-      },
-      {
-        id: 'mesa_e',
-        x: cx + 65,
-        y: cy - 55,
-        width: 90,
-        height: 110,
-        baseZ: 0,
-        topZ: 14,
-      },
-      {
-        id: 'cover_mid',
-        x: cx - 18,
-        y: cy - 18,
-        width: 36,
-        height: 36,
-        baseZ: 0,
-        topZ: 12,
-      }
-    );
-    return {
+    const draft: TerrainConfig = {
       id: presetId,
       width,
       depth,
-      heightAmplitude: 8,
+      heightAmplitude: Math.round(8 * ampScale * 10) / 10,
       ridgeType: 'twin_mesas',
       obstacles,
       seed,
     };
+    const specs: Array<[string, number, number, number, number, number]> = [
+      // Mid jumpable mesas (14m)
+      ['mesa_w', -155, -55, 86, 105, 14],
+      ['mesa_e', 69, -55, 86, 105, 14],
+      // Low hull-down barricades near center (6m)
+      ['barricade_n', -30, -96, 60, 14, 6],
+      ['barricade_s', -30, 82, 60, 14, 6],
+      // Tall central spire (34m)
+      ['spire_mid', -16, -16, 32, 32, 34],
+    ];
+    for (const [id, ox, oy, w, h, ch] of specs) {
+      obstacles.push(buildProportionalObstacle(draft, id, cx, cy, sx, sy, ox, oy, w, h, ch));
+    }
+    return draft;
   }
 
   if (presetId === 'urban_pillars') {
-    const coords = [
-      [-150, -130, 38, 38, 22],
-      [112, -130, 38, 38, 22],
-      [-150, 92, 38, 38, 22],
-      [112, 92, 38, 38, 22],
-      [-24, -120, 48, 24, 15],
-      [-24, 96, 48, 24, 15],
-      [-110, -20, 26, 40, 14],
-      [84, -20, 26, 40, 14],
-    ];
-    coords.forEach(([ox, oy, w, h, topZ], idx) => {
-      obstacles.push({
-        id: `pillar_${idx}`,
-        x: cx + ox,
-        y: cy + oy,
-        width: w,
-        height: h,
-        baseZ: 0,
-        topZ,
-      });
-    });
-    return {
+    const draft: TerrainConfig = {
       id: presetId,
       width,
       depth,
@@ -121,38 +120,53 @@ export function createTerrain(
       obstacles,
       seed,
     };
+    const specs: Array<[string, number, number, number, number, number]> = [
+      // Tall skyscraper pillars (34-38m)
+      ['tower_nw', -155, -135, 36, 36, 36],
+      ['tower_ne', 119, -135, 36, 36, 36],
+      ['tower_sw', -155, 99, 36, 36, 36],
+      ['tower_se', 119, 99, 36, 36, 36],
+      // Mid buildings (14-15m)
+      ['bldg_n', -24, -120, 48, 24, 15],
+      ['bldg_s', -24, 96, 48, 24, 15],
+      ['bldg_w', -112, -20, 26, 40, 14],
+      ['bldg_e', 86, -20, 26, 40, 14],
+      // Low street jersey barriers (6m hull-down)
+      ['low_wall_c', -22, -7, 44, 14, 6],
+      ['low_wall_w', -180, -7, 26, 14, 6],
+      ['low_wall_e', 154, -7, 26, 14, 6],
+    ];
+    for (const [id, ox, oy, w, h, ch] of specs) {
+      obstacles.push(buildProportionalObstacle(draft, id, cx, cy, sx, sy, ox, oy, w, h, ch));
+    }
+    return draft;
   }
 
   // valley_basin
-  obstacles.push(
-    {
-      id: 'basin_boulder_n',
-      x: cx - 22,
-      y: cy - 85,
-      width: 44,
-      height: 22,
-      baseZ: 0,
-      topZ: 10,
-    },
-    {
-      id: 'basin_boulder_s',
-      x: cx - 22,
-      y: cy + 63,
-      width: 44,
-      height: 22,
-      baseZ: 0,
-      topZ: 10,
-    }
-  );
-  return {
+  const draft: TerrainConfig = {
     id: 'valley_basin',
     width,
     depth,
-    heightAmplitude: 18,
+    heightAmplitude: Math.round(18 * ampScale * 10) / 10,
     ridgeType: 'valley_rim',
     obstacles,
     seed,
   };
+  const specs: Array<[string, number, number, number, number, number]> = [
+    // Low basin hull-down rocks (6m)
+    ['basin_low_w', -85, -18, 20, 36, 6],
+    ['basin_low_e', 65, -18, 20, 36, 6],
+    // Mid boulders (12m)
+    ['basin_boulder_n', -22, -85, 44, 22, 12],
+    ['basin_boulder_s', -22, 63, 44, 22, 12],
+    // Tall cliff monoliths (30m)
+    ['basin_spire_nw', -160, -140, 30, 30, 30],
+    ['basin_spire_se', 130, 110, 30, 30, 30],
+  ];
+  for (const [id, ox, oy, w, h, ch] of specs) {
+    obstacles.push(buildProportionalObstacle(draft, id, cx, cy, sx, sy, ox, oy, w, h, ch));
+  }
+  return draft;
 }
 
 export function getGroundHeight(terrain: TerrainConfig, x: number, y: number): number {
@@ -397,16 +411,26 @@ export function generateSpawnPositions(
 
     const anchorX = cx + dirX * ringRadius;
     const anchorY = cy + dirY * ringRadius;
-    const spacing = Math.min(28, (Math.PI * 2 * ringRadius) / Math.max(entries.length * 1.4, 4));
+    const spacing = Math.min(
+      Math.max(28, terrain.width * 0.045),
+      (Math.PI * 2 * ringRadius) / Math.max(entries.length * 1.4, 4)
+    );
+    const radialStep = Math.max(12, terrain.width * 0.02);
 
     members.forEach((member, mIdx) => {
       const offsetIndex = mIdx - (members.length - 1) * 0.5;
-      const radialStagger = (mIdx % 2 === 0 ? 0 : 12);
+      const radialStagger = mIdx % 2 === 0 ? 0 : radialStep;
       const rawX = anchorX + tangX * offsetIndex * spacing + dirX * radialStagger;
       const rawY = anchorY + tangY * offsetIndex * spacing + dirY * radialStagger;
 
-      const x = clamp(rawX, margin, terrain.width - margin);
-      const y = clamp(rawY, margin, terrain.depth - margin);
+      let x = clamp(rawX, margin, terrain.width - margin);
+      let y = clamp(rawY, margin, terrain.depth - margin);
+      for (let nudge = 0; nudge < 6; nudge++) {
+        const gh = getGroundHeight(terrain, x, y);
+        if (!isInsideObstacleSolid(terrain, x, y, gh + 1.5, 4.5)) break;
+        x = clamp(x + dirX * 14 + tangX * 10, margin, terrain.width - margin);
+        y = clamp(y + dirY * 14 + tangY * 10, margin, terrain.depth - margin);
+      }
       const z = getSurfaceHeight(terrain, x, y);
       const yaw = vectorToAngle2D(cx - x, cy - y);
 

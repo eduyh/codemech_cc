@@ -65,13 +65,13 @@ export function MvpArenaCanvas({
         octx.fillStyle = '#071121';
         octx.fillRect(0, 0, 600, 600);
 
-        // Heightmap shading grid (10m cells)
-        const cell = 10;
+        // Heightmap shading grid
+        const cell = Math.max(10, Math.round(t.width / 60));
         for (let py = 0; py < t.depth; py += cell) {
           for (let px = 0; px < t.width; px += cell) {
             const h = getGroundHeight(t, px + cell * 0.5, py + cell * 0.5);
             if (h > 0.5) {
-              const alpha = Math.min(0.6, h / 28);
+              const alpha = Math.min(0.6, h / Math.max(24, t.heightAmplitude * 1.4));
               octx.fillStyle = `rgba(56, 189, 248, ${alpha.toFixed(3)})`;
               octx.fillRect(
                 (px / t.width) * 600,
@@ -83,21 +83,23 @@ export function MvpArenaCanvas({
           }
         }
 
-        // Tactical grid lines (50m minor + 100m major)
+        // Tactical grid lines
+        const minorStep = t.width >= 1400 ? 100 : 50;
+        const majorStep = t.width >= 1400 ? 200 : 100;
         octx.lineWidth = 1;
-        for (let g = 50; g < t.width; g += 50) {
+        for (let g = minorStep; g < t.width; g += minorStep) {
           const sx = (g / t.width) * 600;
           octx.strokeStyle =
-            g % 100 === 0 ? 'rgba(56, 189, 248, 0.17)' : 'rgba(148, 163, 184, 0.07)';
+            g % majorStep === 0 ? 'rgba(56, 189, 248, 0.17)' : 'rgba(148, 163, 184, 0.07)';
           octx.beginPath();
           octx.moveTo(sx, 0);
           octx.lineTo(sx, 600);
           octx.stroke();
         }
-        for (let g = 50; g < t.depth; g += 50) {
+        for (let g = minorStep; g < t.depth; g += minorStep) {
           const sy = (g / t.depth) * 600;
           octx.strokeStyle =
-            g % 100 === 0 ? 'rgba(56, 189, 248, 0.17)' : 'rgba(148, 163, 184, 0.07)';
+            g % majorStep === 0 ? 'rgba(56, 189, 248, 0.17)' : 'rgba(148, 163, 184, 0.07)';
           octx.beginPath();
           octx.moveTo(0, sy);
           octx.lineTo(600, sy);
@@ -120,20 +122,22 @@ export function MvpArenaCanvas({
         octx.textAlign = 'left';
         octx.fillText('W 270°', 6, 304);
 
-        // Obstacles
+        // Obstacles (3 height tiers)
         for (const obs of t.obstacles) {
           const rx = (obs.x / t.width) * 600;
           const ry = (obs.y / t.depth) * 600;
           const rw = (obs.width / t.width) * 600;
           const rh = (obs.height / t.depth) * 600;
-          octx.fillStyle = '#1e293b';
+          const localG = getGroundHeight(t, obs.x + obs.width * 0.5, obs.y + obs.height * 0.5);
+          const clearH = obs.topZ - localG;
+          octx.fillStyle = clearH < 8 ? '#334155' : clearH > 22 ? '#0f172a' : '#1e293b';
           octx.fillRect(rx, ry, rw, rh);
-          octx.strokeStyle = '#64748b';
+          octx.strokeStyle = clearH > 22 ? '#38bdf8' : '#64748b';
           octx.lineWidth = 1.5;
           octx.strokeRect(rx, ry, rw, rh);
           octx.fillStyle = '#94a3b8';
           octx.font = '10px sans-serif';
-          octx.fillText(`${obs.topZ}m`, rx + 3, ry + 11);
+          octx.fillText(`${Math.round(obs.topZ)}m`, rx + 3, ry + 11);
         }
       }
       terrainLayerRef.current = { key: terrainKey, canvas: off };
@@ -222,11 +226,19 @@ export function MvpArenaCanvas({
       ctx.restore();
     }
 
-    // Instant laser beam flashes (non-laser fallbacks if any)
+    // Instant laser beam flashes & AMS intercept tracers
     for (const ev of simState.lastTickEvents) {
       if (ev.type === 'fire' && ev.endPos && ev.detail !== 'laser') {
         ctx.strokeStyle = 'rgba(34, 211, 238, 0.9)';
         ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(sx(ev.pos.x), sy(ev.pos.y));
+        ctx.lineTo(sx(ev.endPos.x), sy(ev.endPos.y));
+        ctx.stroke();
+      } else if (ev.type === 'missile_intercepted' && ev.endPos) {
+        ctx.strokeStyle =
+          ev.detail === 'ams_laser' ? 'rgba(74, 222, 128, 0.95)' : 'rgba(250, 204, 21, 0.95)';
+        ctx.lineWidth = 1.6;
         ctx.beginPath();
         ctx.moveTo(sx(ev.pos.x), sy(ev.pos.y));
         ctx.lineTo(sx(ev.endPos.x), sy(ev.endPos.y));
@@ -242,19 +254,45 @@ export function MvpArenaCanvas({
       const fx = sx(focusedMech.pos.x);
       const fy = sy(focusedMech.pos.y);
       const radarRadiusPx = (fSensor.effectiveRadarRange / simState.terrain.width) * 600;
+      const omniMinPx = ((120 * fSensor.effectiveOmniRadarScale) / simState.terrain.width) * 600;
+      const omniMaxPx = ((400 * fSensor.effectiveOmniRadarScale) / simState.terrain.width) * 600;
       const fovRad = (fSensor.effectiveVisionFovHalfDeg * Math.PI) / 180;
       const centerAngle = ((fSensor.torsoYawDeg - 90) * Math.PI) / 180;
 
-      // 360° radar circle
+      // 360° Omni radar rings (120m Light RCS inner, 400m Assault RCS outer)
       ctx.save();
-      ctx.strokeStyle = 'rgba(245, 158, 11, 0.25)';
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.4)';
       ctx.beginPath();
-      ctx.arc(fx, fy, radarRadiusPx, 0, Math.PI * 2);
+      ctx.arc(fx, fy, omniMinPx, 0, Math.PI * 2);
       ctx.stroke();
 
-      // Front optical FOV cone (oriented along upper-body torsoYawDeg)
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.22)';
+      ctx.beginPath();
+      ctx.arc(fx, fy, omniMaxPx, 0, Math.PI * 2);
+      ctx.stroke();
+
+      if (fSensor.ecmActive) {
+        ctx.strokeStyle = 'rgba(192, 132, 252, 0.55)';
+        ctx.beginPath();
+        ctx.arc(fx, fy, (130 / simState.terrain.width) * 600, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (focusedMech.stats.hasAms) {
+        ctx.strokeStyle = 'rgba(74, 222, 128, 0.5)';
+        ctx.beginPath();
+        ctx.arc(fx, fy, (80 / simState.terrain.width) * 600, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (fSensor.bapActive) {
+        ctx.strokeStyle = 'rgba(34, 211, 238, 0.4)';
+        ctx.beginPath();
+        ctx.arc(fx, fy, (240 / simState.terrain.width) * 600, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Front optical FOV cone (800m visual range along upper-body torsoYawDeg)
       ctx.setLineDash([]);
       ctx.fillStyle = 'rgba(56, 189, 248, 0.08)';
       ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
@@ -291,13 +329,15 @@ export function MvpArenaCanvas({
         continue;
       }
 
+      const ms = mech.stats.sizeScale;
+
       if (radarOnlyIds.has(mech.id)) {
         ctx.save();
         ctx.strokeStyle = 'rgba(245, 158, 11, 0.9)';
         ctx.lineWidth = 1.4;
         ctx.setLineDash([3, 2]);
         ctx.beginPath();
-        ctx.arc(mx, my, 12, 0, Math.PI * 2);
+        ctx.arc(mx, my, 12 * ms, 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
       }
@@ -306,7 +346,7 @@ export function MvpArenaCanvas({
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.arc(mx, my, 13, 0, Math.PI * 2);
+        ctx.arc(mx, my, 13 * ms, 0, Math.PI * 2);
         ctx.stroke();
       }
 
@@ -318,10 +358,10 @@ export function MvpArenaCanvas({
       const lry = lfx;
       ctx.fillStyle = 'rgba(148, 163, 184, 0.45)';
       ctx.beginPath();
-      ctx.moveTo(mx + lfx * 7 + lrx * 5, my + lfy * 7 + lry * 5);
-      ctx.lineTo(mx + lfx * 7 - lrx * 5, my + lfy * 7 - lry * 5);
-      ctx.lineTo(mx - lfx * 7 - lrx * 5, my - lfy * 7 - lry * 5);
-      ctx.lineTo(mx - lfx * 7 + lrx * 5, my - lfy * 7 + lry * 5);
+      ctx.moveTo(mx + lfx * 7 * ms + lrx * 5 * ms, my + lfy * 7 * ms + lry * 5 * ms);
+      ctx.lineTo(mx + lfx * 7 * ms - lrx * 5 * ms, my + lfy * 7 * ms - lry * 5 * ms);
+      ctx.lineTo(mx - lfx * 7 * ms - lrx * 5 * ms, my - lfy * 7 * ms - lry * 5 * ms);
+      ctx.lineTo(mx - lfx * 7 * ms + lrx * 5 * ms, my - lfy * 7 * ms + lry * 5 * ms);
       ctx.closePath();
       ctx.fill();
 
@@ -335,9 +375,9 @@ export function MvpArenaCanvas({
 
       ctx.fillStyle = teamColor;
       ctx.beginPath();
-      ctx.moveTo(mx + fx * 10, my + fy * 10);
-      ctx.lineTo(mx - fx * 6 + rx * 6, my - fy * 6 + ry * 6);
-      ctx.lineTo(mx - fx * 6 - rx * 6, my - fy * 6 - ry * 6);
+      ctx.moveTo(mx + fx * 10 * ms, my + fy * 10 * ms);
+      ctx.lineTo(mx - fx * 6 * ms + rx * 6 * ms, my - fy * 6 * ms + ry * 6 * ms);
+      ctx.lineTo(mx - fx * 6 * ms - rx * 6 * ms, my - fy * 6 * ms - ry * 6 * ms);
       ctx.closePath();
       ctx.fill();
 
@@ -375,7 +415,7 @@ export function MvpArenaCanvas({
     const wy = ((e.clientY - rect.top) / rect.height) * simState.terrain.depth;
 
     let bestId: string | null = null;
-    let bestDist = 32;
+    let bestDist = Math.max(32, simState.terrain.width * 0.045);
     for (const m of simState.mechs) {
       const d = Math.hypot(m.pos.x - wx, m.pos.y - wy);
       if (d < bestDist) {

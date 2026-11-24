@@ -2,7 +2,7 @@ import { CURRICULUM_MISSIONS } from '../data/curriculum';
 import { computeMechStats } from '../data/parts';
 import {
   DEFAULT_PILOT_PROFILE,
-  PRESET_AEGIS,
+  PRESET_FORTRESS,
   PRESET_SNIPER,
   PRESET_STRIKER,
 } from '../data/presets';
@@ -187,9 +187,9 @@ export function verifyCurriculumMission(
     // step5: 2v2 squad battle
     entries.push({
       id: 'ally_1',
-      name: '僚機イージス',
+      name: '僚機フォートレス',
       teamId: 'T_PLAYER',
-      blueprint: PRESET_AEGIS,
+      blueprint: PRESET_FORTRESS,
       pilot: DEFAULT_PILOT_PROFILE,
     });
     entries.push({

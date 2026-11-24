@@ -1,4 +1,4 @@
-import { getResolvedWeaponGroups, getWeaponSpec } from '../data/parts';
+import { getResolvedWeaponGroups, getWeaponMaxRange, getWeaponSpec } from '../data/parts';
 import {
   GridDir,
   MechControlInput,
@@ -22,7 +22,8 @@ import {
   normalizeAngle360,
   vectorToAngle2D,
 } from './math';
-import { getMechTorsoWorldYaw } from './mechSim';
+import { getMechCenterZ, getMechEyeZ } from './hitbox';
+import { getMechTorsoWorldYaw, isTargetEcmProtectedFor } from './mechSim';
 import { getSurfaceHeight, hasLineOfSight3D, isInsideObstacleSolid } from './terrain';
 
 export type LatchedLegMode =
@@ -192,7 +193,7 @@ export function findHighGroundDirection(
   let bestY = cy;
   let bestH = getSurfaceHeight(state.terrain, bestX, bestY);
 
-  const sampleRadius = 45;
+  const sampleRadius = Math.max(45, state.terrain.width * 0.065);
   for (let i = 0; i < 8; i++) {
     const angleDeg = i * 45;
     const vec = angleToVector2D(angleDeg);
@@ -232,22 +233,27 @@ export function getWeaponReadyStatuses(
 ): Record<WeaponSlotId, WeaponReadyReason> {
   const slots: WeaponSlotId[] = ['rightArm', 'leftArm', 'rightShoulder', 'leftShoulder'];
   const torsoWorldYaw = getMechTorsoWorldYaw(mech);
-  const eyePos = { x: mech.pos.x, y: mech.pos.y, z: mech.pos.z + 9.0 };
+  const eyePos = {
+    x: mech.pos.x,
+    y: mech.pos.y,
+    z: mech.pos.z + getMechEyeZ(mech.stats.sizeScale),
+  };
   const targetEntity = target ? state.mechs.find((m) => m.id === target.id && m.alive) : undefined;
   const hasLos = targetEntity
     ? hasLineOfSight3D(state.terrain, eyePos, {
         x: targetEntity.pos.x,
         y: targetEntity.pos.y,
-        z: targetEntity.pos.z + 6.7,
+        z: targetEntity.pos.z + getMechCenterZ(targetEntity.stats.sizeScale),
       })
     : false;
-  const effectiveRadar = mech.stats.radarRange * (mech.parts.head.destroyed ? 0.4 : 1.0);
+  const headRadarMult = mech.parts.head.destroyed ? 0.4 : 1.0;
+  const targetOmniRange = targetEntity ? targetEntity.stats.radarSignatureRange * headRadarMult : 0;
 
   const result = {} as Record<WeaponSlotId, WeaponReadyReason>;
   for (const slot of slots) {
     const slotRt = mech.weapons[slot];
     const spec = getWeaponSpec(slotRt.weaponId);
-    if (spec.burstCount <= 0 || spec.damage <= 0) {
+    if (spec.kind === 'ams' || spec.kind === 'bap' || spec.burstCount <= 0 || spec.damage <= 0) {
       result[slot] = 'none';
       continue;
     }
@@ -268,6 +274,13 @@ export function getWeaponReadyStatuses(
       continue;
     }
     if (target) {
+      const maxRange = getWeaponMaxRange(spec);
+      const inRange =
+        maxRange > spec.range ? target.distance < maxRange : target.distance <= spec.range;
+      if (!inRange) {
+        result[slot] = 'out_of_range';
+        continue;
+      }
       const maxArcHalfDeg =
         spec.kind === 'melee'
           ? 55
@@ -281,7 +294,8 @@ export function getWeaponReadyStatuses(
         result[slot] = 'out_of_arc';
         continue;
       }
-      if (!hasLos && !(spec.kind === 'lrm_homing' && target.distance <= effectiveRadar)) {
+      const hasIndirectLink = target.allySpotted || target.distance <= targetOmniRange;
+      if (!hasLos && !(spec.kind === 'lrm_homing' && hasIndirectLink)) {
         result[slot] = 'blocked_los';
         continue;
       }
@@ -292,17 +306,55 @@ export function getWeaponReadyStatuses(
 }
 
 function isWeaponSlotReadyForBranch(
+  state: SimState,
   mech: MechRuntimeState,
   slot: WeaponSlotId,
-  target: VisibleEnemyInfo | null
+  target: VisibleEnemyInfo | null,
+  overrideLatched: boolean
 ): boolean {
   if (mech.parts[slot].destroyed) return false;
   const w = mech.weapons[slot];
   const spec = getWeaponSpec(w.weaponId);
+  if (spec.kind === 'ams' || spec.kind === 'bap') return false;
   if (spec.burstCount <= 0 || spec.damage <= 0) return false;
   if (w.ammoRemaining === 0) return false;
+  if (mech.thermalShutdown && !overrideLatched) return false;
   if (w.cooldownRemaining > 0) return false;
-  if (target && target.distance > spec.range) return false;
+  if (target) {
+    const maxRange = getWeaponMaxRange(spec);
+    const inRange =
+      maxRange > spec.range ? target.distance < maxRange : target.distance <= spec.range;
+    if (!inRange) return false;
+
+    const targetEntity = state.mechs.find((m) => m.id === target.id && m.alive);
+    if (targetEntity) {
+      const eyePos = {
+        x: mech.pos.x,
+        y: mech.pos.y,
+        z: mech.pos.z + getMechEyeZ(mech.stats.sizeScale),
+      };
+      const targetCenter = {
+        x: targetEntity.pos.x,
+        y: targetEntity.pos.y,
+        z: targetEntity.pos.z + getMechCenterZ(targetEntity.stats.sizeScale),
+      };
+      const hasLos = hasLineOfSight3D(state.terrain, eyePos, targetCenter);
+      if (!hasLos) {
+        if (spec.kind !== 'lrm_homing') return false;
+        const headRadarMult = mech.parts.head.destroyed ? 0.4 : 1.0;
+        const ecmProt = isTargetEcmProtectedFor(state, mech, targetEntity);
+        const targetOmniRange =
+          targetEntity.stats.radarSignatureRange * headRadarMult * (ecmProt ? 0.5 : 1.0);
+        const hasIndirectLink =
+          target.distance <= targetOmniRange ||
+          (target.allySpotted && !(ecmProt && target.distance > 400));
+        if (!hasIndirectLink) return false;
+        if (!mech.lockComplete || mech.lockTargetId !== target.id) return false;
+      } else if (spec.kind === 'lrm_homing' && target.distance > 180) {
+        if (!mech.lockComplete || mech.lockTargetId !== target.id) return false;
+      }
+    }
+  }
   return true;
 }
 
@@ -318,23 +370,25 @@ function evaluateSubroutineBranch(
   cell: MechSubroutineCell,
   sensor: MechSensorState,
   mech: MechRuntimeState,
-  target: VisibleEnemyInfo | null
+  state: SimState,
+  target: VisibleEnemyInfo | null,
+  overrideLatched: boolean
 ): boolean {
   const ref = target ?? sensor.nearestEnemy ?? sensor.nearestRadarEnemy;
   const gid = groupIdFromSubOp(cell.op);
   if (gid) {
     const slots = getResolvedWeaponGroups(mech.blueprint)[gid];
-    return slots.some((s) => isWeaponSlotReadyForBranch(mech, s, ref));
+    return slots.some((s) => isWeaponSlotReadyForBranch(state, mech, s, ref, overrideLatched));
   }
   switch (cell.op) {
     case 'if_right_arm_ready':
-      return isWeaponSlotReadyForBranch(mech, 'rightArm', ref);
+      return isWeaponSlotReadyForBranch(state, mech, 'rightArm', ref, overrideLatched);
     case 'if_left_arm_ready':
-      return isWeaponSlotReadyForBranch(mech, 'leftArm', ref);
+      return isWeaponSlotReadyForBranch(state, mech, 'leftArm', ref, overrideLatched);
     case 'if_right_shoulder_ready':
-      return isWeaponSlotReadyForBranch(mech, 'rightShoulder', ref);
+      return isWeaponSlotReadyForBranch(state, mech, 'rightShoulder', ref, overrideLatched);
     case 'if_left_shoulder_ready':
-      return isWeaponSlotReadyForBranch(mech, 'leftShoulder', ref);
+      return isWeaponSlotReadyForBranch(state, mech, 'leftShoulder', ref, overrideLatched);
     case 'if_enemy_in_sight':
       return sensor.visibleEnemies.length > 0;
     case 'if_enemy_dist_lt':
@@ -366,6 +420,12 @@ function evaluateSubroutineBranch(
       return !mech.grounded;
     case 'if_incoming_fire':
       return sensor.incomingFire;
+    case 'if_target_locked':
+      return sensor.targetLocked;
+    case 'if_incoming_missile':
+      return sensor.incomingMissile;
+    case 'if_ecm_jammed':
+      return sensor.ecmJammed;
     default:
       return false;
   }
@@ -672,6 +732,10 @@ export function stepSubroutineExecution(
     return { completed: true, activeCell: null, lastBranch: null };
   }
 
+  if (target && !control.lockTargetId) {
+    control.lockTargetId = target.id;
+  }
+
   const findCell = (r: number, c: number) =>
     sub.cells.find((cell) => cell.row === r && cell.col === c);
 
@@ -799,7 +863,7 @@ export function stepSubroutineExecution(
     }
 
     if (isBranchOp(cell.op)) {
-      const cond = evaluateSubroutineBranch(cell, sensor, mech, target);
+      const cond = evaluateSubroutineBranch(cell, sensor, mech, state, target, exec.overrideLatched);
       lastBranch = {
         board: sub.slotId,
         label: cell.op,

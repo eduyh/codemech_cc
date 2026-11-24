@@ -174,6 +174,12 @@ function evaluatePilotBranch(
       return sensor.torsoHpRatio * 100 < (cell.param ?? 50);
     case 'if_incoming_fire':
       return sensor.incomingFire;
+    case 'if_target_locked':
+      return sensor.targetLocked;
+    case 'if_incoming_missile':
+      return sensor.incomingMissile;
+    case 'if_ecm_jammed':
+      return sensor.ecmJammed;
     case 'if_enemy_hp_below':
       return ref !== null && ref.totalHpRatio * 100 < (cell.param ?? 35);
     case 'if_flag_a':

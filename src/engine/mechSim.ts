@@ -32,6 +32,9 @@ import {
 import {
   applyDamageToMechParts,
   computeArmorDamageResult,
+  getMechCenterZ,
+  getMechCollisionRadius,
+  getMechEyeZ,
   getMechMobilityMultipliers,
   mechLocalToWorld,
   PartHitResult,
@@ -51,6 +54,7 @@ import {
   vectorToAngle2D,
 } from './math';
 import {
+  computeRecommendedArenaSize,
   createTerrain,
   generateSpawnPositions,
   getSurfaceHeight,
@@ -60,20 +64,25 @@ import {
 } from './terrain';
 
 const GRAVITY_Z = 22;
-const MECH_COLLISION_RADIUS = 2.6;
 const MAX_STORED_EVENTS = 2500;
 const SHUTDOWN_RECOVERY_RATIO = 0.7;
 const JUMP_TAKEOFF_HEAT_COST = 12;
 const COS60 = 0.5;
 const SIN60 = 0.8660254;
 
+export const ECM_BUBBLE_RADIUS = 130;
+export const ECM_PROXIMITY_BREAK = 120;
+export const BAP_COUNTER_RADIUS = 240;
+export const AMS_DEFAULT_RANGE = 80;
+export const PPC_ECM_DISRUPT_TICKS = 120; // 4.0s at 30 TPS
+
 export const DEFAULT_MATCH_RULES: MatchRules = {
   maxSeconds: 240,
   friendlyFire: false,
   headDestructionKills: true,
   arenaPreset: 'plains_ridge',
-  arenaWidth: 600,
-  arenaDepth: 600,
+  arenaWidth: 1000,
+  arenaDepth: 1000,
 };
 
 export const EMPTY_CONTROL_INPUT: MechControlInput = {
@@ -205,8 +214,11 @@ export function createSimulation(config: MatchConfig): SimState {
   }
 
   const matchSeed = normalizeMatchSeed(config.seed);
+  const recommendedSize = computeRecommendedArenaSize(config.entries.length);
   const rules: MatchRules = {
     ...DEFAULT_MATCH_RULES,
+    arenaWidth: recommendedSize,
+    arenaDepth: recommendedSize,
     ...(config.rules ?? {}),
   };
 
@@ -284,6 +296,13 @@ export function createSimulation(config: MatchConfig): SimState {
       lastHitTick: -999,
       lastAttackerId: null,
       lastHitRelBearingDeg: null,
+      lockTargetId: null,
+      lockProgressSec: 0,
+      lockRequiredSec: 1.2,
+      lockDecayGraceSec: 0,
+      lockComplete: false,
+      ecmDisruptedTicks: 0,
+      salvoQueue: [],
       damageDealt: 0,
       damageTaken: 0,
       kills: 0,
@@ -314,6 +333,192 @@ export function getMechTorsoWorldYaw(
   return normalizeAngle360(mech.yawDeg + mech.torsoYawOffsetDeg);
 }
 
+export function isMechEcmActive(mech: MechRuntimeState): boolean {
+  return (
+    mech.alive &&
+    mech.stats.ecmActive &&
+    !mech.thermalShutdown &&
+    mech.ecmDisruptedTicks <= 0
+  );
+}
+
+export function isMechBapActive(mech: MechRuntimeState): boolean {
+  if (!mech.alive || mech.thermalShutdown) return false;
+  return (['rightShoulder', 'leftShoulder'] as WeaponSlotId[]).some(
+    (s) => !mech.parts[s].destroyed && getWeaponSpec(mech.weapons[s].weaponId).kind === 'bap'
+  );
+}
+
+export function isTargetEcmProtectedFor(
+  state: SimState,
+  observer: MechRuntimeState,
+  target: MechRuntimeState
+): boolean {
+  const obsDist = distance3D(
+    observer.pos.x,
+    observer.pos.y,
+    observer.pos.z,
+    target.pos.x,
+    target.pos.y,
+    target.pos.z
+  );
+  if (obsDist <= ECM_PROXIMITY_BREAK) return false;
+
+  const hasFriendlyBap = state.mechs.some(
+    (ally) =>
+      ally.teamId === observer.teamId &&
+      isMechBapActive(ally) &&
+      distance3D(ally.pos.x, ally.pos.y, ally.pos.z, target.pos.x, target.pos.y, target.pos.z) <=
+        BAP_COUNTER_RADIUS
+  );
+  if (hasFriendlyBap) return false;
+
+  return state.mechs.some(
+    (ally) =>
+      ally.teamId === target.teamId &&
+      isMechEcmActive(ally) &&
+      distance3D(ally.pos.x, ally.pos.y, ally.pos.z, target.pos.x, target.pos.y, target.pos.z) <=
+        ECM_BUBBLE_RADIUS
+  );
+}
+
+export function isObserverEcmJammed(state: SimState, observer: MechRuntimeState): boolean {
+  for (const foe of state.mechs) {
+    if (foe.teamId === observer.teamId || !isMechEcmActive(foe)) continue;
+    const dist = distance3D(
+      observer.pos.x,
+      observer.pos.y,
+      observer.pos.z,
+      foe.pos.x,
+      foe.pos.y,
+      foe.pos.z
+    );
+    if (dist > ECM_BUBBLE_RADIUS) continue;
+    const counteredByBap = state.mechs.some(
+      (ally) =>
+        ally.teamId === observer.teamId &&
+        isMechBapActive(ally) &&
+        distance3D(ally.pos.x, ally.pos.y, ally.pos.z, foe.pos.x, foe.pos.y, foe.pos.z) <=
+          BAP_COUNTER_RADIUS
+    );
+    if (!counteredByBap) return true;
+  }
+  return false;
+}
+
+function isAllySpottingTarget(
+  state: SimState,
+  observer: MechRuntimeState,
+  target: MechRuntimeState,
+  targetCenter: Vec3
+): boolean {
+  for (const ally of state.mechs) {
+    if (!ally.alive || ally.id === observer.id || ally.teamId !== observer.teamId) continue;
+    const allyRadar = ally.stats.radarRange * (ally.parts.head.destroyed ? 0.4 : 1.0);
+    const allyDist = distance3D(
+      ally.pos.x,
+      ally.pos.y,
+      ally.pos.z,
+      target.pos.x,
+      target.pos.y,
+      target.pos.z
+    );
+    if (allyDist > allyRadar) continue;
+    const allyTorsoYaw = getMechTorsoWorldYaw(ally);
+    const allyBearing = vectorToAngle2D(target.pos.x - ally.pos.x, target.pos.y - ally.pos.y);
+    const allyFov = ally.stats.visionFovHalfDeg * (ally.parts.head.destroyed ? 0.55 : 1.0);
+    if (Math.abs(normalizeAngle180(allyBearing - allyTorsoYaw)) > allyFov) continue;
+    if (
+      hasLineOfSight3D(
+        state.terrain,
+        { x: ally.pos.x, y: ally.pos.y, z: ally.pos.z + getMechEyeZ(ally.stats.sizeScale) },
+        targetCenter
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+interface TargetDetectionEval {
+  dist: number;
+  bearingDeg: number;
+  relBearingDeg: number;
+  torsoRelBearingDeg: number;
+  inVisualFov: boolean;
+  hasLineOfSight: boolean;
+  detectedByVision: boolean;
+  withinOmniRadar: boolean;
+  targetProtectedByEcm: boolean;
+  effectiveAllySpotted: boolean;
+}
+
+function evaluateTargetDetection(
+  state: SimState,
+  observer: MechRuntimeState,
+  target: MechRuntimeState
+): TargetDetectionEval {
+  const headDestroyed = observer.parts.head.destroyed;
+  const headRadarMult = headDestroyed ? 0.4 : 1.0;
+  const effectiveRadarRange = observer.stats.radarRange * headRadarMult;
+  const effectiveVisionFovHalfDeg = observer.stats.visionFovHalfDeg * (headDestroyed ? 0.55 : 1.0);
+  const torsoYawDeg = getMechTorsoWorldYaw(observer);
+  const eyePos: Vec3 = {
+    x: observer.pos.x,
+    y: observer.pos.y,
+    z: observer.pos.z + getMechEyeZ(observer.stats.sizeScale),
+  };
+  const targetCenter: Vec3 = {
+    x: target.pos.x,
+    y: target.pos.y,
+    z: target.pos.z + getMechCenterZ(target.stats.sizeScale),
+  };
+
+  const dist = distance3D(
+    observer.pos.x,
+    observer.pos.y,
+    observer.pos.z,
+    target.pos.x,
+    target.pos.y,
+    target.pos.z
+  );
+  const targetProtectedByEcm = isTargetEcmProtectedFor(state, observer, target);
+  const targetOmniRange =
+    target.stats.radarSignatureRange * headRadarMult * (targetProtectedByEcm ? 0.5 : 1.0);
+  const withinOmniRadar = dist <= targetOmniRange;
+
+  const bearingDeg = vectorToAngle2D(target.pos.x - observer.pos.x, target.pos.y - observer.pos.y);
+  const relBearingDeg = normalizeAngle180(bearingDeg - observer.yawDeg);
+  const torsoRelBearingDeg = normalizeAngle180(bearingDeg - torsoYawDeg);
+  const inVisualFov = Math.abs(torsoRelBearingDeg) <= effectiveVisionFovHalfDeg;
+  const withinVisualRange = inVisualFov && dist <= effectiveRadarRange;
+
+  const hasLineOfSight =
+    withinVisualRange || withinOmniRadar || dist <= 950
+      ? hasLineOfSight3D(state.terrain, eyePos, targetCenter)
+      : false;
+  const detectedByVision = withinVisualRange && hasLineOfSight;
+
+  const rawAllySpotted =
+    dist <= 950 && !targetProtectedByEcm
+      ? isAllySpottingTarget(state, observer, target, targetCenter)
+      : false;
+
+  return {
+    dist,
+    bearingDeg,
+    relBearingDeg,
+    torsoRelBearingDeg,
+    inVisualFov,
+    hasLineOfSight,
+    detectedByVision,
+    withinOmniRadar,
+    targetProtectedByEcm,
+    effectiveAllySpotted: rawAllySpotted,
+  };
+}
+
 export function buildMechSensorState(state: SimState, mechId: string): MechSensorState {
   const mech = state.mechs.find((m) => m.id === mechId);
   if (!mech) {
@@ -321,67 +526,45 @@ export function buildMechSensorState(state: SimState, mechId: string): MechSenso
   }
 
   const headDestroyed = mech.parts.head.destroyed;
-  const effectiveRadarRange = mech.stats.radarRange * (headDestroyed ? 0.4 : 1.0);
+  const headRadarMult = headDestroyed ? 0.4 : 1.0;
+  const effectiveRadarRange = mech.stats.radarRange * headRadarMult;
+  const effectiveOmniRadarScale = headRadarMult;
   const effectiveVisionFovHalfDeg = mech.stats.visionFovHalfDeg * (headDestroyed ? 0.55 : 1.0);
   const torsoYawDeg = getMechTorsoWorldYaw(mech);
-  const eyePos: Vec3 = { x: mech.pos.x, y: mech.pos.y, z: mech.pos.z + 9.0 };
+  const ecmActive = isMechEcmActive(mech);
+  const bapActive = isMechBapActive(mech);
+  const ecmJammed = isObserverEcmJammed(state, mech);
 
   const radarContacts: VisibleEnemyInfo[] = [];
   for (const other of state.mechs) {
     if (!other.alive || other.id === mech.id || other.teamId === mech.teamId) continue;
 
-    const dist = distance3D(mech.pos.x, mech.pos.y, mech.pos.z, other.pos.x, other.pos.y, other.pos.z);
-    if (dist > effectiveRadarRange) continue;
+    const det = evaluateTargetDetection(state, mech, other);
+    if (!det.detectedByVision && !det.withinOmniRadar && !det.effectiveAllySpotted) continue;
 
-    const targetCenter: Vec3 = { x: other.pos.x, y: other.pos.y, z: other.pos.z + 6.7 };
-    const bearingDeg = vectorToAngle2D(other.pos.x - mech.pos.x, other.pos.y - mech.pos.y);
-    const relBearingDeg = normalizeAngle180(bearingDeg - mech.yawDeg);
-    const torsoRelBearingDeg = normalizeAngle180(bearingDeg - torsoYawDeg);
-    const inVisualFov = Math.abs(torsoRelBearingDeg) <= effectiveVisionFovHalfDeg;
-    const hasLineOfSight = hasLineOfSight3D(state.terrain, eyePos, targetCenter);
-    const absRel = Math.abs(relBearingDeg);
+    const absRel = Math.abs(det.relBearingDeg);
     const isFlank = absRel >= 50 && absRel <= 135;
-
-    let allySpotted = false;
-    for (const ally of state.mechs) {
-      if (!ally.alive || ally.id === mech.id || ally.teamId !== mech.teamId) continue;
-      const allyRadar = ally.stats.radarRange * (ally.parts.head.destroyed ? 0.4 : 1.0);
-      const allyDist = distance3D(ally.pos.x, ally.pos.y, ally.pos.z, other.pos.x, other.pos.y, other.pos.z);
-      if (allyDist > allyRadar) continue;
-      const allyTorsoYaw = getMechTorsoWorldYaw(ally);
-      const allyBearing = vectorToAngle2D(other.pos.x - ally.pos.x, other.pos.y - ally.pos.y);
-      const allyFov = ally.stats.visionFovHalfDeg * (ally.parts.head.destroyed ? 0.55 : 1.0);
-      if (Math.abs(normalizeAngle180(allyBearing - allyTorsoYaw)) > allyFov) continue;
-      if (
-        hasLineOfSight3D(
-          state.terrain,
-          { x: ally.pos.x, y: ally.pos.y, z: ally.pos.z + 9.0 },
-          targetCenter
-        )
-      ) {
-        allySpotted = true;
-        break;
-      }
-    }
 
     radarContacts.push({
       id: other.id,
       teamId: other.teamId,
-      distance: dist,
-      bearingDeg,
-      relBearingDeg,
-      torsoRelBearingDeg,
+      distance: det.dist,
+      bearingDeg: det.bearingDeg,
+      relBearingDeg: det.relBearingDeg,
+      torsoRelBearingDeg: det.torsoRelBearingDeg,
       elevationDiff: other.pos.z - mech.pos.z,
       isFlank,
       totalHpRatio: getMechTotalIntegrity(other).ratio,
-      inVisualFov,
-      hasLineOfSight,
-      allySpotted,
+      inVisualFov: det.inVisualFov,
+      hasLineOfSight: det.hasLineOfSight,
+      allySpotted: det.effectiveAllySpotted,
     });
   }
 
   radarContacts.sort((a, b) => a.distance - b.distance);
-  const visibleEnemies = radarContacts.filter((e) => e.inVisualFov && e.hasLineOfSight);
+  const visibleEnemies = radarContacts.filter(
+    (e) => e.inVisualFov && e.hasLineOfSight && e.distance <= effectiveRadarRange
+  );
   const nearestEnemy = visibleEnemies[0] ?? null;
   const nearestRadarEnemy = radarContacts[0] ?? null;
   const nearestFlankEnemy =
@@ -391,21 +574,23 @@ export function buildMechSensorState(state: SimState, mechId: string): MechSenso
 
   let incomingFire = state.tick - mech.lastHitTick <= 15;
   let incomingRelBearing = incomingFire ? mech.lastHitRelBearingDeg : null;
+  let incomingMissile = false;
 
-  if (!incomingFire) {
-    for (const proj of state.projectiles) {
-      if (proj.teamId === mech.teamId) continue;
-      const dx = mech.pos.x - proj.pos.x;
-      const dy = mech.pos.y - proj.pos.y;
-      const d = Math.hypot(dx, dy);
-      if (d > 85) continue;
-      const dot = dx * proj.vel.x + dy * proj.vel.y;
-      if (dot > 0) {
-        incomingFire = true;
-        const fromBearing = vectorToAngle2D(proj.pos.x - mech.pos.x, proj.pos.y - mech.pos.y);
-        incomingRelBearing = normalizeAngle180(fromBearing - mech.yawDeg);
-        break;
-      }
+  for (const proj of state.projectiles) {
+    if (proj.teamId === mech.teamId) continue;
+    const dx = mech.pos.x - proj.pos.x;
+    const dy = mech.pos.y - proj.pos.y;
+    const d = Math.hypot(dx, dy);
+    const dot = dx * proj.vel.x + dy * proj.vel.y;
+    if (dot <= 0) continue;
+
+    if (proj.hp > 0 && d <= 180) {
+      incomingMissile = true;
+    }
+    if (!incomingFire && d <= 85) {
+      incomingFire = true;
+      const fromBearing = vectorToAngle2D(proj.pos.x - mech.pos.x, proj.pos.y - mech.pos.y);
+      incomingRelBearing = normalizeAngle180(fromBearing - mech.yawDeg);
     }
   }
 
@@ -455,6 +640,7 @@ export function buildMechSensorState(state: SimState, mechId: string): MechSenso
     torsoYawDeg,
     torsoYawOffsetDeg: mech.torsoYawOffsetDeg,
     effectiveRadarRange,
+    effectiveOmniRadarScale,
     effectiveVisionFovHalfDeg,
     grounded: mech.grounded,
     enRatio: clamp(1 - heatRatio, 0, 1),
@@ -468,6 +654,14 @@ export function buildMechSensorState(state: SimState, mechId: string): MechSenso
     totalHpRatio: getMechTotalIntegrity(mech).ratio,
     incomingFire,
     incomingFireRelBearingDeg: incomingRelBearing,
+    incomingMissile,
+    lockTargetId: mech.lockTargetId,
+    lockProgressRatio:
+      mech.lockRequiredSec > 0 ? clamp(mech.lockProgressSec / mech.lockRequiredSec, 0, 1) : 0,
+    targetLocked: mech.lockComplete,
+    ecmActive,
+    ecmJammed,
+    bapActive,
     destroyedParts,
     visibleEnemies,
     radarContacts,
@@ -498,6 +692,217 @@ const WEAPON_MUZZLE_LOCAL: Record<WeaponSlotId, Vec3> = {
   leftShoulder: { x: -1.8, y: 0.9, z: 8.6 },
 };
 
+function getScaledMuzzleLocal(slot: WeaponSlotId, sizeScale: number): Vec3 {
+  const base = WEAPON_MUZZLE_LOCAL[slot];
+  return {
+    x: base.x * sizeScale,
+    y: base.y * sizeScale,
+    z: base.z * sizeScale,
+  };
+}
+
+function spawnSingleProjectile(params: {
+  state: SimState;
+  mech: MechRuntimeState;
+  slot: WeaponSlotId;
+  spec: ReturnType<typeof getWeaponSpec>;
+  muzzlePos: Vec3;
+  aimYaw: number;
+  aimPitch: number;
+  totalSpread: number;
+  effectiveDamage: number;
+  targetId: string | null;
+  homingTurnDegPerSec: number;
+  hp: number;
+  loftTicksRemaining: number;
+}): void {
+  const {
+    state,
+    mech,
+    slot,
+    spec,
+    muzzlePos,
+    aimYaw,
+    aimPitch,
+    totalSpread,
+    effectiveDamage,
+    targetId,
+    homingTurnDegPerSec,
+    hp,
+    loftTicksRemaining,
+  } = params;
+  const spreadYaw = (nextMechRand(mech) - 0.5) * 2 * totalSpread;
+  const spreadPitch = (nextMechRand(mech) - 0.5) * 2 * totalSpread;
+  const finalYaw = normalizeAngle360(aimYaw + spreadYaw);
+  const finalPitch = clamp(aimPitch + spreadPitch, -60, 75);
+
+  const pitchRad = degToRad(finalPitch);
+  const cosPitch = Math.cos(pitchRad);
+  const horiz = angleToVector2D(finalYaw);
+
+  const vel: Vec3 = {
+    x: horiz.dx * cosPitch * spec.projectileSpeed,
+    y: horiz.dy * cosPitch * spec.projectileSpeed,
+    z: Math.sin(pitchRad) * spec.projectileSpeed,
+  };
+
+  const maxRange = getWeaponMaxRange(spec);
+  const ttlTicks = Math.max(
+    10,
+    Math.ceil(((maxRange / Math.max(1, spec.projectileSpeed)) * 1.65) / SIM_DT)
+  );
+
+  state.projectiles.push({
+    id: state.nextProjectileId++,
+    ownerId: mech.id,
+    teamId: mech.teamId,
+    slot,
+    weaponId: spec.id,
+    kind: spec.kind,
+    pos: { ...muzzlePos },
+    vel,
+    gravity: spec.projectileGravity,
+    damage: effectiveDamage,
+    canRicochet: spec.canRicochet,
+    ricochetAngleDeg: spec.ricochetAngleDeg,
+    homingTurnDegPerSec,
+    targetId,
+    distanceTraveled: 0,
+    optimalRange: spec.range,
+    maxRange,
+    ttlTicks,
+    hp,
+    loftTicksRemaining,
+  });
+}
+
+function updateMechLockState(
+  state: SimState,
+  mech: MechRuntimeState,
+  control: MechControlInput
+): void {
+  if (mech.thermalShutdown && !control.overrideShutdown) {
+    mech.lockProgressSec = Math.max(0, mech.lockProgressSec - SIM_DT * 2.0);
+    mech.lockComplete = false;
+    if (mech.lockProgressSec <= 0) mech.lockTargetId = null;
+    return;
+  }
+
+  const candidate = control.lockTargetId
+    ? state.mechs.find((m) => m.id === control.lockTargetId && m.alive && m.teamId !== mech.teamId)
+    : undefined;
+
+  if (candidate) {
+    const det = evaluateTargetDetection(state, mech, candidate);
+    const indirectLinkAllowed =
+      det.withinOmniRadar || (det.effectiveAllySpotted && !(det.targetProtectedByEcm && det.dist > 400));
+    const trackable = det.detectedByVision || indirectLinkAllowed;
+
+    if (trackable) {
+      const baseSec = det.detectedByVision ? 1.2 : 1.8;
+      const ecmMult = det.targetProtectedByEcm ? 2.0 : 1.0;
+      const bapMult = isMechBapActive(mech) ? 0.75 : 1.0;
+      const reqSec = baseSec * ecmMult * bapMult;
+
+      if (mech.lockTargetId !== candidate.id) {
+        mech.lockTargetId = candidate.id;
+        mech.lockProgressSec = SIM_DT;
+      } else {
+        mech.lockProgressSec = Math.min(reqSec, mech.lockProgressSec + SIM_DT);
+      }
+      mech.lockRequiredSec = reqSec;
+      mech.lockDecayGraceSec = 0.8;
+      mech.lockComplete = mech.lockProgressSec >= reqSec - 1e-4;
+      return;
+    }
+  }
+
+  if (mech.lockDecayGraceSec > 0) {
+    mech.lockDecayGraceSec = Math.max(0, mech.lockDecayGraceSec - SIM_DT);
+  } else if (mech.lockProgressSec > 0) {
+    mech.lockProgressSec = Math.max(0, mech.lockProgressSec - 1.5 * SIM_DT);
+    if (mech.lockProgressSec <= 0) {
+      mech.lockTargetId = null;
+    }
+  }
+  mech.lockComplete =
+    mech.lockTargetId !== null && mech.lockProgressSec >= mech.lockRequiredSec - 1e-4;
+}
+
+function stepSalvoQueue(
+  state: SimState,
+  mech: MechRuntimeState,
+  control: MechControlInput
+): void {
+  if (mech.salvoQueue.length === 0) return;
+  const override = Boolean(control.overrideShutdown);
+  if (mech.thermalShutdown && !override) {
+    mech.salvoQueue = [];
+    return;
+  }
+
+  const nextQueue = [];
+  for (const item of mech.salvoQueue) {
+    if (mech.parts[item.slot].destroyed || item.remainingShots <= 0) continue;
+    item.ticksUntilNext -= 1;
+    if (item.ticksUntilNext > 0) {
+      nextQueue.push(item);
+      continue;
+    }
+
+    const spec = getWeaponSpec(item.weaponId);
+    const torsoWorldYaw = getMechTorsoWorldYaw(mech);
+    const muzzlePos = mechLocalToWorld(
+      getScaledMuzzleLocal(item.slot, mech.stats.sizeScale),
+      mech.pos,
+      torsoWorldYaw
+    );
+    const target = item.targetId
+      ? state.mechs.find((m) => m.id === item.targetId && m.alive && m.teamId !== mech.teamId)
+      : undefined;
+
+    let aimYaw = torsoWorldYaw;
+    let aimPitch = item.isIndirect ? 50 : 25;
+    let rawHoriz = 999;
+    if (target) {
+      const dx = target.pos.x - muzzlePos.x;
+      const dy = target.pos.y - muzzlePos.y;
+      rawHoriz = Math.hypot(dx, dy);
+      if (rawHoriz > 1e-4) {
+        aimYaw = vectorToAngle2D(dx, dy);
+      }
+    }
+
+    const minRangeMult = spec.minRange && rawHoriz < spec.minRange ? 0.25 : 1.0;
+    const headPenaltySpread = mech.parts.head.destroyed ? 3.5 : 0;
+    const totalSpread = (spec.spreadDeg + headPenaltySpread + (item.isIndirect ? 2.0 : 0)) * 0.75;
+    const guided = Boolean(target && item.guided);
+
+    spawnSingleProjectile({
+      state,
+      mech,
+      slot: item.slot,
+      spec,
+      muzzlePos,
+      aimYaw,
+      aimPitch,
+      totalSpread,
+      effectiveDamage: spec.damage * minRangeMult,
+      targetId: target?.id ?? null,
+      homingTurnDegPerSec: guided ? spec.homingTurnDegPerSec : 0,
+      hp: 1,
+      loftTicksRemaining: item.isIndirect ? 18 : 9,
+    });
+
+    item.remainingShots -= 1;
+    if (item.remainingShots > 0) {
+      item.ticksUntilNext = spec.streamIntervalTicks ?? 2;
+      nextQueue.push(item);
+    }
+  }
+  mech.salvoQueue = nextQueue;
+}
+
 function tryFireWeaponSlot(
   state: SimState,
   mech: MechRuntimeState,
@@ -511,6 +916,7 @@ function tryFireWeaponSlot(
   if (slotRuntime.cooldownRemaining > 0) return;
 
   const spec = getWeaponSpec(slotRuntime.weaponId);
+  if (spec.kind === 'ams' || spec.kind === 'bap') return;
   if (spec.burstCount <= 0 || spec.damage <= 0) return;
   if (slotRuntime.ammoRemaining === 0) return;
 
@@ -523,7 +929,11 @@ function tryFireWeaponSlot(
     : undefined;
 
   const torsoWorldYaw = getMechTorsoWorldYaw(mech);
-  const muzzlePos = mechLocalToWorld(WEAPON_MUZZLE_LOCAL[slot], mech.pos, torsoWorldYaw);
+  const muzzlePos = mechLocalToWorld(
+    getScaledMuzzleLocal(slot, mech.stats.sizeScale),
+    mech.pos,
+    torsoWorldYaw
+  );
   const maxArcHalfDeg =
     spec.kind === 'melee'
       ? 55
@@ -537,6 +947,7 @@ function tryFireWeaponSlot(
   let aimPitch = control.targetPitch ?? mech.pitchDeg;
   let rawHoriz = 999;
   let indirectExtraSpread = 0;
+  let hasDirectLos = true;
 
   if (target) {
     const rawDx = target.pos.x - muzzlePos.x;
@@ -553,7 +964,7 @@ function tryFireWeaponSlot(
       y: target.pos.y + target.vel.y * flightTime * leadWeight,
       z:
         target.pos.z +
-        6.5 +
+        getMechCenterZ(target.stats.sizeScale) +
         target.vel.z * flightTime * 0.5 +
         0.5 * spec.projectileGravity * flightTime * flightTime,
     };
@@ -571,19 +982,26 @@ function tryFireWeaponSlot(
       return;
     }
 
-    // Direct LOS vs radar-guided indirect LRM fire
-    const eyePos: Vec3 = { x: mech.pos.x, y: mech.pos.y, z: mech.pos.z + 9.0 };
-    const targetCenter: Vec3 = { x: target.pos.x, y: target.pos.y, z: target.pos.z + 6.7 };
-    const hasDirectLos = hasLineOfSight3D(state.terrain, eyePos, targetCenter);
+    const det = evaluateTargetDetection(state, mech, target);
+    hasDirectLos = det.hasLineOfSight;
     if (!hasDirectLos) {
-      const effectiveRadarRange = mech.stats.radarRange * (mech.parts.head.destroyed ? 0.4 : 1.0);
-      if (spec.kind === 'lrm_homing' && rawHoriz <= effectiveRadarRange) {
-        aimPitch = Math.max(aimPitch, 26);
-        indirectExtraSpread = 2.5;
+      const indirectValid =
+        spec.kind === 'lrm_homing' &&
+        mech.lockComplete &&
+        mech.lockTargetId === target.id &&
+        (det.withinOmniRadar ||
+          (det.effectiveAllySpotted && !(det.targetProtectedByEcm && det.dist > 400)));
+      if (indirectValid) {
+        aimPitch = Math.max(aimPitch, 50);
+        indirectExtraSpread = 2.0;
       } else {
         return;
       }
+    } else if (spec.kind === 'lrm_homing') {
+      aimPitch = Math.max(aimPitch, 25);
     }
+  } else if (spec.kind === 'lrm_homing') {
+    aimPitch = Math.max(aimPitch, 25);
   }
 
   if (spec.kind === 'laser' && state.activeBeams.some((b) => b.ownerId === mech.id && b.slot === slot)) {
@@ -672,7 +1090,8 @@ function tryFireWeaponSlot(
     for (const other of state.mechs) {
       if (!other.alive || other.id === mech.id) continue;
       if (!state.rules.friendlyFire && other.teamId === mech.teamId) continue;
-      const dist = distance3D(muzzlePos.x, muzzlePos.y, muzzlePos.z, other.pos.x, other.pos.y, other.pos.z + 6.5);
+      const otherCenterZ = other.pos.z + getMechCenterZ(other.stats.sizeScale);
+      const dist = distance3D(muzzlePos.x, muzzlePos.y, muzzlePos.z, other.pos.x, other.pos.y, otherCenterZ);
       if (dist > spec.range) continue;
       const toOtherX = other.pos.x - mech.pos.x;
       const toOtherY = other.pos.y - mech.pos.y;
@@ -682,10 +1101,11 @@ function tryFireWeaponSlot(
 
       const hit = testProjectileHitMech(
         muzzlePos,
-        { x: other.pos.x, y: other.pos.y, z: other.pos.z + 6.5 },
+        { x: other.pos.x, y: other.pos.y, z: otherCenterZ },
         other.pos,
         other.yawDeg,
-        getMechTorsoWorldYaw(other)
+        getMechTorsoWorldYaw(other),
+        other.stats.sizeScale
       );
       if (hit) {
         resolveHitOnMech(state, mech, other, hit, spec.damage, false, 89, tickEvents);
@@ -698,50 +1118,72 @@ function tryFireWeaponSlot(
   // Spawn projectile(s)
   const headPenaltySpread = mech.parts.head.destroyed ? 3.5 : 0;
   const totalSpread = spec.spreadDeg + headPenaltySpread + indirectExtraSpread;
-  const effectiveDamage =
-    spec.minRange && rawHoriz < spec.minRange ? spec.damage * 0.5 : spec.damage;
+  const isMissileKind =
+    spec.kind === 'lrm_homing' || spec.kind === 'srm_homing' || spec.kind === 'srm_rocket';
+  const minRangeMult = spec.minRange && rawHoriz < spec.minRange ? 0.25 : 1.0;
+  const effectiveDamage = spec.damage * minRangeMult;
+
+  if (spec.kind === 'lrm_homing') {
+    const guided = Boolean(target && mech.lockComplete && mech.lockTargetId === target.id);
+    const isIndirect = Boolean(target && !hasDirectLos);
+    const loftTicks = isIndirect ? 18 : 9;
+    const isStream = mech.blueprint.lrmFireMode === 'stream' && spec.burstCount > 1;
+    const initialCount = isStream ? 1 : spec.burstCount;
+    const lrmSpread = isStream ? totalSpread * 0.75 : totalSpread;
+
+    for (let b = 0; b < initialCount; b++) {
+      spawnSingleProjectile({
+        state,
+        mech,
+        slot,
+        spec,
+        muzzlePos,
+        aimYaw,
+        aimPitch,
+        totalSpread: lrmSpread,
+        effectiveDamage,
+        targetId: target?.id ?? null,
+        homingTurnDegPerSec: guided ? spec.homingTurnDegPerSec : 0,
+        hp: 1,
+        loftTicksRemaining: loftTicks,
+      });
+    }
+
+    if (isStream) {
+      mech.salvoQueue.push({
+        slot,
+        weaponId: spec.id,
+        remainingShots: spec.burstCount - 1,
+        ticksUntilNext: spec.streamIntervalTicks ?? 2,
+        targetId: target?.id ?? null,
+        isIndirect,
+        guided,
+      });
+    }
+    return;
+  }
+
+  const missileHp = isMissileKind ? 2 : 0;
+  const srmHoming =
+    spec.kind === 'srm_homing' && target
+      ? spec.homingTurnDegPerSec
+      : 0;
 
   for (let b = 0; b < spec.burstCount; b++) {
-    const spreadYaw = (nextMechRand(mech) - 0.5) * 2 * totalSpread;
-    const spreadPitch = (nextMechRand(mech) - 0.5) * 2 * totalSpread;
-    const finalYaw = normalizeAngle360(aimYaw + spreadYaw);
-    const finalPitch = clamp(aimPitch + spreadPitch, -60, 75);
-
-    const pitchRad = degToRad(finalPitch);
-    const cosPitch = Math.cos(pitchRad);
-    const horiz = angleToVector2D(finalYaw);
-
-    const vel: Vec3 = {
-      x: horiz.dx * cosPitch * spec.projectileSpeed,
-      y: horiz.dy * cosPitch * spec.projectileSpeed,
-      z: Math.sin(pitchRad) * spec.projectileSpeed,
-    };
-
-    const maxRange = getWeaponMaxRange(spec);
-    const ttlTicks = Math.max(
-      10,
-      Math.ceil((maxRange / Math.max(1, spec.projectileSpeed)) * 1.4 / SIM_DT)
-    );
-
-    state.projectiles.push({
-      id: state.nextProjectileId++,
-      ownerId: mech.id,
-      teamId: mech.teamId,
+    spawnSingleProjectile({
+      state,
+      mech,
       slot,
-      weaponId: spec.id,
-      kind: spec.kind,
-      pos: { ...muzzlePos },
-      vel,
-      gravity: spec.projectileGravity,
-      damage: effectiveDamage,
-      canRicochet: spec.canRicochet,
-      ricochetAngleDeg: spec.ricochetAngleDeg,
-      homingTurnDegPerSec: spec.homingTurnDegPerSec,
+      spec,
+      muzzlePos,
+      aimYaw,
+      aimPitch,
+      totalSpread,
+      effectiveDamage,
       targetId: target?.id ?? null,
-      distanceTraveled: 0,
-      optimalRange: spec.range,
-      maxRange,
-      ttlTicks,
+      homingTurnDegPerSec: srmHoming,
+      hp: missileHp,
+      loftTicksRemaining: 0,
     });
   }
 }
@@ -755,7 +1197,7 @@ function resolveHitOnMech(
   canRicochet: boolean,
   ricochetAngleDeg: number,
   tickEvents: SimCombatEvent[]
-): void {
+): boolean {
   const evalResult = computeArmorDamageResult({
     rawDamage,
     canRicochet,
@@ -775,7 +1217,7 @@ function resolveHitOnMech(
       damage: 0,
       pos: { ...hit.hitWorldPos },
     });
-    return;
+    return false;
   }
 
   const dmgResult = applyDamageToMechParts(target, hit, evalResult.finalDamage, state.rules);
@@ -823,6 +1265,7 @@ function resolveHitOnMech(
       detail: target.destroyedReason ?? undefined,
     });
   }
+  return true;
 }
 
 export function stepSimulation(
@@ -838,10 +1281,13 @@ export function stepSimulation(
   state.time = state.tick * SIM_DT;
   const tickEvents: SimCombatEvent[] = [];
 
-  // 1. Update mechs (EN, movement, terrain/obstacles, firing)
+  // 1. Update mechs (EN, movement, terrain/obstacles, lock-on, firing)
   for (const mech of state.mechs) {
     if (!mech.alive) continue;
 
+    if (mech.ecmDisruptedTicks > 0) {
+      mech.ecmDisruptedTicks = Math.max(0, mech.ecmDisruptedTicks - 1);
+    }
     const control = controlsByMechId[mech.id] ?? EMPTY_CONTROL_INPUT;
     const mobility = getMechMobilityMultipliers(mech.parts);
     const chassis = getChassisSpec(mech.blueprint.chassisId);
@@ -1060,15 +1506,16 @@ export function stepSimulation(
     mech.vel.z -= GRAVITY_Z * SIM_DT;
 
     // Integrate X, Y with obstacle & arena boundary clamping
+    const colRadius = getMechCollisionRadius(mech.stats.sizeScale);
     const nextX = clamp(
       mech.pos.x + mech.vel.x * SIM_DT,
-      MECH_COLLISION_RADIUS,
-      state.terrain.width - MECH_COLLISION_RADIUS
+      colRadius,
+      state.terrain.width - colRadius
     );
     const nextY = clamp(
       mech.pos.y + mech.vel.y * SIM_DT,
-      MECH_COLLISION_RADIUS,
-      state.terrain.depth - MECH_COLLISION_RADIUS
+      colRadius,
+      state.terrain.depth - colRadius
     );
 
     const stepUpHeight = mech.pos.z + 1.5;
@@ -1077,7 +1524,7 @@ export function stepSimulation(
       nextX,
       mech.pos.y,
       stepUpHeight,
-      MECH_COLLISION_RADIUS * 0.75
+      colRadius * 0.75
     );
     if (blockX) {
       mech.vel.x = 0;
@@ -1090,7 +1537,7 @@ export function stepSimulation(
       mech.pos.x,
       nextY,
       stepUpHeight,
-      MECH_COLLISION_RADIUS * 0.75
+      colRadius * 0.75
     );
     if (blockY) {
       mech.vel.y = 0;
@@ -1108,6 +1555,10 @@ export function stepSimulation(
     } else {
       mech.grounded = false;
     }
+
+    // Lock-on computer & queued stream salvo update
+    updateMechLockState(state, mech, control);
+    stepSalvoQueue(state, mech, control);
 
     // Weapon firing (blocked while emergencyCool or non-overridden thermalShutdown is active)
     if (!control.emergencyCool && (!mech.thermalShutdown || override)) {
@@ -1130,7 +1581,11 @@ export function stepSimulation(
     if (shooter.thermalShutdown && !override) continue;
 
     const torsoWorldYaw = getMechTorsoWorldYaw(shooter);
-    const muzzlePos = mechLocalToWorld(WEAPON_MUZZLE_LOCAL[beam.slot], shooter.pos, torsoWorldYaw);
+    const muzzlePos = mechLocalToWorld(
+      getScaledMuzzleLocal(beam.slot, shooter.stats.sizeScale),
+      shooter.pos,
+      torsoWorldYaw
+    );
     const maxArcHalfDeg = beam.slot === 'rightArm' || beam.slot === 'leftArm' ? 45 : 30;
 
     let desiredYaw = torsoWorldYaw;
@@ -1141,7 +1596,7 @@ export function stepSimulation(
     if (target) {
       const dx = target.pos.x - muzzlePos.x;
       const dy = target.pos.y - muzzlePos.y;
-      const dz = target.pos.z + 6.5 - muzzlePos.z;
+      const dz = target.pos.z + getMechCenterZ(target.stats.sizeScale) - muzzlePos.z;
       const horizDist = Math.hypot(dx, dy);
       if (horizDist > 1e-4) {
         desiredYaw = vectorToAngle2D(dx, dy);
@@ -1172,7 +1627,8 @@ export function stepSimulation(
         beamEnd,
         candidate.pos,
         candidate.yawDeg,
-        getMechTorsoWorldYaw(candidate)
+        getMechTorsoWorldYaw(candidate),
+        candidate.stats.sizeScale
       );
       if (hit && (!earliestMechHit || hit.t < earliestMechHit.hit.t)) {
         earliestMechHit = { mech: candidate, hit };
@@ -1233,26 +1689,111 @@ export function stepSimulation(
   for (let i = 0; i < state.mechs.length; i++) {
     const a = state.mechs[i];
     if (!a.alive) continue;
+    const radA = getMechCollisionRadius(a.stats.sizeScale);
     for (let j = i + 1; j < state.mechs.length; j++) {
       const b = state.mechs[j];
       if (!b.alive) continue;
-      if (Math.abs(a.pos.z - b.pos.z) > 9.5) continue;
+      const maxScale = Math.max(a.stats.sizeScale, b.stats.sizeScale);
+      if (Math.abs(a.pos.z - b.pos.z) > 9.5 * maxScale) continue;
 
+      const radB = getMechCollisionRadius(b.stats.sizeScale);
       const dx = b.pos.x - a.pos.x;
       const dy = b.pos.y - a.pos.y;
       const d = Math.hypot(dx, dy);
-      const minSep = MECH_COLLISION_RADIUS * 2;
+      const minSep = radA + radB;
       if (d < minSep) {
         const nx = d > 1e-4 ? dx / d : 1;
         const ny = d > 1e-4 ? dy / d : 0;
         const push = (minSep - d) * 0.5;
-        a.pos.x = clamp(a.pos.x - nx * push, MECH_COLLISION_RADIUS, state.terrain.width - MECH_COLLISION_RADIUS);
-        a.pos.y = clamp(a.pos.y - ny * push, MECH_COLLISION_RADIUS, state.terrain.depth - MECH_COLLISION_RADIUS);
-        b.pos.x = clamp(b.pos.x + nx * push, MECH_COLLISION_RADIUS, state.terrain.width - MECH_COLLISION_RADIUS);
-        b.pos.y = clamp(b.pos.y + ny * push, MECH_COLLISION_RADIUS, state.terrain.depth - MECH_COLLISION_RADIUS);
+        a.pos.x = clamp(a.pos.x - nx * push, radA, state.terrain.width - radA);
+        a.pos.y = clamp(a.pos.y - ny * push, radA, state.terrain.depth - radA);
+        b.pos.x = clamp(b.pos.x + nx * push, radB, state.terrain.width - radB);
+        b.pos.y = clamp(b.pos.y + ny * push, radB, state.terrain.depth - radB);
       }
     }
   }
+
+  // 2b. Step AMS (Anti-Missile System) interception
+  for (const mech of state.mechs) {
+    if (!mech.alive) continue;
+    const override = Boolean(controlsByMechId[mech.id]?.overrideShutdown);
+    if (mech.thermalShutdown && !override) continue;
+
+    const torsoCenter: Vec3 = {
+      x: mech.pos.x,
+      y: mech.pos.y,
+      z: mech.pos.z + getMechCenterZ(mech.stats.sizeScale),
+    };
+    const torsoWorldYaw = getMechTorsoWorldYaw(mech);
+
+    for (const slot of ['rightShoulder', 'leftShoulder'] as WeaponSlotId[]) {
+      if (mech.parts[slot].destroyed) continue;
+      const slotRt = mech.weapons[slot];
+      const spec = getWeaponSpec(slotRt.weaponId);
+      if (spec.kind !== 'ams') continue;
+      if (slotRt.cooldownRemaining > 0 || slotRt.ammoRemaining === 0) continue;
+
+      let bestProj: ProjectileState | null = null;
+      let bestDist = spec.range > 0 ? spec.range : AMS_DEFAULT_RANGE;
+      for (const proj of state.projectiles) {
+        if (proj.hp <= 0 || proj.teamId === mech.teamId) continue;
+        const d = distance3D(
+          torsoCenter.x,
+          torsoCenter.y,
+          torsoCenter.z,
+          proj.pos.x,
+          proj.pos.y,
+          proj.pos.z
+        );
+        if (d <= bestDist) {
+          bestDist = d;
+          bestProj = proj;
+        }
+      }
+
+      if (bestProj) {
+        slotRt.cooldownRemaining = spec.cooldownSec;
+        if (slotRt.ammoRemaining > 0) {
+          slotRt.ammoRemaining = Math.max(0, slotRt.ammoRemaining - 1);
+        }
+        if (spec.heatCost > 0) {
+          mech.heat = Math.min(mech.maxHeat * 1.35, mech.heat + spec.heatCost);
+          if (mech.heat >= mech.maxHeat && !override && !mech.thermalShutdown) {
+            mech.thermalShutdown = true;
+            mech.enOverheated = true;
+            recordEvent(state, tickEvents, {
+              tick: state.tick,
+              type: 'thermal_shutdown',
+              actorId: mech.id,
+              pos: { ...mech.pos },
+            });
+          }
+        }
+        bestProj.hp -= spec.damage;
+        const muzzlePos = mechLocalToWorld(
+          getScaledMuzzleLocal(slot, mech.stats.sizeScale),
+          mech.pos,
+          torsoWorldYaw
+        );
+        recordEvent(state, tickEvents, {
+          tick: state.tick,
+          type: 'missile_intercepted',
+          actorId: mech.id,
+          targetId: bestProj.ownerId,
+          pos: muzzlePos,
+          endPos: { ...bestProj.pos },
+          detail: spec.id,
+        });
+      }
+    }
+  }
+  state.projectiles = state.projectiles.filter(
+    (p) =>
+      !(
+        p.hp <= 0 &&
+        (p.kind === 'lrm_homing' || p.kind === 'srm_homing' || p.kind === 'srm_rocket')
+      )
+  );
 
   // 3. Step projectiles & resolve terrain vs 8-part mech collisions
   const remainingProjectiles: ProjectileState[] = [];
@@ -1260,14 +1801,31 @@ export function stepSimulation(
     proj.ttlTicks -= 1;
     if (proj.ttlTicks <= 0) continue;
 
-    // Gentle missile homing
-    if (proj.homingTurnDegPerSec > 0 && proj.targetId) {
+    // Two-stage missile guidance (Stage 1: loft climb, Stage 2: terminal homing)
+    if (proj.loftTicksRemaining > 0) {
+      proj.loftTicksRemaining -= 1;
+      if (proj.homingTurnDegPerSec > 0 && proj.targetId) {
+        const tgt = state.mechs.find((m) => m.id === proj.targetId && m.alive);
+        if (tgt) {
+          const dx = tgt.pos.x - proj.pos.x;
+          const dy = tgt.pos.y - proj.pos.y;
+          const hLen = Math.hypot(dx, dy) || 1;
+          const hSpeed = Math.hypot(proj.vel.x, proj.vel.y) || 1;
+          const blend = clamp(degToRad(proj.homingTurnDegPerSec * 0.5 * SIM_DT), 0, 1);
+          const nx = proj.vel.x / hSpeed + (dx / hLen - proj.vel.x / hSpeed) * blend;
+          const ny = proj.vel.y / hSpeed + (dy / hLen - proj.vel.y / hSpeed) * blend;
+          const nLen = Math.hypot(nx, ny) || 1;
+          proj.vel.x = (nx / nLen) * hSpeed;
+          proj.vel.y = (ny / nLen) * hSpeed;
+        }
+      }
+    } else if (proj.homingTurnDegPerSec > 0 && proj.targetId) {
       const tgt = state.mechs.find((m) => m.id === proj.targetId && m.alive);
       if (tgt) {
         const desired = {
           x: tgt.pos.x - proj.pos.x,
           y: tgt.pos.y - proj.pos.y,
-          z: tgt.pos.z + 6.5 - proj.pos.z,
+          z: tgt.pos.z + getMechCenterZ(tgt.stats.sizeScale) - proj.pos.z,
         };
         const dLen = Math.hypot(desired.x, desired.y, desired.z) || 1;
         const speed = Math.hypot(proj.vel.x, proj.vel.y, proj.vel.z) || 1;
@@ -1313,7 +1871,8 @@ export function stepSimulation(
         nextPos,
         candidate.pos,
         candidate.yawDeg,
-        getMechTorsoWorldYaw(candidate)
+        getMechTorsoWorldYaw(candidate),
+        candidate.stats.sizeScale
       );
       if (hit) {
         if (!earliestMechHit || hit.t < earliestMechHit.hit.t) {
@@ -1333,7 +1892,7 @@ export function stepSimulation(
         proj.maxRange
       );
       if (rangeMult > 0.01) {
-        resolveHitOnMech(
+        const landed = resolveHitOnMech(
           state,
           attacker,
           earliestMechHit.mech,
@@ -1343,6 +1902,21 @@ export function stepSimulation(
           proj.ricochetAngleDeg,
           tickEvents
         );
+        if (
+          landed &&
+          proj.weaponId === 'ppc' &&
+          earliestMechHit.mech.alive &&
+          earliestMechHit.mech.stats.ecmActive
+        ) {
+          earliestMechHit.mech.ecmDisruptedTicks = PPC_ECM_DISRUPT_TICKS;
+          recordEvent(state, tickEvents, {
+            tick: state.tick,
+            type: 'ecm_disrupted',
+            actorId: attacker?.id ?? '',
+            targetId: earliestMechHit.mech.id,
+            pos: { ...earliestMechHit.hit.hitWorldPos },
+          });
+        }
       }
       continue;
     }

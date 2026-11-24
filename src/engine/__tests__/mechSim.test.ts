@@ -5,8 +5,8 @@ import {
   computeRangeFalloffMultiplier,
   getWeaponSlotMaxAmmo,
 } from '../../data/parts';
+import { CURRICULUM_MISSIONS } from '../../data/curriculum';
 import {
-  PRESET_BERSERKER,
   PRESET_FORTRESS,
   PRESET_SNIPER,
   PRESET_STRIKER,
@@ -109,7 +109,7 @@ describe('deterministic 30 TPS mech simulator', () => {
   it('blocks low shots across the central ridge while elevated shots clear it', () => {
     const sim = createSimulation({
       seed: 7,
-      rules: { arenaPreset: 'plains_ridge' },
+      rules: { arenaPreset: 'plains_ridge', arenaWidth: 600, arenaDepth: 600 },
       entries: [
         { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: STARTER_MECHS[3] },
         { id: 'target', name: 'Target', teamId: 'B', blueprint: STARTER_MECHS[0] },
@@ -141,7 +141,7 @@ describe('deterministic 30 TPS mech simulator', () => {
     // Elevated shot from z=22 clears the ridge and hits target
     const simHigh = createSimulation({
       seed: 7,
-      rules: { arenaPreset: 'plains_ridge' },
+      rules: { arenaPreset: 'plains_ridge', arenaWidth: 600, arenaDepth: 600 },
       entries: [
         { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: STARTER_MECHS[3] },
         { id: 'target', name: 'Target', teamId: 'B', blueprint: STARTER_MECHS[0] },
@@ -236,10 +236,11 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('triggers EN overheat on depletion and recovers at 30% capacity', () => {
+    const hotLaserMech = CURRICULUM_MISSIONS[1].buildBrokenStarter().mech;
     const sim = createSimulation({
       seed: 12,
       entries: [
-        { id: 'runner', name: 'Runner', teamId: 'A', blueprint: STARTER_MECHS[4] }, // Large/Small laser high heat
+        { id: 'runner', name: 'Runner', teamId: 'A', blueprint: hotLaserMech }, // Large/Med laser high heat
         { id: 'dummy', name: 'Dummy', teamId: 'B', blueprint: STARTER_MECHS[0] },
       ],
     });
@@ -291,11 +292,12 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(sWith.totalWeight).toBeCloseTo(sNo.totalWeight + 3, 2);
     expect(sWith.heatDissipationPerSec).toBeGreaterThan(sNo.heatDissipationPerSec);
 
+    const hotLaserMech = CURRICULUM_MISSIONS[1].buildBrokenStarter().mech;
     const sim = createSimulation({
       seed: 99,
       rules: { arenaPreset: 'urban_pillars', maxSeconds: 60 },
       entries: [
-        { id: 'hot', name: 'Hot', teamId: 'A', blueprint: STARTER_MECHS[4] },
+        { id: 'hot', name: 'Hot', teamId: 'A', blueprint: hotLaserMech },
         { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_VANGUARD },
       ],
     });
@@ -492,7 +494,7 @@ describe('deterministic 30 TPS mech simulator', () => {
         { id: 'pivot', name: 'Pivot', teamId: 'A', blueprint: PRESET_VANGUARD },
         { id: 'mover', name: 'Mover', teamId: 'B', blueprint: PRESET_VANGUARD },
         { id: 'light_run', name: 'LightRun', teamId: 'C', blueprint: PRESET_STRIKER },
-        { id: 'heavy_still', name: 'HeavyStill', teamId: 'D', blueprint: PRESET_BERSERKER },
+        { id: 'heavy_still', name: 'HeavyStill', teamId: 'D', blueprint: PRESET_VANGUARD },
       ],
     });
     sim.terrain.obstacles = [];
@@ -609,45 +611,272 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(fired).toBe(true);
   });
 
-  it('separates optical FOV+LOS vision from 360-deg radar and supports indirect LRM fire', () => {
+  it('separates 800m optical FOV+LOS vision from target-RCS 360-deg radar, preserves allySpotted, and supports indirect LRM fire', () => {
+    const strikerNoEcm = { ...PRESET_STRIKER, ecmEnabled: false };
     const sim = createSimulation({
       seed: 616,
-      rules: { arenaPreset: 'urban_pillars', maxSeconds: 30 },
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200, maxSeconds: 30 },
       entries: [
         { id: 'me', name: 'Me', teamId: 'A', blueprint: PRESET_VANGUARD },
-        { id: 'behind', name: 'Behind', teamId: 'B', blueprint: PRESET_STRIKER },
-        { id: 'covered', name: 'Covered', teamId: 'B', blueprint: PRESET_STRIKER },
+        { id: 'ally', name: 'Ally', teamId: 'A', blueprint: strikerNoEcm },
+        { id: 'behind_light', name: 'BehindLight', teamId: 'B', blueprint: strikerNoEcm },
+        { id: 'covered_light', name: 'CoveredLight', teamId: 'B', blueprint: strikerNoEcm },
+        { id: 'covered_assault', name: 'CoveredAssault', teamId: 'B', blueprint: PRESET_FORTRESS },
+        { id: 'far_visible', name: 'FarVisible', teamId: 'B', blueprint: PRESET_SNIPER },
       ],
     });
-    // Place tall wall at y=220..240 blocking optical LOS to 'covered' at (300, 120)
+    // Wall blocks optical LOS due North from (600, 600)
     sim.terrain.obstacles = [
-      { id: 'wall', x: 250, y: 215, width: 100, height: 25, baseZ: 0, topZ: 28 },
+      { id: 'wall', x: 540, y: 490, width: 120, height: 25, baseZ: 0, topZ: 28 },
     ];
-    sim.mechs[0].pos = { x: 300, y: 300, z: 0 };
-    sim.mechs[0].yawDeg = 0; // Looking North (-Y)
-    sim.mechs[1].pos = { x: 300, y: 420, z: 0 }; // 120m South (directly behind)
-    sim.mechs[2].pos = { x: 300, y: 120, z: 0 }; // 180m North (in FOV, but blocked by wall)
+    sim.mechs[0].pos = { x: 600, y: 600, z: 0 };
+    sim.mechs[0].yawDeg = 0; // Looking North (-Y), FOV ±53° (106°)
+    sim.mechs[1].pos = { x: 820, y: 340, z: 0 }; // Ally east of wall angled NW so it spots covered_assault (55° off) but not covered_light (75° off)
+    sim.mechs[1].yawDeg = 325;
+    sim.mechs[2].pos = { x: 600, y: 710, z: 0 }; // 110m South (behind FOV, within Light 120m RCS)
+    sim.mechs[3].pos = { x: 600, y: 420, z: 0 }; // 180m North behind wall (outside Light 120m RCS -> undetected)
+    sim.mechs[4].pos = { x: 600, y: 340, z: 0 }; // 260m North behind wall (inside Assault 400m RCS -> omni detected)
+    sim.mechs[5].pos = { x: 920, y: 260, z: 0 }; // ~467m NE (~43.3° bearing, clears wall x=540..660, inside 800m ±53° FOV+LOS)
 
     const sensor = buildMechSensorState(sim, 'me');
-    // Neither enemy is optically visible (one behind FOV, one behind wall)
-    expect(sensor.visibleEnemies).toHaveLength(0);
-    // Both enemies ARE detected on 360° radar!
-    expect(sensor.radarContacts.map((c) => c.id).sort()).toEqual(['behind', 'covered']);
-    const coveredContact = sensor.radarContacts.find((c) => c.id === 'covered')!;
-    expect(coveredContact.inVisualFov).toBe(true);
-    expect(coveredContact.hasLineOfSight).toBe(false);
+    // Only far_visible is optically visible (within 800m + ±53° FOV + LOS)
+    expect(sensor.visibleEnemies.map((e) => e.id)).toEqual(['far_visible']);
+    // covered_light (180m behind wall, 120m RCS) is NOT detected; behind_light (110m), covered_assault (260m, 400m RCS), and far_visible ARE in radarContacts
+    expect(sensor.radarContacts.map((c) => c.id).sort()).toEqual([
+      'behind_light',
+      'covered_assault',
+      'far_visible',
+    ]);
+    const assaultContact = sensor.radarContacts.find((c) => c.id === 'covered_assault')!;
+    expect(assaultContact.inVisualFov).toBe(true);
+    expect(assaultContact.hasLineOfSight).toBe(false);
+    expect(assaultContact.allySpotted).toBe(true);
 
-    // Direct-fire AC/5 cannot fire at radar-only covered target, whereas LRM-5 CAN fire indirect lofted salvo
+    // Direct-fire AC/5 cannot fire at radar-only covered target, AND LRM-5 refuses indirect fire BEFORE lock completes
     stepSimulation(sim, {
       me: {
         ...EMPTY_CONTROL_INPUT,
         fireRightArm: true,
         fireRightShoulder: true,
-        lockTargetId: 'covered',
+        lockTargetId: 'covered_assault',
+      },
+    });
+    expect(sim.projectiles.some((p) => p.slot === 'rightArm')).toBe(false);
+    expect(sim.projectiles.some((p) => p.slot === 'rightShoulder')).toBe(false);
+    expect(sim.mechs[0].lockComplete).toBe(false);
+
+    // Accumulate lock-on (~1.8s = 56 ticks) against covered_assault -> lock completes and LRM-5 fires indirect lofted salvo!
+    for (let t = 0; t < 56; t++) {
+      stepSimulation(sim, {
+        me: {
+          ...EMPTY_CONTROL_INPUT,
+          lockTargetId: 'covered_assault',
+        },
+      });
+    }
+    expect(sim.mechs[0].lockComplete).toBe(true);
+    stepSimulation(sim, {
+      me: {
+        ...EMPTY_CONTROL_INPUT,
+        fireRightArm: true,
+        fireRightShoulder: true,
+        lockTargetId: 'covered_assault',
       },
     });
     expect(sim.projectiles.some((p) => p.slot === 'rightArm')).toBe(false);
     expect(sim.projectiles.some((p) => p.slot === 'rightShoulder' && p.kind === 'lrm_homing')).toBe(true);
+  });
+
+  it('supports LRM Stream vs Salvo mode, 2-stage lofted climb, ECM/BAP/PPC EMP, and Ballistic/Laser AMS interception', () => {
+    // 1. LRM Stream vs Salvo + 2-stage lofted arc
+    const streamBp = structuredClone(PRESET_VANGUARD);
+    streamBp.lrmFireMode = 'stream';
+    const salvoBp = structuredClone(PRESET_VANGUARD);
+    salvoBp.lrmFireMode = 'salvo';
+
+    const simStream = createSimulation({
+      seed: 101,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
+      entries: [
+        { id: 'stream', name: 'Stream', teamId: 'A', blueprint: streamBp },
+        { id: 'salvo', name: 'Salvo', teamId: 'A', blueprint: salvoBp },
+        { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_FORTRESS },
+      ],
+    });
+    simStream.terrain.obstacles = [];
+    simStream.mechs[0].pos = { x: 600, y: 800, z: 0 };
+    simStream.mechs[0].yawDeg = 0;
+    simStream.mechs[1].pos = { x: 640, y: 800, z: 0 };
+    simStream.mechs[1].yawDeg = 0;
+    simStream.mechs[2].pos = { x: 600, y: 200, z: 0 };
+
+    for (let t = 0; t < 40; t++) {
+      stepSimulation(simStream, {
+        stream: { ...EMPTY_CONTROL_INPUT, lockTargetId: 'target' },
+        salvo: { ...EMPTY_CONTROL_INPUT, lockTargetId: 'target' },
+      });
+    }
+    expect(simStream.mechs[0].lockComplete).toBe(true);
+    stepSimulation(simStream, {
+      stream: { ...EMPTY_CONTROL_INPUT, fireRightShoulder: true, lockTargetId: 'target' },
+      salvo: { ...EMPTY_CONTROL_INPUT, fireRightShoulder: true, lockTargetId: 'target' },
+    });
+    // Salvo spawns all 5 immediately; Stream spawns 1 and queues 4
+    expect(simStream.projectiles.filter((p) => p.ownerId === 'salvo')).toHaveLength(5);
+    expect(simStream.projectiles.filter((p) => p.ownerId === 'stream')).toHaveLength(1);
+    expect(simStream.mechs[0].salvoQueue[0]?.remainingShots).toBe(4);
+    expect(simStream.projectiles[0].loftTicksRemaining).toBeGreaterThan(0);
+
+    // Step 12 ticks -> stream has fired all 5 staggered missiles
+    for (let t = 0; t < 15; t++) {
+      stepSimulation(simStream, {
+        stream: { ...EMPTY_CONTROL_INPUT, lockTargetId: 'target' },
+        salvo: { ...EMPTY_CONTROL_INPUT, lockTargetId: 'target' },
+      });
+    }
+    expect(simStream.projectiles.filter((p) => p.ownerId === 'stream').length).toBe(5);
+
+    // 2. ECM bubble halves omni RCS, blocks allySpotted, doubles lock time; BAP counters ECM; PPC hit disrupts ECM for 4.0s
+    const ecmTargetBp = structuredClone(PRESET_STRIKER); // Light 120m RCS, ECM ON -> 60m RCS
+    ecmTargetBp.ecmEnabled = true;
+    const obsNoBapBp = structuredClone(PRESET_VANGUARD);
+    obsNoBapBp.parts.rightArmWeapon = 'ppc';
+    const obsBapBp = structuredClone(PRESET_SNIPER); // Has bap_probe equipped
+
+    const ecmSim = createSimulation({
+      seed: 202,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
+      entries: [
+        { id: 'obs', name: 'Obs', teamId: 'A', blueprint: obsNoBapBp },
+        { id: 'spotter', name: 'Spotter', teamId: 'A', blueprint: PRESET_VANGUARD },
+        { id: 'bapObs', name: 'BapObs', teamId: 'C', blueprint: obsBapBp },
+        { id: 'ecmFoe', name: 'EcmFoe', teamId: 'B', blueprint: ecmTargetBp },
+      ],
+    });
+    ecmSim.terrain.obstacles = [
+      { id: 'wall', x: 540, y: 500, width: 120, height: 20, baseZ: 0, topZ: 28 },
+    ];
+    ecmSim.mechs[0].pos = { x: 600, y: 600, z: 0 }; // 90m south of wall -> no LOS to ecmFoe
+    ecmSim.mechs[0].yawDeg = 0;
+    ecmSim.mechs[1].pos = { x: 820, y: 400, z: 0 }; // Spotter has clear LOS to ecmFoe at (600, 400)
+    ecmSim.mechs[1].yawDeg = 270;
+    ecmSim.mechs[2].pos = { x: 420, y: 400, z: 0 }; // BAP 180m West of ecmFoe (< 240m BAP range)
+    ecmSim.mechs[2].yawDeg = 90;
+    ecmSim.mechs[3].pos = { x: 600, y: 400, z: 0 }; // 200m North of obs, 90m would be blocked -> 200m > 60m halved RCS
+
+    // Without BAP: spotter sees ecmFoe, but ECM blocks allySpotted sharing to obs (at 200m behind wall)
+    const obsSensor = buildMechSensorState(ecmSim, 'obs');
+    expect(obsSensor.radarContacts.some((c) => c.id === 'ecmFoe')).toBe(false);
+
+    // Move obs within 110m (<= 120m proximity break) with clear LOS -> lock requires ~1.2s (not 2.4s)
+    // First test ECM doubling lock time at 200m with clear LOS:
+    ecmSim.terrain.obstacles = [];
+    const obsSensorLos = buildMechSensorState(ecmSim, 'obs');
+    expect(obsSensorLos.visibleEnemies.some((e) => e.id === 'ecmFoe')).toBe(true);
+    for (let t = 0; t < 40; t++) {
+      stepSimulation(ecmSim, {
+        obs: { ...EMPTY_CONTROL_INPUT, lockTargetId: 'ecmFoe' },
+      });
+    }
+    // 40 ticks (~1.33s): normal 1.2s would be locked, but ECM 2x requires 2.4s -> NOT locked yet!
+    expect(ecmSim.mechs[0].lockComplete).toBe(false);
+    // BAP observer locks cleanly within 0.9s (1.2s * 0.75)
+    for (let t = 0; t < 30; t++) {
+      stepSimulation(ecmSim, {
+        bapObs: { ...EMPTY_CONTROL_INPUT, lockTargetId: 'ecmFoe' },
+      });
+    }
+    expect(ecmSim.mechs[2].lockComplete).toBe(true);
+
+    // PPC hit disrupts ecmFoe ECM for 120 ticks (4.0s)
+    ecmSim.mechs[0].pos = { x: 600, y: 480, z: 0 };
+    ecmSim.mechs[0].yawDeg = 0;
+    ecmSim.mechs[3].pos = { x: 600, y: 400, z: 0 };
+    stepSimulation(ecmSim, {
+      obs: { ...EMPTY_CONTROL_INPUT, fireRightArm: true, lockTargetId: 'ecmFoe' },
+    });
+    for (let t = 0; t < 15; t++) {
+      stepSimulation(ecmSim, {});
+      if (ecmSim.mechs[3].ecmDisruptedTicks > 0) break;
+    }
+    expect(ecmSim.mechs[3].ecmDisruptedTicks).toBeGreaterThan(0);
+    expect(buildMechSensorState(ecmSim, 'ecmFoe').ecmActive).toBe(false);
+
+    // 3. Ballistic AMS (ammo, 0 heat) & Laser AMS (unlimited ammo, +heat) intercept incoming missiles
+    const balAmsBp = structuredClone(PRESET_FORTRESS);
+    balAmsBp.parts.leftShoulderWeapon = 'ams_ballistic';
+    const lasAmsBp = structuredClone(PRESET_FORTRESS);
+    lasAmsBp.parts.leftShoulderWeapon = 'ams_laser';
+
+    const amsSim = createSimulation({
+      seed: 303,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
+      entries: [
+        { id: 'balAms', name: 'BalAMS', teamId: 'A', blueprint: balAmsBp },
+        { id: 'lasAms', name: 'LasAMS', teamId: 'A', blueprint: lasAmsBp },
+        { id: 'lrmBoat', name: 'LrmBoat', teamId: 'B', blueprint: PRESET_VANGUARD },
+      ],
+    });
+    amsSim.terrain.obstacles = [];
+    amsSim.mechs[0].pos = { x: 560, y: 400, z: 0 };
+    amsSim.mechs[1].pos = { x: 640, y: 400, z: 0 };
+    amsSim.mechs[2].pos = { x: 600, y: 700, z: 0 };
+    amsSim.mechs[2].yawDeg = 0;
+
+    // Spawn incoming LRM projectiles close to both AMS mechs
+    amsSim.projectiles.push(
+      {
+        id: 901,
+        ownerId: 'lrmBoat',
+        teamId: 'B',
+        slot: 'rightShoulder',
+        weaponId: 'lrm5',
+        kind: 'lrm_homing',
+        pos: { x: 560, y: 440, z: 8 },
+        vel: { x: 0, y: -100, z: 0 },
+        gravity: 1,
+        damage: 10,
+        canRicochet: false,
+        ricochetAngleDeg: 89,
+        homingTurnDegPerSec: 0,
+        targetId: 'balAms',
+        distanceTraveled: 100,
+        optimalRange: 750,
+        maxRange: 900,
+        ttlTicks: 30,
+        hp: 1,
+        loftTicksRemaining: 0,
+      },
+      {
+        id: 902,
+        ownerId: 'lrmBoat',
+        teamId: 'B',
+        slot: 'rightShoulder',
+        weaponId: 'lrm5',
+        kind: 'lrm_homing',
+        pos: { x: 640, y: 440, z: 8 },
+        vel: { x: 0, y: -100, z: 0 },
+        gravity: 1,
+        damage: 10,
+        canRicochet: false,
+        ricochetAngleDeg: 89,
+        homingTurnDegPerSec: 0,
+        targetId: 'lasAms',
+        distanceTraveled: 100,
+        optimalRange: 750,
+        maxRange: 900,
+        ttlTicks: 30,
+        hp: 1,
+        loftTicksRemaining: 0,
+      }
+    );
+
+    const balAmmoBefore = amsSim.mechs[0].weapons.leftShoulder.ammoRemaining;
+    stepSimulation(amsSim, {});
+    expect(amsSim.lastTickEvents.filter((e) => e.type === 'missile_intercepted')).toHaveLength(2);
+    expect(amsSim.mechs[0].weapons.leftShoulder.ammoRemaining).toBe(balAmmoBefore - 1);
+    expect(amsSim.mechs[0].heat).toBe(0);
+    expect(amsSim.mechs[1].heat).toBeGreaterThan(0);
   });
 
   it('supports per-slot extra ammo bins, keeps energy blade, and removes buckler shield', () => {

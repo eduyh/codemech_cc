@@ -44,6 +44,12 @@ function pilotCondExpr(cell: PilotGridCell): string {
       return `mech.torso_hp_pct < ${Math.round(cell.param ?? 50)}`;
     case 'if_incoming_fire':
       return 'sensor.incoming_fire()';
+    case 'if_target_locked':
+      return 'sensor.target_locked()';
+    case 'if_incoming_missile':
+      return 'sensor.incoming_missile()';
+    case 'if_ecm_jammed':
+      return 'sensor.ecm_jammed()';
     case 'if_enemy_hp_below':
       return `target.hp_pct < ${Math.round(cell.param ?? 35)}`;
     case 'if_flag_a':
@@ -120,6 +126,12 @@ function subCondExpr(cell: MechSubroutineCell): string {
       return 'mech.is_airborne()';
     case 'if_incoming_fire':
       return 'sensor.incoming_fire()';
+    case 'if_target_locked':
+      return 'sensor.target_locked()';
+    case 'if_incoming_missile':
+      return 'sensor.incoming_missile()';
+    case 'if_ecm_jammed':
+      return 'sensor.ecm_jammed()';
     default:
       return 'False';
   }

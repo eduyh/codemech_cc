@@ -8,9 +8,9 @@ import {
 } from '../types/mech';
 import { simToThreePos } from './coords';
 
-const MAX_PROJECTILES = 160;
-const MAX_PARTICLES = 140;
-const MAX_LASER_BEAMS = 24;
+const MAX_PROJECTILES = 320;
+const MAX_PARTICLES = 160;
+const MAX_LASER_BEAMS = 48;
 
 interface ParticleSlot {
   active: boolean;
@@ -205,7 +205,7 @@ export class EffectsManager3D {
 
       // Trail pointing backward along projectile velocity
       const vLen = Math.hypot(p.vel.x, p.vel.y, p.vel.z) || 1;
-      const trailLen = p.kind === 'energy' ? 12 : p.kind === 'missile' ? 9 : 7;
+      const trailLen = p.kind === 'energy' ? 12 : styleKey === 'missile' ? 11 : 7;
       const posAttr = line.geometry.attributes.position as THREE.BufferAttribute;
       posAttr.setXYZ(0, tmpPos.x, tmpPos.y, tmpPos.z);
       posAttr.setXYZ(
@@ -275,9 +275,37 @@ export class EffectsManager3D {
             slot.active = true;
             slot.age = 0;
             slot.maxAge = 7;
+            slot.mat.color.set('#22d3ee');
             slot.mat.opacity = 0.95;
             slot.line.visible = true;
           }
+        } else if (ev.type === 'missile_intercepted' && ev.endPos) {
+          const endVec = new THREE.Vector3();
+          simToThreePos(ev.endPos, terrain, endVec);
+          const slot = this.laserBeams.find((b) => !b.active);
+          if (slot) {
+            const attr = slot.line.geometry.attributes.position as THREE.BufferAttribute;
+            attr.setXYZ(0, tmp.x, tmp.y, tmp.z);
+            attr.setXYZ(1, endVec.x, endVec.y, endVec.z);
+            attr.needsUpdate = true;
+            slot.active = true;
+            slot.age = 0;
+            slot.maxAge = 5;
+            slot.mat.color.set(ev.detail === 'ams_laser' ? '#4ade80' : '#fde047');
+            slot.mat.opacity = 0.9;
+            slot.line.visible = true;
+          }
+          this.spawnParticle(
+            endVec.x,
+            endVec.y,
+            endVec.z,
+            0,
+            0.22,
+            0,
+            ev.detail === 'ams_laser' ? '#4ade80' : '#fb923c',
+            8,
+            1.15
+          );
         } else if (ev.type === 'hit') {
           this.spawnParticle(tmp.x, tmp.y, tmp.z, 0.2, 0.35, 0.2, '#facc15', 10, 1.3);
           this.spawnParticle(tmp.x, tmp.y, tmp.z, -0.25, 0.3, -0.2, '#f97316', 10, 1.1);

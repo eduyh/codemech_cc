@@ -61,6 +61,8 @@ describe('shareMech closed-network packages & codec', () => {
       expect(decoded.mech.parts).toEqual(mech.parts);
       expect(decoded.mech.armor).toEqual(mech.armor);
       expect(decoded.mech.subroutines).toEqual(mech.subroutines);
+      expect(decoded.mech.ecmEnabled).toBe(Boolean(mech.ecmEnabled));
+      expect(decoded.mech.lrmFireMode).toBe(mech.lrmFireMode ?? 'salvo');
       expect(decoded.pilot.name).toBe(pilot.name);
       expect(decoded.pilot.grid).toEqual(pilot.grid);
       expect(decoded.battleOnly).toBe(false);

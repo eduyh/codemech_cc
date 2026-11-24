@@ -3,6 +3,7 @@ import { STARTER_MECHS } from '../../data/presets';
 import { MatchParticipantEntry } from '../../types/mech';
 import { distance2D } from '../math';
 import {
+  computeRecommendedArenaSize,
   createTerrain,
   generateSpawnPositions,
   getGroundHeight,
@@ -52,8 +53,25 @@ describe('terrain & multi-team spawns', () => {
     expect(hasLineOfSight3D(terrain, northElevated, southElevated)).toBe(true);
   });
 
-  it('generates non-overlapping in-bounds spawns for 2x6, 3x4, 4x3, 6x2, 3x3, and 12-mech BR', () => {
-    const terrain = createTerrain('plains_ridge', 600, 600, 42);
+  it('scales arena size with mech count, creates 3-tier obstacle heights, and generates non-overlapping spawns up to 2000m', () => {
+    expect(computeRecommendedArenaSize(2)).toBe(1000);
+    expect(computeRecommendedArenaSize(4)).toBe(1200);
+    expect(computeRecommendedArenaSize(6)).toBe(1500);
+    expect(computeRecommendedArenaSize(9)).toBe(1750);
+    expect(computeRecommendedArenaSize(12)).toBe(2000);
+
+    const presets = ['plains_ridge', 'twin_mesas', 'urban_pillars', 'valley_basin'] as const;
+    for (const p of presets) {
+      const t = createTerrain(p, 2000, 2000, 42);
+      const clearHeights = t.obstacles.map(
+        (o) => o.topZ - getGroundHeight(t, o.x + o.width * 0.5, o.y + o.height * 0.5)
+      );
+      expect(clearHeights.some((h) => h < 8)).toBe(true); // low hull-down
+      expect(clearHeights.some((h) => h >= 10 && h <= 20)).toBe(true); // mid cover
+      expect(clearHeights.some((h) => h > 25)).toBe(true); // tall tower/monolith
+    }
+
+    const terrain = createTerrain('plains_ridge', 2000, 2000, 42);
     const configs: Array<[number, number]> = [
       [6, 2],
       [4, 3],
@@ -71,9 +89,9 @@ describe('terrain & multi-team spawns', () => {
       const list = Array.from(spawns.values());
       for (const s of list) {
         expect(s.x).toBeGreaterThanOrEqual(20);
-        expect(s.x).toBeLessThanOrEqual(580);
+        expect(s.x).toBeLessThanOrEqual(1980);
         expect(s.y).toBeGreaterThanOrEqual(20);
-        expect(s.y).toBeLessThanOrEqual(580);
+        expect(s.y).toBeLessThanOrEqual(1980);
         expect(s.z).toBeGreaterThanOrEqual(0);
       }
 

@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { getArmWeaponSpec, getChassisSpec, getLegSpec, getShoulderWeaponSpec } from '../data/parts';
-import { clamp } from '../engine/math';
+import { getArmWeaponSpec, getChassisSpec, getShoulderWeaponSpec } from '../data/parts';
 import { getSurfaceHeight } from '../engine/terrain';
 import { MechPartId, MechRuntimeState, TerrainConfig } from '../types/mech';
 import { simToThreePos, simYawToThreeRotY } from './coords';
@@ -126,9 +125,22 @@ function buildSideTorsoWeapon(
     const lens = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.34, 0.38), accentMat);
     lens.position.set(0, 0.38, -1.35);
     g.add(housing, lens);
+  } else if (weaponId === 'ams_ballistic' || weaponId === 'ams_laser') {
+    const turret = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.42, 0.56), gunMat);
+    turret.position.set(0, 1.35, -0.05);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.72, 6), accentMat);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, 1.48, -0.45);
+    g.add(turret, barrel);
+  } else if (weaponId === 'bap_probe') {
+    const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.22, 0.42, 8), gunMat);
+    dish.position.set(0, 1.38, -0.05);
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.95, 6), accentMat);
+    mast.position.set(0, 1.95, -0.05);
+    g.add(dish, mast);
   } else {
-    // lrm5 / lrm10 / srm_rocket / streak_srm: integrated torso missile pod
-    const w = weaponId === 'lrm10' ? 0.96 : 0.78;
+    // lrm5 / lrm10 / lrm15 / srm_rocket / streak_srm: integrated torso missile pod
+    const w = weaponId === 'lrm15' ? 1.12 : weaponId === 'lrm10' ? 0.96 : 0.78;
     const pod = new THREE.Mesh(new THREE.BoxGeometry(w, 0.76, 1.35), gunMat);
     pod.position.set(0, 1.12, -0.22);
     const cap = new THREE.Mesh(new THREE.BoxGeometry(w * 0.84, 0.58, 0.14), accentMat);
@@ -376,21 +388,22 @@ export function buildProceduralMechRig(
   upperBodyGroup.add(leftArmGroup);
 
   // 5. Right & Left Legs
-  const legSpec = getLegSpec(mech.blueprint.parts.legs);
+  const chassis = getChassisSpec(mech.blueprint.chassisId);
+  const sizeScale = mech.stats.sizeScale;
   const rightLegGroup = new THREE.Group();
   rightLegGroup.position.set(1.0, 4.55, 0);
-  const rightLegPivot = buildLegAssembly(legSpec.style, 1, armorMat, frameMat, glowMat);
+  const rightLegPivot = buildLegAssembly(chassis.legStyle, 1, armorMat, frameMat, glowMat);
   rightLegGroup.add(rightLegPivot);
   bodyGroup.add(rightLegGroup);
 
   const leftLegGroup = new THREE.Group();
   leftLegGroup.position.set(-1.0, 4.55, 0);
-  const leftLegPivot = buildLegAssembly(legSpec.style, -1, armorMat, frameMat, glowMat);
+  const leftLegPivot = buildLegAssembly(chassis.legStyle, -1, armorMat, frameMat, glowMat);
   leftLegGroup.add(leftLegPivot);
   bodyGroup.add(leftLegGroup);
 
-  // Ground shadow disc
-  const shadowGeo = new THREE.CircleGeometry(3.2, 20);
+  // Ground shadow disc (scaled by chassis sizeScale)
+  const shadowGeo = new THREE.CircleGeometry(3.2 * sizeScale, 20);
   shadowGeo.rotateX(-Math.PI / 2);
   const shadowMat = new THREE.MeshBasicMaterial({
     color: '#020617',
@@ -400,8 +413,8 @@ export function buildProceduralMechRig(
   const groundShadow = new THREE.Mesh(shadowGeo, shadowMat);
   root.add(groundShadow);
 
-  // Focus ring around feet
-  const ringGeo = new THREE.RingGeometry(3.6, 4.3, 28);
+  // Focus ring around feet (scaled by chassis sizeScale)
+  const ringGeo = new THREE.RingGeometry(3.6 * sizeScale, 4.3 * sizeScale, 28);
   ringGeo.rotateX(-Math.PI / 2);
   const ringMat = new THREE.MeshBasicMaterial({
     color: '#ffffff',
@@ -428,9 +441,7 @@ export function buildProceduralMechRig(
   altitudeLine.visible = false;
   root.add(altitudeLine);
 
-  const chassis = getChassisSpec(mech.blueprint.chassisId);
-  const tonScale = 0.84 + ((clamp(chassis.maxTonnage, 35, 100) - 35) / 65) * 0.36;
-  bodyGroup.scale.setScalar(tonScale);
+  bodyGroup.scale.setScalar(sizeScale);
 
   bodyGroup.traverse((child) => {
     const mesh = child as THREE.Mesh;
@@ -510,7 +521,7 @@ export function updateMechRigAnimation(
   }
 
   if (!mech.alive) {
-    rig.bodyGroup.position.y = -3.4;
+    rig.bodyGroup.position.y = -3.4 * mech.stats.sizeScale;
     rig.bodyGroup.rotation.x = 1.25;
     rig.bodyGroup.rotation.z = 0.35;
     rig.upperBodyGroup.rotation.set(0, 0, 0);

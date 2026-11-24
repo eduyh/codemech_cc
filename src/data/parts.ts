@@ -1,15 +1,11 @@
 import {
   BoosterPartSpec,
-  HeadPartSpec,
-  LegPartSpec,
   MAX_CHASSIS_TONNAGE,
   MechBlueprint,
   MechChassisSpec,
   MechComputedStats,
   MechPartsSelection,
   MechWeaponGroups,
-  ShoulderPartSpec,
-  TorsoPartSpec,
   WEAPON_GROUP_IDS,
   WeaponGroupId,
   WeaponPartSpec,
@@ -18,120 +14,6 @@ import {
 import { clamp } from '../engine/math';
 
 export const MAX_EXTRA_AMMO_TONS = 5;
-
-export const HEAD_PARTS: readonly HeadPartSpec[] = [
-  {
-    id: 'head_std',
-    name: 'H-01 バランスヘッド',
-    weight: 45,
-    cost: 120,
-    enDrain: 14,
-    structureHp: 110,
-    maxArmor: 90,
-    radarRange: 380,
-    lockSpeedMult: 1.0,
-    description: '標準的な索敵・ロック性能を備えたバランス型頭部。',
-  },
-  {
-    id: 'head_recon',
-    name: 'H-02 リーコンアイ',
-    weight: 38,
-    cost: 165,
-    enDrain: 22,
-    structureHp: 85,
-    maxArmor: 65,
-    radarRange: 520,
-    lockSpeedMult: 1.25,
-    description: '長距離レーダー特化型。遠距離狙撃や索敵支援向け。',
-  },
-  {
-    id: 'head_armored',
-    name: 'H-03 ガードヘルム',
-    weight: 62,
-    cost: 150,
-    enDrain: 12,
-    structureHp: 150,
-    maxArmor: 130,
-    radarRange: 330,
-    lockSpeedMult: 0.9,
-    description: 'コックピット保護を重視した重装甲頭部。',
-  },
-];
-
-export const TORSO_PARTS: readonly TorsoPartSpec[] = [
-  {
-    id: 'torso_std',
-    name: 'C-01 スタンダードコア',
-    weight: 220,
-    cost: 280,
-    enCapacity: 1000,
-    enRegenPerSec: 175,
-    structureHp: 560,
-    maxFrontArmor: 340,
-    maxRearArmor: 200,
-    description: '扱いやすい標準コア。前後の装甲配分バランスに優れる。',
-  },
-  {
-    id: 'torso_light',
-    name: 'C-02 エアロフレーム',
-    weight: 165,
-    cost: 260,
-    enCapacity: 920,
-    enRegenPerSec: 195,
-    structureHp: 420,
-    maxFrontArmor: 240,
-    maxRearArmor: 140,
-    description: '軽量・高出力ジェネレータ搭載。高機動戦向け。',
-  },
-  {
-    id: 'torso_heavy',
-    name: 'C-03 バスティオンコア',
-    weight: 300,
-    cost: 340,
-    enCapacity: 1200,
-    enRegenPerSec: 170,
-    structureHp: 740,
-    maxFrontArmor: 480,
-    maxRearArmor: 280,
-    description: '高耐久・大口径前面装甲を支える重量級コア。',
-  },
-];
-
-export const SHOULDER_MOUNTS: readonly ShoulderPartSpec[] = [
-  {
-    id: 'shd_std',
-    name: 'S-01 標準サイドトルソー',
-    weight: 55,
-    cost: 80,
-    enDrain: 6,
-    structureHp: 210,
-    maxFrontArmor: 180,
-    maxRearArmor: 110,
-    description: '標準的な前後装甲フレームを持つ右胴／左胴モジュール。',
-  },
-  {
-    id: 'shd_light',
-    name: 'S-02 スリムサイドトルソー',
-    weight: 35,
-    cost: 70,
-    enDrain: 4,
-    structureHp: 150,
-    maxFrontArmor: 120,
-    maxRearArmor: 80,
-    description: '軽量化を優先した細身の右胴／左胴モジュール。',
-  },
-  {
-    id: 'shd_heavy',
-    name: 'S-03 シールドサイドトルソー',
-    weight: 85,
-    cost: 115,
-    enDrain: 8,
-    structureHp: 290,
-    maxFrontArmor: 260,
-    maxRearArmor: 150,
-    description: '前面からの被弾を受け止める重装甲の右胴／左胴モジュール。',
-  },
-];
 
 export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
   {
@@ -498,24 +380,26 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
     kind: 'lrm_homing',
     weight: 4.0,
     cost: 180,
-    damage: 16,
-    projectileSpeed: 145,
+    damage: 10,
+    projectileSpeed: 155,
     projectileGravity: 1.0,
-    range: 520,
-    minRange: 90,
-    cooldownSec: 4.8,
+    range: 750,
+    maxRange: 900,
+    minRange: 120,
+    cooldownSec: 3.8,
     enCost: 0,
-    heatCost: 14,
+    heatCost: 12,
     maxAmmo: 24,
     ammoPerTon: 24,
-    spreadDeg: 3.5,
-    burstCount: 3,
+    spreadDeg: 3.2,
+    burstCount: 5,
     canRicochet: false,
     ricochetAngleDeg: 89,
-    homingTurnDegPerSec: 42,
+    homingTurnDegPerSec: 65,
+    streamIntervalTicks: 3,
     partStructureHp: 0,
     maxPartArmor: 0,
-    description: '長射程誘導ミサイル3発斉射（4.0t / 24発 / 熱14 / 最低射程90m）。遮蔽越しレーダー曲射可。',
+    description: '長射程誘導ミサイル5発（4.0t / 24発 / 熱12 / 射程120-900m）。一斉/垂れ流し切替・遮蔽越曲射可。',
   },
   {
     id: 'lrm10',
@@ -524,24 +408,127 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
     kind: 'lrm_homing',
     weight: 7.0,
     cost: 240,
-    damage: 16,
-    projectileSpeed: 145,
+    damage: 10,
+    projectileSpeed: 155,
     projectileGravity: 1.0,
-    range: 540,
-    minRange: 90,
-    cooldownSec: 5.6,
+    range: 750,
+    maxRange: 900,
+    minRange: 120,
+    cooldownSec: 5.4,
     enCost: 0,
-    heatCost: 24,
+    heatCost: 22,
     maxAmmo: 18,
     ammoPerTon: 18,
-    spreadDeg: 4.0,
-    burstCount: 5,
+    spreadDeg: 3.6,
+    burstCount: 10,
     canRicochet: false,
     ricochetAngleDeg: 89,
-    homingTurnDegPerSec: 42,
+    homingTurnDegPerSec: 65,
+    streamIntervalTicks: 2,
     partStructureHp: 0,
     maxPartArmor: 0,
-    description: '遠距離火力投射用の5発同時誘導弾（7.0t / 18発 / 熱24 / 最低射程90m）。遮蔽越しレーダー曲射可。',
+    description: '遠距離火力投射用の10発誘導弾（7.0t / 18発 / 熱22 / 射程120-900m）。一斉/垂れ流し切替可。',
+  },
+  {
+    id: 'lrm15',
+    name: 'LRM-15 大型遠距離ミサイル (追尾)',
+    slotGroup: 'shoulder',
+    kind: 'lrm_homing',
+    weight: 9.5,
+    cost: 295,
+    damage: 10,
+    projectileSpeed: 155,
+    projectileGravity: 1.0,
+    range: 750,
+    maxRange: 900,
+    minRange: 120,
+    cooldownSec: 6.6,
+    enCost: 0,
+    heatCost: 30,
+    maxAmmo: 14,
+    ammoPerTon: 14,
+    spreadDeg: 4.0,
+    burstCount: 15,
+    canRicochet: false,
+    ricochetAngleDeg: 89,
+    homingTurnDegPerSec: 65,
+    streamIntervalTicks: 2,
+    partStructureHp: 0,
+    maxPartArmor: 0,
+    description: 'AMS を飽和貫通する15発大弾幕ミサイル（9.5t / 14発 / 熱30 / 射程120-900m）。',
+  },
+  {
+    id: 'ams_ballistic',
+    name: 'AMS 対ミサイル迎撃機関砲 (常時)',
+    slotGroup: 'shoulder',
+    kind: 'ams',
+    weight: 1.5,
+    cost: 160,
+    damage: 1,
+    projectileSpeed: 0,
+    projectileGravity: 0,
+    range: 80,
+    cooldownSec: 0.22,
+    enCost: 0,
+    heatCost: 0,
+    maxAmmo: 120,
+    ammoPerTon: 120,
+    spreadDeg: 0,
+    burstCount: 0,
+    canRicochet: false,
+    ricochetAngleDeg: 89,
+    homingTurnDegPerSec: 0,
+    partStructureHp: 0,
+    maxPartArmor: 0,
+    description: '半径80mの飛来ミサイルを自動迎撃（1.5t / 弾薬120発 / 熱0）。',
+  },
+  {
+    id: 'ams_laser',
+    name: 'L-AMS レーザー迎撃システム (常時)',
+    slotGroup: 'shoulder',
+    kind: 'ams',
+    weight: 2.0,
+    cost: 210,
+    damage: 1,
+    projectileSpeed: 0,
+    projectileGravity: 0,
+    range: 80,
+    cooldownSec: 0.20,
+    enCost: 0,
+    heatCost: 1.6,
+    maxAmmo: -1,
+    spreadDeg: 0,
+    burstCount: 0,
+    canRicochet: false,
+    ricochetAngleDeg: 89,
+    homingTurnDegPerSec: 0,
+    partStructureHp: 0,
+    maxPartArmor: 0,
+    description: '弾薬不要のレーザー式自動迎撃装置（2.0t / 残弾∞ / 作動時発熱）。',
+  },
+  {
+    id: 'bap_probe',
+    name: 'BAP アクティブプローブ (常時)',
+    slotGroup: 'shoulder',
+    kind: 'bap',
+    weight: 1.5,
+    cost: 170,
+    damage: 0,
+    projectileSpeed: 0,
+    projectileGravity: 0,
+    range: 240,
+    cooldownSec: 1,
+    enCost: 0,
+    heatCost: 0,
+    maxAmmo: -1,
+    spreadDeg: 0,
+    burstCount: 0,
+    canRicochet: false,
+    ricochetAngleDeg: 89,
+    homingTurnDegPerSec: 0,
+    partStructureHp: 0,
+    maxPartArmor: 0,
+    description: '半径240m以内の敵ECM妨害を無効化しロック時間を25%短縮する電子探査装置（1.5t）。',
   },
   {
     id: 'srm_rocket',
@@ -749,73 +736,6 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
   },
 ];
 
-export const LEG_PARTS: readonly LegPartSpec[] = [
-  {
-    id: 'legs_biped_std',
-    name: 'L-01 標準二脚',
-    style: 'biped',
-    weight: 210,
-    cost: 200,
-    loadCapacity: 1120,
-    enDrain: 24,
-    structureHpEach: 240,
-    maxArmorEach: 180,
-    walkSpeed: 34,
-    strafeSpeed: 28,
-    jumpImpulse: 30,
-    turnDegPerSec: 160,
-    description: 'クセのない標準二脚。歩行・跳躍・積載の均衡が良い。',
-  },
-  {
-    id: 'legs_reverse_agile',
-    name: 'L-02 軽量逆関節',
-    style: 'reverse_joint',
-    weight: 175,
-    cost: 235,
-    loadCapacity: 940,
-    enDrain: 22,
-    structureHpEach: 195,
-    maxArmorEach: 140,
-    walkSpeed: 39,
-    strafeSpeed: 34,
-    jumpImpulse: 40,
-    turnDegPerSec: 195,
-    description: '高い跳躍力と旋回性能を誇る高機動脚部。',
-  },
-  {
-    id: 'legs_heavy_quad',
-    name: 'L-03 重装四脚',
-    style: 'quad',
-    weight: 305,
-    cost: 265,
-    loadCapacity: 1600,
-    enDrain: 34,
-    structureHpEach: 330,
-    maxArmorEach: 260,
-    walkSpeed: 27,
-    strafeSpeed: 24,
-    jumpImpulse: 22,
-    turnDegPerSec: 125,
-    description: '高い積載量と脚部耐久を持つ重戦車級脚部。',
-  },
-  {
-    id: 'legs_hover',
-    name: 'L-04 ホバーレッグ',
-    style: 'hover',
-    weight: 195,
-    cost: 250,
-    loadCapacity: 1020,
-    enDrain: 38,
-    structureHpEach: 205,
-    maxArmorEach: 155,
-    walkSpeed: 42,
-    strafeSpeed: 38,
-    jumpImpulse: 27,
-    turnDegPerSec: 175,
-    description: '水平移動と平行移動に優れる滑走脚部。EN 消費がやや高い。',
-  },
-];
-
 export const BOOSTER_PARTS: readonly BoosterPartSpec[] = [
   {
     id: 'boost_none',
@@ -833,7 +753,7 @@ export const BOOSTER_PARTS: readonly BoosterPartSpec[] = [
     name: 'JJ-01 標準ジャンプ＆スラスター',
     weight: 4.0,
     cost: 120,
-    boostSpeed: 22,
+    boostSpeed: 30,
     boostEnPerSec: 22,
     airLiftAccel: 20,
     airEnPerSec: 22,
@@ -844,7 +764,7 @@ export const BOOSTER_PARTS: readonly BoosterPartSpec[] = [
     name: 'JJ-02 高出力ジャンプジェット',
     weight: 3.5,
     cost: 175,
-    boostSpeed: 26,
+    boostSpeed: 36,
     boostEnPerSec: 26,
     airLiftAccel: 22,
     airEnPerSec: 26,
@@ -855,18 +775,18 @@ export const BOOSTER_PARTS: readonly BoosterPartSpec[] = [
     name: 'JJ-03 重機体用補助ジェット',
     weight: 5.5,
     cost: 165,
-    boostSpeed: 18,
+    boostSpeed: 24,
     boostEnPerSec: 25,
     airLiftAccel: 20,
     airEnPerSec: 25,
-    description: '85t級アサルトメック専用の中央胴追加ジェット（5.5t / 熱25/s）。',
+    description: '重量級フレーム向けの中央胴追加ジェット（5.5t / 熱25/s）。',
   },
   {
     id: 'boost_eco',
     name: 'JJ-04 省燃費スラスター',
     weight: 3.5,
     cost: 140,
-    boostSpeed: 20,
+    boostSpeed: 28,
     boostEnPerSec: 18,
     airLiftAccel: 18,
     airEnPerSec: 18,
@@ -879,6 +799,8 @@ export const MECH_CHASSIS_CATALOG: readonly MechChassisSpec[] = [
     id: 'chassis_vanguard',
     name: 'CM-01 ヴァンガード級 (55t 中量級)',
     weightClass: 'medium',
+    legStyle: 'biped',
+    sizeScale: 1.0,
     maxTonnage: 55,
     skeletonWeight: 25.0,
     cost: 520,
@@ -891,17 +813,20 @@ export const MECH_CHASSIS_CATALOG: readonly MechChassisSpec[] = [
     netEnRegenPerSec: 13.5,
     maxHeat: 100,
     baseHeatDissipation: 13.5,
-    radarRange: 390,
-    walkSpeed: 12.5,
+    radarRange: 800,
+    radarSignatureRange: 210,
+    walkSpeed: 22.0,
     strafeSpeed: 0,
     turnDegPerSec: 64,
     torsoTwistMaxDeg: 85,
     torsoTwistRateDegPerSec: 98,
-    visionFovHalfDeg: 75,
+    visionFovHalfDeg: 53,
     hasJumpBoosterMount: true,
     boosterModuleWeight: 4.0,
     boosterSpecId: 'boost_std',
-    jumpImpulse: 16.5,
+    hasEcmMount: false,
+    ecmModuleWeight: 0,
+    jumpImpulse: 18.5,
     structureHp: {
       head: 95,
       torso: 540,
@@ -931,6 +856,8 @@ export const MECH_CHASSIS_CATALOG: readonly MechChassisSpec[] = [
     id: 'chassis_striker',
     name: 'CM-02 ストライカー級 (35t 軽量級)',
     weightClass: 'light',
+    legStyle: 'reverse_joint',
+    sizeScale: 0.8,
     maxTonnage: 35,
     skeletonWeight: 15.5,
     cost: 440,
@@ -943,17 +870,20 @@ export const MECH_CHASSIS_CATALOG: readonly MechChassisSpec[] = [
     netEnRegenPerSec: 12.5,
     maxHeat: 100,
     baseHeatDissipation: 12.5,
-    radarRange: 400,
-    walkSpeed: 15.5,
+    radarRange: 800,
+    radarSignatureRange: 120,
+    walkSpeed: 30.0,
     strafeSpeed: 0,
     turnDegPerSec: 78,
     torsoTwistMaxDeg: 90,
     torsoTwistRateDegPerSec: 120,
-    visionFovHalfDeg: 75,
+    visionFovHalfDeg: 60,
     hasJumpBoosterMount: true,
     boosterModuleWeight: 3.0,
     boosterSpecId: 'boost_high_thrust',
-    jumpImpulse: 19.5,
+    hasEcmMount: true,
+    ecmModuleWeight: 1.5,
+    jumpImpulse: 22.0,
     structureHp: {
       head: 70,
       torso: 380,
@@ -977,12 +907,14 @@ export const MECH_CHASSIS_CATALOG: readonly MechChassisSpec[] = [
       rightLeg: 120,
       leftLeg: 120,
     },
-    description: '軽快な35t軽量逆関節フレーム。胴体ジャンプジェットを装備可能。',
+    description: '軽快な35t軽量逆関節フレーム。広視野・低被探知（全周120m）と胴体ジャンプジェットを装備可能。',
   },
   {
     id: 'chassis_fortress',
     name: 'CM-03 フォートレス級 (100t 超重量級)',
     weightClass: 'assault',
+    legStyle: 'quad',
+    sizeScale: 1.35,
     maxTonnage: 100,
     skeletonWeight: 46.0,
     cost: 860,
@@ -995,16 +927,19 @@ export const MECH_CHASSIS_CATALOG: readonly MechChassisSpec[] = [
     netEnRegenPerSec: 17.0,
     maxHeat: 100,
     baseHeatDissipation: 17.0,
-    radarRange: 360,
-    walkSpeed: 7.5,
+    radarRange: 800,
+    radarSignatureRange: 400,
+    walkSpeed: 13.0,
     strafeSpeed: 0,
     turnDegPerSec: 38,
     torsoTwistMaxDeg: 60,
     torsoTwistRateDegPerSec: 62,
-    visionFovHalfDeg: 65,
+    visionFovHalfDeg: 40,
     hasJumpBoosterMount: false,
     boosterModuleWeight: 0,
     boosterSpecId: null,
+    hasEcmMount: false,
+    ecmModuleWeight: 0,
     jumpImpulse: 0,
     structureHp: {
       head: 150,
@@ -1035,6 +970,8 @@ export const MECH_CHASSIS_CATALOG: readonly MechChassisSpec[] = [
     id: 'chassis_hawkeye',
     name: 'CM-04 ホークアイ級 (65t 重量級)',
     weightClass: 'heavy',
+    legStyle: 'hover',
+    sizeScale: 1.15,
     maxTonnage: 65,
     skeletonWeight: 31.0,
     cost: 620,
@@ -1047,16 +984,19 @@ export const MECH_CHASSIS_CATALOG: readonly MechChassisSpec[] = [
     netEnRegenPerSec: 14.0,
     maxHeat: 100,
     baseHeatDissipation: 14.0,
-    radarRange: 520,
-    walkSpeed: 11.0,
+    radarRange: 800,
+    radarSignatureRange: 300,
+    walkSpeed: 18.0,
     strafeSpeed: 0,
     turnDegPerSec: 56,
     torsoTwistMaxDeg: 80,
     torsoTwistRateDegPerSec: 88,
-    visionFovHalfDeg: 85,
+    visionFovHalfDeg: 47,
     hasJumpBoosterMount: false,
     boosterModuleWeight: 0,
     boosterSpecId: null,
+    hasEcmMount: true,
+    ecmModuleWeight: 1.5,
     jumpImpulse: 0,
     structureHp: {
       head: 90,
@@ -1081,232 +1021,12 @@ export const MECH_CHASSIS_CATALOG: readonly MechChassisSpec[] = [
       rightLeg: 220,
       leftLeg: 220,
     },
-    description: '長距離索敵頭部を統合した65t重火器支援機。ブースト・跳躍機構は非搭載。',
-  },
-  {
-    id: 'chassis_tempest',
-    name: 'CM-05 テンペスト級 (50t 中量級)',
-    weightClass: 'medium',
-    maxTonnage: 50,
-    skeletonWeight: 22.0,
-    cost: 510,
-    headPartId: 'head_std',
-    torsoPartId: 'torso_light',
-    rightShoulderMountId: 'shd_light',
-    leftShoulderMountId: 'shd_light',
-    legPartId: 'legs_hover',
-    enCapacity: 100,
-    netEnRegenPerSec: 13.0,
-    maxHeat: 100,
-    baseHeatDissipation: 13.0,
-    radarRange: 390,
-    walkSpeed: 13.5,
-    strafeSpeed: 0,
-    turnDegPerSec: 68,
-    torsoTwistMaxDeg: 90,
-    torsoTwistRateDegPerSec: 105,
-    visionFovHalfDeg: 75,
-    hasJumpBoosterMount: true,
-    boosterModuleWeight: 3.5,
-    boosterSpecId: 'boost_std',
-    jumpImpulse: 16.5,
-    structureHp: {
-      head: 85,
-      torso: 490,
-      rightShoulder: 195,
-      leftShoulder: 195,
-      rightArm: 175,
-      leftArm: 175,
-      rightLeg: 225,
-      leftLeg: 225,
-    },
-    maxArmor: {
-      head: 85,
-      torsoFront: 300,
-      torsoRear: 150,
-      rightShoulderFront: 160,
-      rightShoulderRear: 85,
-      leftShoulderFront: 160,
-      leftShoulderRear: 85,
-      rightArm: 135,
-      leftArm: 135,
-      rightLeg: 170,
-      leftLeg: 170,
-    },
-    description: '横移動に優れた50tホバー機体。胴体追加ブースターのON/OFFが可能。',
-  },
-  {
-    id: 'chassis_aegis',
-    name: 'CM-06 イージス級 (75t 重量級)',
-    weightClass: 'heavy',
-    maxTonnage: 75,
-    skeletonWeight: 36.0,
-    cost: 680,
-    headPartId: 'head_armored',
-    torsoPartId: 'torso_std',
-    rightShoulderMountId: 'shd_std',
-    leftShoulderMountId: 'shd_std',
-    legPartId: 'legs_biped_std',
-    enCapacity: 100,
-    netEnRegenPerSec: 15.0,
-    maxHeat: 100,
-    baseHeatDissipation: 15.0,
-    radarRange: 370,
-    walkSpeed: 9.5,
-    strafeSpeed: 0,
-    turnDegPerSec: 50,
-    torsoTwistMaxDeg: 75,
-    torsoTwistRateDegPerSec: 80,
-    visionFovHalfDeg: 68,
-    hasJumpBoosterMount: false,
-    boosterModuleWeight: 0,
-    boosterSpecId: null,
-    jumpImpulse: 0,
-    structureHp: {
-      head: 120,
-      torso: 720,
-      rightShoulder: 280,
-      leftShoulder: 280,
-      rightArm: 240,
-      leftArm: 300,
-      rightLeg: 330,
-      leftLeg: 330,
-    },
-    maxArmor: {
-      head: 115,
-      torsoFront: 440,
-      torsoRear: 200,
-      rightShoulderFront: 230,
-      rightShoulderRear: 115,
-      leftShoulderFront: 230,
-      leftShoulderRear: 115,
-      rightArm: 190,
-      leftArm: 280,
-      rightLeg: 270,
-      leftLeg: 270,
-    },
-    description: '正面重装甲とトルソー防御に特化した75t重量二脚。ブースト機構なしの堅牢設計。',
-  },
-  {
-    id: 'chassis_valkyrie',
-    name: 'CM-07 バルキリー級 (60t 重量級)',
-    weightClass: 'heavy',
-    maxTonnage: 60,
-    skeletonWeight: 25.5,
-    cost: 590,
-    headPartId: 'head_recon',
-    torsoPartId: 'torso_light',
-    rightShoulderMountId: 'shd_light',
-    leftShoulderMountId: 'shd_light',
-    legPartId: 'legs_reverse_agile',
-    enCapacity: 100,
-    netEnRegenPerSec: 13.5,
-    maxHeat: 100,
-    baseHeatDissipation: 13.5,
-    radarRange: 480,
-    walkSpeed: 12.0,
-    strafeSpeed: 0,
-    turnDegPerSec: 64,
-    torsoTwistMaxDeg: 85,
-    torsoTwistRateDegPerSec: 95,
-    visionFovHalfDeg: 85,
-    hasJumpBoosterMount: true,
-    boosterModuleWeight: 4.0,
-    boosterSpecId: 'boost_high_thrust',
-    jumpImpulse: 17.5,
-    structureHp: {
-      head: 95,
-      torso: 550,
-      rightShoulder: 225,
-      leftShoulder: 225,
-      rightArm: 195,
-      leftArm: 195,
-      rightLeg: 260,
-      leftLeg: 260,
-    },
-    maxArmor: {
-      head: 90,
-      torsoFront: 350,
-      torsoRear: 170,
-      rightShoulderFront: 185,
-      rightShoulderRear: 95,
-      leftShoulderFront: 185,
-      leftShoulderRear: 95,
-      rightArm: 155,
-      leftArm: 155,
-      rightLeg: 200,
-      leftLeg: 200,
-    },
-    description: '長距離索敵と胴体ジャンプジェットを併せ持つ60t戦術機。',
-  },
-  {
-    id: 'chassis_berserker',
-    name: 'CM-08 バーサーカー級 (85t 強襲重量級)',
-    weightClass: 'assault',
-    maxTonnage: 85,
-    skeletonWeight: 39.0,
-    cost: 760,
-    headPartId: 'head_armored',
-    torsoPartId: 'torso_heavy',
-    rightShoulderMountId: 'shd_heavy',
-    leftShoulderMountId: 'shd_heavy',
-    legPartId: 'legs_biped_std',
-    enCapacity: 100,
-    netEnRegenPerSec: 15.5,
-    maxHeat: 100,
-    baseHeatDissipation: 15.5,
-    radarRange: 360,
-    walkSpeed: 8.8,
-    strafeSpeed: 0,
-    turnDegPerSec: 46,
-    torsoTwistMaxDeg: 70,
-    torsoTwistRateDegPerSec: 72,
-    visionFovHalfDeg: 68,
-    hasJumpBoosterMount: true,
-    boosterModuleWeight: 5.5,
-    boosterSpecId: 'boost_heavy',
-    jumpImpulse: 14.5,
-    structureHp: {
-      head: 135,
-      torso: 800,
-      rightShoulder: 330,
-      leftShoulder: 330,
-      rightArm: 270,
-      leftArm: 270,
-      rightLeg: 375,
-      leftLeg: 375,
-    },
-    maxArmor: {
-      head: 130,
-      torsoFront: 500,
-      torsoRear: 220,
-      rightShoulderFront: 260,
-      rightShoulderRear: 130,
-      leftShoulderFront: 260,
-      leftShoulderRear: 130,
-      rightArm: 215,
-      leftArm: 245,
-      rightLeg: 350,
-      leftLeg: 350,
-    },
-    description: '重装甲ながら胴体追加ジェットを備える85t強襲二脚。オンオフで重量配分を調整可能。',
+    description: '高火力の65t重量級ホバー支援機。ブースト・跳躍機構は非搭載。',
   },
 ];
 
 function findByIdOrFirst<T extends { id: string }>(list: readonly T[], id: string): T {
   return list.find((item) => item.id === id) ?? list[0];
-}
-
-export function getHeadSpec(id: string): HeadPartSpec {
-  return findByIdOrFirst(HEAD_PARTS, id);
-}
-
-export function getTorsoSpec(id: string): TorsoPartSpec {
-  return findByIdOrFirst(TORSO_PARTS, id);
-}
-
-export function getShoulderMountSpec(id: string): ShoulderPartSpec {
-  return findByIdOrFirst(SHOULDER_MOUNTS, id);
 }
 
 const LEGACY_WEAPON_ALIASES: Record<string, string> = {
@@ -1360,10 +1080,6 @@ export function getShoulderWeaponSpec(id: string): WeaponPartSpec {
   return findByIdOrFirst(SHOULDER_WEAPONS, resolveLegacyWeaponId(id));
 }
 
-export function getLegSpec(id: string): LegPartSpec {
-  return findByIdOrFirst(LEG_PARTS, id);
-}
-
 export function getBoosterSpec(id: string): BoosterPartSpec {
   return findByIdOrFirst(BOOSTER_PARTS, id);
 }
@@ -1383,12 +1099,8 @@ const VALID_WEAPON_SLOTS: readonly WeaponSlotId[] = [
 ];
 
 function isSlotEquipped(parts: MechPartsSelection, slot: WeaponSlotId): boolean {
-  if (slot === 'rightArm') return getArmWeaponSpec(parts.rightArmWeapon).id !== 'arm_none';
-  if (slot === 'leftArm') return getArmWeaponSpec(parts.leftArmWeapon).id !== 'arm_none';
-  if (slot === 'rightShoulder') {
-    return getShoulderWeaponSpec(parts.rightShoulderWeapon).id !== 'shd_none';
-  }
-  return getShoulderWeaponSpec(parts.leftShoulderWeapon).id !== 'shd_none';
+  const spec = getSlotWeaponSpecFromParts(parts, slot);
+  return spec.burstCount > 0 && spec.damage > 0;
 }
 
 export function getSlotWeaponSpecFromParts(
@@ -1503,9 +1215,17 @@ export function getWeaponGroupSummary(
   };
 }
 
+const LEGACY_CHASSIS_ALIASES: Record<string, string> = {
+  chassis_tempest: 'chassis_vanguard',
+  chassis_aegis: 'chassis_fortress',
+  chassis_valkyrie: 'chassis_hawkeye',
+  chassis_berserker: 'chassis_fortress',
+};
+
 export function getChassisSpec(id?: string): MechChassisSpec {
   if (id) {
-    const found = MECH_CHASSIS_CATALOG.find((c) => c.id === id);
+    const resolvedId = LEGACY_CHASSIS_ALIASES[id] ?? id;
+    const found = MECH_CHASSIS_CATALOG.find((c) => c.id === resolvedId);
     if (found) return found;
   }
   return MECH_CHASSIS_CATALOG[0];
@@ -1522,17 +1242,16 @@ export function inferChassisIdFromParts(parts?: Partial<MechPartsSelection>): st
       c.legPartId === parts.legs
   );
   if (exact) return exact.id;
-  if (parts.legs === 'legs_heavy_quad') return 'chassis_fortress';
-  if (parts.legs === 'legs_reverse_agile') return parts.head === 'head_recon' ? 'chassis_valkyrie' : 'chassis_striker';
-  if (parts.legs === 'legs_hover') return parts.head === 'head_recon' ? 'chassis_hawkeye' : 'chassis_tempest';
-  if (parts.torso === 'torso_heavy') return 'chassis_berserker';
-  if (parts.head === 'head_armored') return 'chassis_aegis';
+  if (parts.legs === 'legs_heavy_quad' || parts.torso === 'torso_heavy') return 'chassis_fortress';
+  if (parts.legs === 'legs_reverse_agile') return 'chassis_striker';
+  if (parts.legs === 'legs_hover') return 'chassis_hawkeye';
   return 'chassis_vanguard';
 }
 
 export function applyChassisToBlueprint(bp: MechBlueprint, chassisId: string): MechBlueprint {
   const chassis = getChassisSpec(chassisId);
   const nextBoosterEnabled = chassis.hasJumpBoosterMount ? bp.boosterEnabled : false;
+  const nextEcmEnabled = chassis.hasEcmMount ? Boolean(bp.ecmEnabled) : false;
   const nextParts: MechPartsSelection = {
     ...bp.parts,
     head: chassis.headPartId,
@@ -1549,6 +1268,7 @@ export function applyChassisToBlueprint(bp: MechBlueprint, chassisId: string): M
     ...bp,
     chassisId: chassis.id,
     boosterEnabled: nextBoosterEnabled,
+    ecmEnabled: nextEcmEnabled,
     parts: nextParts,
     armor: {
       head: clamp(bp.armor.head, 0, chassis.maxArmor.head),
@@ -1581,6 +1301,10 @@ export function computeMechStats(blueprint: MechBlueprint): MechComputedStats {
     boosterActive && chassis.boosterSpecId
       ? getBoosterSpec(chassis.boosterSpecId)
       : getBoosterSpec('boost_none');
+  const hasEcmMount = chassis.hasEcmMount;
+  const ecmActive = hasEcmMount && Boolean(blueprint.ecmEnabled);
+  const hasBap = rShdWep.kind === 'bap' || lShdWep.kind === 'bap';
+  const hasAms = rShdWep.kind === 'ams' || lShdWep.kind === 'ams';
 
   const a = blueprint.armor;
   const totalArmorPoints =
@@ -1600,6 +1324,7 @@ export function computeMechStats(blueprint: MechBlueprint): MechComputedStats {
   const armorWeight = Math.round(totalArmorPoints) / 100;
   const skeletonWeight = chassis.skeletonWeight;
   const boosterWeight = boosterActive ? chassis.boosterModuleWeight : 0;
+  const ecmWeight = ecmActive ? chassis.ecmModuleWeight : 0;
   const extraHeatSinks = clamp(Math.round(blueprint.extraHeatSinks ?? 0), 0, 8);
   const heatSinkWeight = extraHeatSinks * 1.0;
   const ammoWeight =
@@ -1610,7 +1335,7 @@ export function computeMechStats(blueprint: MechBlueprint): MechComputedStats {
   const weaponsWeight = Math.round((rArmWep.weight + lArmWep.weight + rShdWep.weight + lShdWep.weight) * 100) / 100;
 
   const totalWeight =
-    Math.round((skeletonWeight + boosterWeight + heatSinkWeight + ammoWeight + weaponsWeight + armorWeight) * 100) / 100;
+    Math.round((skeletonWeight + boosterWeight + ecmWeight + heatSinkWeight + ammoWeight + weaponsWeight + armorWeight) * 100) / 100;
   const loadCapacity = Math.min(MAX_CHASSIS_TONNAGE, chassis.maxTonnage);
   const overweight = totalWeight > loadCapacity + 1e-6;
   const overweightRatio = loadCapacity > 0 ? totalWeight / loadCapacity : 1;
@@ -1618,6 +1343,7 @@ export function computeMechStats(blueprint: MechBlueprint): MechComputedStats {
   const totalCost =
     chassis.cost +
     (boosterActive ? booster.cost : 0) +
+    (ecmActive ? 170 : 0) +
     extraHeatSinks * 45 +
     Math.round(ammoWeight * 35) +
     rArmWep.cost +
@@ -1653,6 +1379,9 @@ export function computeMechStats(blueprint: MechBlueprint): MechComputedStats {
   if (blueprint.boosterEnabled && !hasBoosterMount) {
     errors.push(`この機体フレーム (${chassis.name}) にはブースト／ジャンプを後付けできません`);
   }
+  if (blueprint.ecmEnabled && !hasEcmMount) {
+    errors.push(`この機体フレーム (${chassis.name}) には ECM スイートを搭載できません`);
+  }
 
   const maxA = chassis.maxArmor;
   const checkCap = (label: string, val: number, max: number) => {
@@ -1675,6 +1404,7 @@ export function computeMechStats(blueprint: MechBlueprint): MechComputedStats {
   return {
     chassisId: chassis.id,
     weightClass: chassis.weightClass,
+    sizeScale: chassis.sizeScale,
     totalWeight,
     loadCapacity,
     skeletonWeight,
@@ -1685,6 +1415,11 @@ export function computeMechStats(blueprint: MechBlueprint): MechComputedStats {
     armorWeight,
     hasBoosterMount,
     boosterActive,
+    hasEcmMount,
+    ecmActive,
+    ecmWeight,
+    hasBap,
+    hasAms,
     overweight,
     overweightRatio,
     totalCost,
@@ -1702,6 +1437,7 @@ export function computeMechStats(blueprint: MechBlueprint): MechComputedStats {
     torsoTwistRateDegPerSec: chassis.torsoTwistRateDegPerSec * (overweight ? 0.85 : 1),
     visionFovHalfDeg: chassis.visionFovHalfDeg,
     radarRange: chassis.radarRange,
+    radarSignatureRange: chassis.radarSignatureRange,
     totalArmorPoints,
     totalStructureHp,
     validationErrors: errors,

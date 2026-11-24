@@ -529,7 +529,7 @@ export default function App() {
               </div>
 
               <div className="cm-sim-clock">
-                Tick {sim.tick} / {sim.time.toFixed(1)}s
+                {sim.terrain.width}×{sim.terrain.depth}m ・ Tick {sim.tick} / {sim.time.toFixed(1)}s
                 {sim.finished && (
                   <span className="cm-winner-pill">
                     勝者: {sim.winnerTeamId}

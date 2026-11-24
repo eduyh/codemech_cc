@@ -17,6 +17,23 @@ export interface LocalBox {
   maxZ: number;
 }
 
+export const BASE_MECH_HEIGHT = 10.0;
+export const BASE_MECH_EYE_Z = 9.0;
+export const BASE_MECH_CENTER_Z = 6.7;
+export const BASE_MECH_COLLISION_RADIUS = 2.6;
+
+export function getMechCollisionRadius(sizeScale = 1.0): number {
+  return BASE_MECH_COLLISION_RADIUS * Math.max(0.25, sizeScale);
+}
+
+export function getMechEyeZ(sizeScale = 1.0): number {
+  return BASE_MECH_EYE_Z * Math.max(0.25, sizeScale);
+}
+
+export function getMechCenterZ(sizeScale = 1.0): number {
+  return BASE_MECH_CENTER_Z * Math.max(0.25, sizeScale);
+}
+
 export const MECH_BOUNDING_SPHERE = {
   zOffset: 5.0,
   radius: 6.4,
@@ -188,23 +205,55 @@ export function testProjectileHitMech(
   segEnd: Vec3,
   mechPos: Vec3,
   mechYawDeg: number,
-  torsoYawDeg = mechYawDeg
+  torsoYawDeg = mechYawDeg,
+  sizeScale = 1.0
 ): PartHitResult | null {
-  // Stage 1: Broad-phase mech bounding sphere
+  const safeScale = Math.max(0.25, sizeScale);
+  const invScale = 1 / safeScale;
+
+  // Stage 1: Broad-phase mech bounding sphere (scaled by chassis sizeScale)
   const sphereCenter: Vec3 = {
     x: mechPos.x,
     y: mechPos.y,
-    z: mechPos.z + MECH_BOUNDING_SPHERE.zOffset,
+    z: mechPos.z + MECH_BOUNDING_SPHERE.zOffset * safeScale,
   };
-  if (!intersectSegmentSphere(segStart, segEnd, sphereCenter, MECH_BOUNDING_SPHERE.radius)) {
+  if (
+    !intersectSegmentSphere(
+      segStart,
+      segEnd,
+      sphereCenter,
+      MECH_BOUNDING_SPHERE.radius * safeScale
+    )
+  ) {
     return null;
   }
 
-  // Stage 2: Narrow-phase 8-part split local space check (upper body vs lower legs)
-  const upperA = worldToMechLocal(segStart, mechPos, torsoYawDeg);
-  const upperB = worldToMechLocal(segEnd, mechPos, torsoYawDeg);
-  const lowerA = worldToMechLocal(segStart, mechPos, mechYawDeg);
-  const lowerB = worldToMechLocal(segEnd, mechPos, mechYawDeg);
+  // Stage 2: Narrow-phase 8-part split local space check (scaled uniformly around feet)
+  const rawUpperA = worldToMechLocal(segStart, mechPos, torsoYawDeg);
+  const rawUpperB = worldToMechLocal(segEnd, mechPos, torsoYawDeg);
+  const rawLowerA = worldToMechLocal(segStart, mechPos, mechYawDeg);
+  const rawLowerB = worldToMechLocal(segEnd, mechPos, mechYawDeg);
+
+  const upperA: Vec3 = {
+    x: rawUpperA.x * invScale,
+    y: rawUpperA.y * invScale,
+    z: rawUpperA.z * invScale,
+  };
+  const upperB: Vec3 = {
+    x: rawUpperB.x * invScale,
+    y: rawUpperB.y * invScale,
+    z: rawUpperB.z * invScale,
+  };
+  const lowerA: Vec3 = {
+    x: rawLowerA.x * invScale,
+    y: rawLowerA.y * invScale,
+    z: rawLowerA.z * invScale,
+  };
+  const lowerB: Vec3 = {
+    x: rawLowerB.x * invScale,
+    y: rawLowerB.y * invScale,
+    z: rawLowerB.z * invScale,
+  };
 
   let bestPart: MechPartId | null = null;
   let bestT = Infinity;
@@ -263,9 +312,9 @@ export function testProjectileHitMech(
   const unitRay: Vec3 = { x: rdx / rayLen, y: rdy / rayLen, z: rdz / rayLen };
 
   const hitLocalPos: Vec3 = {
-    x: localA.x + rdx * bestT,
-    y: localA.y + rdy * bestT,
-    z: localA.z + rdz * bestT,
+    x: (localA.x + rdx * bestT) * safeScale,
+    y: (localA.y + rdy * bestT) * safeScale,
+    z: (localA.z + rdz * bestT) * safeScale,
   };
 
   const hitWorldPos: Vec3 = {

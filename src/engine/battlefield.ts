@@ -18,6 +18,7 @@ import {
   createPilotRuntimeState,
   evaluatePilotTick,
 } from './pilotRuntime';
+import { computeRecommendedArenaSize } from './terrain';
 
 export interface BattlefieldRosterEntry {
   id: string;
@@ -158,10 +159,14 @@ export function buildBattleCommentary(
     } else if (ev.type === 'mech_destroyed') {
       const atk = nameById[ev.actorId] ?? '戦場ダメージ';
       const tgt = nameById[ev.targetId ?? ''] ?? '';
-      const reason = ev.detail === 'head_destroyed' ? '頭部貫通' : 'コア撃破';
-      highlights.push(
-        `[${(ev.tick / SIM_TPS).toFixed(1)}s] ${atk} が ${tgt} を撃破（${reason}）`
-      );
+      if (ev.detail === 'heat_meltdown') {
+        highlights.push(`[${(ev.tick / SIM_TPS).toFixed(1)}s] ${tgt} が過熱により熱融解（自壊）`);
+      } else {
+        const reason = ev.detail === 'head_destroyed' ? '頭部貫通' : 'コア撃破';
+        highlights.push(
+          `[${(ev.tick / SIM_TPS).toFixed(1)}s] ${atk} が ${tgt} を撃破（${reason}）`
+        );
+      }
     }
   }
 
@@ -169,7 +174,7 @@ export function buildBattleCommentary(
     highlights.push(`傾斜装甲による跳弾が計 ${ricochetCount} 回発生`);
   }
   if (overheatCount > 0) {
-    highlights.push(`EN オーバーヒートが計 ${overheatCount} 回発生`);
+    highlights.push(`熱シャットダウンが計 ${overheatCount} 回発生`);
   }
 
   const mvp = sim.mechs
@@ -247,6 +252,7 @@ export function runHeadlessBattlefieldMatch(
     }
   }
 
+  const arenaSize = computeRecommendedArenaSize(participants.length);
   const replay: ReplayPackageData = {
     title: matchLabel,
     recordedAt: new Date().toISOString(),
@@ -256,8 +262,8 @@ export function runHeadlessBattlefieldMatch(
       friendlyFire: rule.friendlyFire,
       headDestructionKills: rule.headDestructionKills,
       arenaPreset: rule.arenaPreset,
-      arenaWidth: 600,
-      arenaDepth: 600,
+      arenaWidth: arenaSize,
+      arenaDepth: arenaSize,
     },
     participants,
   };

@@ -245,4 +245,27 @@ describe('8-part hitbox, front/rear armor, ricochet, and part destruction', () =
     expect(torsoNorthHit).not.toBeNull();
     expect(torsoNorthHit!.partId).toBe('leftArm');
   });
+
+  it('scales 8-part hitboxes proportionally by chassis sizeScale (Light 0.80 vs Medium 1.00 vs Assault 1.35)', () => {
+    const pos = { x: 300, y: 300, z: 0 };
+
+    // Assault head (z = 9.35 * 1.35 = 12.62m) hits Assault (1.35) but misses Medium (1.0) and Light (0.80)
+    const highHeadFrom = { x: 300, y: 290, z: 12.62 };
+    const highHeadTo = { x: 300, y: 310, z: 12.62 };
+    expect(testProjectileHitMech(highHeadFrom, highHeadTo, pos, 0, 0, 1.35)?.partId).toBe('head');
+    expect(testProjectileHitMech(highHeadFrom, highHeadTo, pos, 0, 0, 1.0)).toBeNull();
+    expect(testProjectileHitMech(highHeadFrom, highHeadTo, pos, 0, 0, 0.8)).toBeNull();
+
+    // Assault wide arm (x = 303.2, z = 7.8) hits Assault rightArm (1.92*1.35..2.75*1.35 = 2.59..3.71) but misses Medium (max 2.75)
+    const wideArmFrom = { x: 303.2, y: 290, z: 7.8 };
+    const wideArmTo = { x: 303.2, y: 310, z: 7.8 };
+    expect(testProjectileHitMech(wideArmFrom, wideArmTo, pos, 0, 0, 1.35)?.partId).toBe('rightArm');
+    expect(testProjectileHitMech(wideArmFrom, wideArmTo, pos, 0, 0, 1.0)).toBeNull();
+
+    // Medium head (z = 9.35m) hits Medium (1.0) but passes cleanly over Light (0.80 -> top ~8.0m)
+    const medHeadFrom = { x: 300, y: 290, z: 9.35 };
+    const medHeadTo = { x: 300, y: 310, z: 9.35 };
+    expect(testProjectileHitMech(medHeadFrom, medHeadTo, pos, 0, 0, 1.0)?.partId).toBe('head');
+    expect(testProjectileHitMech(medHeadFrom, medHeadTo, pos, 0, 0, 0.8)).toBeNull();
+  });
 });

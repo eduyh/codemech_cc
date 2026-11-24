@@ -179,6 +179,8 @@ export function validateAndRepairMechBlueprint(raw: MechBlueprint): MechBlueprin
       ? raw.boosterEnabled
       : raw?.parts?.booster !== 'boost_none'
     : false;
+  const ecmEnabled = chassis.hasEcmMount ? Boolean(raw?.ecmEnabled) : false;
+  const lrmFireMode = raw?.lrmFireMode === 'stream' ? 'stream' : 'salvo';
 
   const parts = {
     head: chassis.headPartId,
@@ -285,6 +287,8 @@ export function validateAndRepairMechBlueprint(raw: MechBlueprint): MechBlueprin
     color: typeof raw?.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(raw.color) ? raw.color : def.color,
     chassisId: chassis.id,
     boosterEnabled,
+    ecmEnabled,
+    lrmFireMode,
     extraHeatSinks,
     ...(Object.keys(extraAmmo).length > 0 ? { extraAmmo } : {}),
     parts,

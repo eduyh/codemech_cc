@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { STARTER_MECHS, STARTER_PILOTS } from '../../data/presets';
 import {
   BattlefieldRosterEntry,
+  buildBattleCommentary,
   createSimFromReplay,
   groupRosterIntoTeams,
   runHeadlessBattlefieldMatch,
   runShortLeague,
   runTournament,
 } from '../battlefield';
-import { buildMechSensorState, stepSimulation } from '../mechSim';
+import { buildMechSensorState, createSimulation, stepSimulation } from '../mechSim';
 import { evaluatePilotTick } from '../pilotRuntime';
 import {
   DEFAULT_BATTLEFIELD_RULE,
@@ -121,5 +122,26 @@ describe('battlefield tournament, short league, commentary & E2E closed-network 
     expect(league.matches).toHaveLength(6); // 4 teams * 3 rounds / 2 = 6 matches
     expect(league.standings).toHaveLength(4);
     expect(league.standings[0].points).toBeGreaterThanOrEqual(league.standings[1].points);
+  });
+
+  it('reports heat_meltdown explicitly in battle commentary', () => {
+    const sim = createSimulation({
+      seed: 77,
+      entries: [
+        { id: 'm1', name: '過熱テスト機', teamId: 'T1', blueprint: STARTER_MECHS[0] },
+        { id: 'm2', name: '標的機', teamId: 'T2', blueprint: STARTER_MECHS[1] },
+      ],
+    });
+    sim.events.push({
+      tick: 90,
+      type: 'mech_destroyed',
+      actorId: 'm1',
+      targetId: 'm1',
+      pos: { x: 0, y: 0, z: 0 },
+      detail: 'heat_meltdown',
+    });
+    const commentary = buildBattleCommentary(sim, { T1: 'T1', T2: 'T2' });
+    expect(commentary.highlights.some((h) => h.includes('熱融解'))).toBe(true);
+    expect(commentary.highlights.some((h) => h.includes('コア撃破'))).toBe(false);
   });
 });

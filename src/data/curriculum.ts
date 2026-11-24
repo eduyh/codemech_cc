@@ -4,7 +4,7 @@ import {
   MechBlueprint,
   PilotProfile,
 } from '../types/mech';
-import { DEFAULT_PILOT_PROFILE, PRESET_TEMPEST, PRESET_VANGUARD } from './presets';
+import { DEFAULT_PILOT_PROFILE, PRESET_VANGUARD } from './presets';
 
 export interface CurriculumMissionSpec {
   id: CurriculumStepId;
@@ -57,13 +57,19 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     title: 'Step 2: 発熱監視＆冷却ヒステリシス制御',
     subtitle: 'オーバーヒート融解を防ぐ条件分岐＋状態ループを組め',
     csConcept: '状態維持ループ（ヒステリシス制御）',
-    goal: '高発熱レーザー機 (テンペスト) に熱分岐（熱>% > ＋ S4冷却/緊急冷却）を組み、熱融解せず勝利する',
+    goal: '高発熱レーザー機 (ヴァンガード改) に熱分岐（熱>% > ＋ S4冷却/緊急冷却）を組み、熱融解せず勝利する',
     hint: 'バグ入り課題では常に OVERRIDE ON のまま撃ち続けて自爆します。「熱 > 85%」→「CALL S4」→「熱 < 45%? (Noなら←でS4へ戻る)」のループを組みましょう。',
     arenaPreset: 'twin_mesas',
     seed: 20202,
     maxSeconds: 180,
     buildBrokenStarter: () => {
-      const mech = structuredClone(PRESET_TEMPEST);
+      const mech = structuredClone(PRESET_VANGUARD);
+      mech.name = 'CM-01 ヴァンガード (高発熱仕様)';
+      mech.extraHeatSinks = 0;
+      mech.parts.rightArmWeapon = 'large_laser';
+      mech.parts.leftArmWeapon = 'medium_laser';
+      mech.parts.rightShoulderWeapon = 'large_laser';
+      mech.parts.leftShoulderWeapon = 'shd_none';
       const pilot: PilotProfile = {
         version: 2,
         id: 'bug_step2_pilot',
@@ -172,7 +178,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     subtitle: 'パイロット 6×6 を抽象化し、別機体でも戦える上位判断を完成させよう',
     csConcept: 'インターフェースと実装の分離 (機体乗り換え適性)',
     goal: 'パイロット 6×6 で 3 枠以上の CALL (S1〜S5) を使い分け、小隊 2v2 に勝利＆別機体 (ホークアイ) への乗換検証を突破する',
-    hint: 'バグ入り課題では CALL S1 しか使わないため過熱や背後奇襲に対応できません。S1/S3/S4/S5 などを状況に応じて呼び分け、味方イージスと連携して勝利しましょう。',
+    hint: 'バグ入り課題では CALL S1 しか使わないため過熱や背後奇襲に対応できません。S1/S3/S4/S5 などを状況に応じて呼び分け、味方フォートレスと連携して勝利しましょう。',
     arenaPreset: 'valley_basin',
     seed: 50505,
     maxSeconds: 220,

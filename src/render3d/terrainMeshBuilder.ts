@@ -74,8 +74,8 @@ export function buildTerrainGroup(terrain: TerrainConfig): THREE.Group {
   const group = new THREE.Group();
   group.name = `terrain_${terrain.id}`;
 
-  const segsX = 64;
-  const segsZ = 64;
+  const segsX = 80;
+  const segsZ = 80;
   const geo = new THREE.PlaneGeometry(terrain.width, terrain.depth, segsX, segsZ);
   geo.rotateX(-Math.PI / 2);
 
@@ -121,8 +121,11 @@ export function buildTerrainGroup(terrain: TerrainConfig): THREE.Group {
   terrainMesh.receiveShadow = true;
   group.add(terrainMesh);
 
-  // Heightmap-draped orthogonal tactical grids (50m minor + 100m major)
-  const minorGridGeo = buildDrapedGridLines(terrain, 50, 10, 100);
+  // Heightmap-draped orthogonal tactical grids
+  const minorStep = terrain.width >= 1400 ? 100 : 50;
+  const majorStep = terrain.width >= 1400 ? 200 : 100;
+  const sampleStep = terrain.width >= 1400 ? 25 : 15;
+  const minorGridGeo = buildDrapedGridLines(terrain, minorStep, sampleStep, majorStep);
   const minorGridMat = new THREE.LineBasicMaterial({
     color: '#334155',
     transparent: true,
@@ -130,7 +133,7 @@ export function buildTerrainGroup(terrain: TerrainConfig): THREE.Group {
   });
   group.add(new THREE.LineSegments(minorGridGeo, minorGridMat));
 
-  const majorGridGeo = buildDrapedGridLines(terrain, 100, 10);
+  const majorGridGeo = buildDrapedGridLines(terrain, majorStep, sampleStep);
   const majorGridMat = new THREE.LineBasicMaterial({
     color: '#38bdf8',
     transparent: true,
@@ -138,17 +141,41 @@ export function buildTerrainGroup(terrain: TerrainConfig): THREE.Group {
   });
   group.add(new THREE.LineSegments(majorGridGeo, majorGridMat));
 
-  // Obstacles (mesas, pillars, cover walls) with bevel caps & crisp edges
-  const obsMat = new THREE.MeshStandardMaterial({
+  // Obstacles (3 height tiers: low hull-down <8m, mid cover 8-22m, tall towers >22m)
+  const obsMatLow = new THREE.MeshStandardMaterial({
+    color: '#334e68',
+    roughness: 0.78,
+    metalness: 0.18,
+    flatShading: true,
+  });
+  const obsMatMid = new THREE.MeshStandardMaterial({
     color: '#2b3d57',
     roughness: 0.72,
     metalness: 0.22,
     flatShading: true,
   });
-  const obsCapMat = new THREE.MeshStandardMaterial({
+  const obsMatTall = new THREE.MeshStandardMaterial({
+    color: '#1d2b44',
+    roughness: 0.62,
+    metalness: 0.32,
+    flatShading: true,
+  });
+  const obsCapLowMat = new THREE.MeshStandardMaterial({
+    color: '#5c7a99',
+    roughness: 0.68,
+    metalness: 0.2,
+    flatShading: true,
+  });
+  const obsCapMidMat = new THREE.MeshStandardMaterial({
     color: '#476285',
     roughness: 0.65,
     metalness: 0.25,
+    flatShading: true,
+  });
+  const obsCapTallMat = new THREE.MeshStandardMaterial({
+    color: '#3b648f',
+    roughness: 0.55,
+    metalness: 0.35,
     flatShading: true,
   });
   const obsEdgeMat = new THREE.LineBasicMaterial({
@@ -159,8 +186,13 @@ export function buildTerrainGroup(terrain: TerrainConfig): THREE.Group {
 
   for (const obs of terrain.obstacles) {
     const h = Math.max(0.5, obs.topZ - obs.baseZ);
+    const localG = getGroundHeight(terrain, obs.x + obs.width * 0.5, obs.y + obs.height * 0.5);
+    const clearH = obs.topZ - localG;
+    const bodyMat = clearH < 8 ? obsMatLow : clearH > 22 ? obsMatTall : obsMatMid;
+    const capMat = clearH < 8 ? obsCapLowMat : clearH > 22 ? obsCapTallMat : obsCapMidMat;
+
     const obsGeo = new THREE.BoxGeometry(obs.width, h, obs.height);
-    const mesh = new THREE.Mesh(obsGeo, obsMat);
+    const mesh = new THREE.Mesh(obsGeo, bodyMat);
     mesh.name = `obs_${obs.id}`;
     mesh.position.set(
       obs.x + obs.width * 0.5 - terrain.width * 0.5,
@@ -177,7 +209,7 @@ export function buildTerrainGroup(terrain: TerrainConfig): THREE.Group {
 
     // Top rim plate for depth readability
     const capGeo = new THREE.BoxGeometry(obs.width + 0.5, 0.5, obs.height + 0.5);
-    const capMesh = new THREE.Mesh(capGeo, obsCapMat);
+    const capMesh = new THREE.Mesh(capGeo, capMat);
     capMesh.position.set(mesh.position.x, obs.topZ - 0.15, mesh.position.z);
     capMesh.receiveShadow = true;
     group.add(capMesh);
@@ -214,16 +246,18 @@ export function buildTerrainGroup(terrain: TerrainConfig): THREE.Group {
   }
 
   // Compass Labels (N=0°, E=90°, S=180°, W=270°)
+  const labelScale = Math.max(1, terrain.width / 600);
   const compassDefs: Array<{ text: string; color: string; x: number; z: number }> = [
-    { text: 'N 0°', color: '#38bdf8', x: 0, z: -hd - 18 },
-    { text: 'E 90°', color: '#cbd5e1', x: hw + 22, z: 0 },
-    { text: 'S 180°', color: '#cbd5e1', x: 0, z: hd + 18 },
-    { text: 'W 270°', color: '#cbd5e1', x: -hw - 22, z: 0 },
+    { text: 'N 0°', color: '#38bdf8', x: 0, z: -hd - 18 * labelScale },
+    { text: 'E 90°', color: '#cbd5e1', x: hw + 22 * labelScale, z: 0 },
+    { text: 'S 180°', color: '#cbd5e1', x: 0, z: hd + 18 * labelScale },
+    { text: 'W 270°', color: '#cbd5e1', x: -hw - 22 * labelScale, z: 0 },
   ];
   for (const c of compassDefs) {
     const sprite = makeCompassLabelSprite(c.text, c.color);
     if (sprite) {
-      sprite.position.set(c.x, 22, c.z);
+      sprite.scale.set(42 * labelScale, 16 * labelScale, 1);
+      sprite.position.set(c.x, 22 * Math.sqrt(labelScale), c.z);
       group.add(sprite);
     }
   }

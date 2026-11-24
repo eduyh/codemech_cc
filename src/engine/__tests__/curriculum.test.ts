@@ -3,7 +3,6 @@ import { CURRICULUM_MISSIONS } from '../../data/curriculum';
 import { computeMechStats } from '../../data/parts';
 import {
   DEFAULT_PILOT_PROFILE,
-  PRESET_TEMPEST,
   PRESET_VANGUARD,
   STARTER_MECHS,
   STARTER_PILOTS,
@@ -12,8 +11,8 @@ import { decodeClearCode, encodeClearCode } from '../../utils/clearCode';
 import { verifyCurriculumMission } from '../curriculumVerifier';
 
 describe('5-step debug curriculum & CMK1- clear code', () => {
-  it('validates all 8 starter mechs (with 6x6x2 + 4x4x3 subroutines) and 4 starter pilots', () => {
-    expect(STARTER_MECHS).toHaveLength(8);
+  it('validates all 4 starter mechs (with 6x6x2 + 4x4x3 subroutines) and 4 starter pilots', () => {
+    expect(STARTER_MECHS).toHaveLength(4);
     expect(STARTER_PILOTS).toHaveLength(4);
     for (const bp of STARTER_MECHS) {
       const stats = computeMechStats(bp);
@@ -44,8 +43,9 @@ describe('5-step debug curriculum & CMK1- clear code', () => {
     const s1Pass = verifyCurriculumMission('step1_pilot_routing', PRESET_VANGUARD, DEFAULT_PILOT_PROFILE);
     expect(s1Pass.passed, s1Pass.summaryText).toBe(true);
 
-    // Step 2 Pass (fixed Tempest + DEFAULT_PILOT_PROFILE cooling hysteresis)
-    const s2Pass = verifyCurriculumMission('step2_heat_hysteresis', PRESET_TEMPEST, DEFAULT_PILOT_PROFILE);
+    // Step 2 Pass (fixed hot-laser Vanguard + DEFAULT_PILOT_PROFILE cooling hysteresis)
+    const hotStep2Mech = CURRICULUM_MISSIONS[1].buildBrokenStarter().mech;
+    const s2Pass = verifyCurriculumMission('step2_heat_hysteresis', hotStep2Mech, DEFAULT_PILOT_PROFILE);
     expect(s2Pass.passed, s2Pass.summaryText).toBe(true);
 
     // Step 3 Pass

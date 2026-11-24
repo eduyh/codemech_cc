@@ -104,6 +104,8 @@ describe('Three.js procedural 3D builders', () => {
           optimalRange: 300,
           maxRange: 300,
           ttlTicks: 30,
+          hp: 0,
+          loftTicksRemaining: 0,
         },
       ],
       sim.terrain

@@ -829,6 +829,43 @@ function updateMechLockState(
     mech.lockTargetId !== null && mech.lockProgressSec >= mech.lockRequiredSec - 1e-4;
 }
 
+function computeLrmLoftParams(
+  rawHoriz: number,
+  isIndirect: boolean,
+  guided: boolean
+): { loftPitchDeg: number | null; loftTicks: number } {
+  if (!guided) {
+    return { loftPitchDeg: null, loftTicks: 0 };
+  }
+  if (isIndirect) {
+    return {
+      loftPitchDeg: clamp(26 + rawHoriz * 0.04, 30, 48),
+      loftTicks: Math.round(clamp(rawHoriz / 35, 6, 14)),
+    };
+  }
+  return {
+    loftPitchDeg: clamp(8 + rawHoriz * 0.025, 10, 22),
+    loftTicks: Math.round(clamp(rawHoriz / 65, 3, 8)),
+  };
+}
+
+function rotateUnitVecToward(cur: Vec3, target: Vec3, maxTurnRad: number): Vec3 {
+  const dot = clamp(cur.x * target.x + cur.y * target.y + cur.z * target.z, -1, 1);
+  const ang = Math.acos(dot);
+  if (ang <= maxTurnRad || ang < 1e-6) {
+    return target;
+  }
+  const f = maxTurnRad / ang;
+  const sinAng = Math.sin(ang);
+  const a = Math.sin((1 - f) * ang) / sinAng;
+  const b = Math.sin(f * ang) / sinAng;
+  const nx = a * cur.x + b * target.x;
+  const ny = a * cur.y + b * target.y;
+  const nz = a * cur.z + b * target.z;
+  const len = Math.hypot(nx, ny, nz) || 1;
+  return { x: nx / len, y: ny / len, z: nz / len };
+}
+
 function stepSalvoQueue(
   state: SimState,
   mech: MechRuntimeState,
@@ -861,9 +898,10 @@ function stepSalvoQueue(
       ? state.mechs.find((m) => m.id === item.targetId && m.alive && m.teamId !== mech.teamId)
       : undefined;
 
+    const guided = Boolean(target && item.guided);
     let aimYaw = torsoWorldYaw;
-    let aimPitch = item.isIndirect ? 50 : 25;
-    let rawHoriz = 999;
+    let aimPitch = clamp(control.targetPitch ?? mech.pitchDeg, -60, 75);
+    let rawHoriz = 600;
     if (target) {
       const dx = target.pos.x - muzzlePos.x;
       const dy = target.pos.y - muzzlePos.y;
@@ -872,11 +910,18 @@ function stepSalvoQueue(
         aimYaw = vectorToAngle2D(dx, dy);
       }
     }
+    const loft = computeLrmLoftParams(rawHoriz, item.isIndirect, guided);
+    if (target && !guided) {
+      const dz = target.pos.z + getMechCenterZ(target.stats.sizeScale) - muzzlePos.z;
+      const hDist = Math.max(1e-4, rawHoriz);
+      aimPitch = (Math.atan2(dz, hDist) * 180) / Math.PI;
+    } else if (guided && loft.loftPitchDeg !== null) {
+      aimPitch = loft.loftPitchDeg;
+    }
 
     const minRangeMult = spec.minRange && rawHoriz < spec.minRange ? 0.25 : 1.0;
     const headPenaltySpread = mech.parts.head.destroyed ? 3.5 : 0;
     const totalSpread = (spec.spreadDeg + headPenaltySpread + (item.isIndirect ? 2.0 : 0)) * 0.75;
-    const guided = Boolean(target && item.guided);
 
     spawnSingleProjectile({
       state,
@@ -891,7 +936,7 @@ function stepSalvoQueue(
       targetId: target?.id ?? null,
       homingTurnDegPerSec: guided ? spec.homingTurnDegPerSec : 0,
       hp: 1,
-      loftTicksRemaining: item.isIndirect ? 18 : 9,
+      loftTicksRemaining: loft.loftTicks,
     });
 
     item.remainingShots -= 1;
@@ -984,24 +1029,28 @@ function tryFireWeaponSlot(
 
     const det = evaluateTargetDetection(state, mech, target);
     hasDirectLos = det.hasLineOfSight;
+    const lrmGuided =
+      spec.kind === 'lrm_homing' && mech.lockComplete && mech.lockTargetId === target.id;
     if (!hasDirectLos) {
       const indirectValid =
-        spec.kind === 'lrm_homing' &&
-        mech.lockComplete &&
-        mech.lockTargetId === target.id &&
+        lrmGuided &&
         (det.withinOmniRadar ||
           (det.effectiveAllySpotted && !(det.targetProtectedByEcm && det.dist > 400)));
       if (indirectValid) {
-        aimPitch = Math.max(aimPitch, 50);
+        const loft = computeLrmLoftParams(rawHoriz, true, true);
+        if (loft.loftPitchDeg !== null) {
+          aimPitch = Math.max(aimPitch, loft.loftPitchDeg);
+        }
         indirectExtraSpread = 2.0;
       } else {
         return;
       }
-    } else if (spec.kind === 'lrm_homing') {
-      aimPitch = Math.max(aimPitch, 25);
+    } else if (lrmGuided) {
+      const loft = computeLrmLoftParams(rawHoriz, false, true);
+      if (loft.loftPitchDeg !== null) {
+        aimPitch = Math.max(aimPitch, loft.loftPitchDeg);
+      }
     }
-  } else if (spec.kind === 'lrm_homing') {
-    aimPitch = Math.max(aimPitch, 25);
   }
 
   if (spec.kind === 'laser' && state.activeBeams.some((b) => b.ownerId === mech.id && b.slot === slot)) {
@@ -1126,7 +1175,7 @@ function tryFireWeaponSlot(
   if (spec.kind === 'lrm_homing') {
     const guided = Boolean(target && mech.lockComplete && mech.lockTargetId === target.id);
     const isIndirect = Boolean(target && !hasDirectLos);
-    const loftTicks = isIndirect ? 18 : 9;
+    const loft = computeLrmLoftParams(rawHoriz, isIndirect, guided);
     const isStream = mech.blueprint.lrmFireMode === 'stream' && spec.burstCount > 1;
     const initialCount = isStream ? 1 : spec.burstCount;
     const lrmSpread = isStream ? totalSpread * 0.75 : totalSpread;
@@ -1145,7 +1194,7 @@ function tryFireWeaponSlot(
         targetId: target?.id ?? null,
         homingTurnDegPerSec: guided ? spec.homingTurnDegPerSec : 0,
         hp: 1,
-        loftTicksRemaining: loftTicks,
+        loftTicksRemaining: loft.loftTicks,
       });
     }
 
@@ -1801,7 +1850,7 @@ export function stepSimulation(
     proj.ttlTicks -= 1;
     if (proj.ttlTicks <= 0) continue;
 
-    // Two-stage missile guidance (Stage 1: loft climb, Stage 2: terminal homing)
+    // Two-stage missile guidance (Stage 1: loft climb, Stage 2: terminal SLERP + lead homing)
     if (proj.loftTicksRemaining > 0) {
       proj.loftTicksRemaining -= 1;
       if (proj.homingTurnDegPerSec > 0 && proj.targetId) {
@@ -1809,40 +1858,83 @@ export function stepSimulation(
         if (tgt) {
           const dx = tgt.pos.x - proj.pos.x;
           const dy = tgt.pos.y - proj.pos.y;
-          const hLen = Math.hypot(dx, dy) || 1;
           const hSpeed = Math.hypot(proj.vel.x, proj.vel.y) || 1;
-          const blend = clamp(degToRad(proj.homingTurnDegPerSec * 0.5 * SIM_DT), 0, 1);
-          const nx = proj.vel.x / hSpeed + (dx / hLen - proj.vel.x / hSpeed) * blend;
-          const ny = proj.vel.y / hSpeed + (dy / hLen - proj.vel.y / hSpeed) * blend;
-          const nLen = Math.hypot(nx, ny) || 1;
-          proj.vel.x = (nx / nLen) * hSpeed;
-          proj.vel.y = (ny / nLen) * hSpeed;
+          const curYawRad = Math.atan2(proj.vel.y, proj.vel.x);
+          const tgtYawRad = Math.atan2(dy, dx);
+          let dYaw = tgtYawRad - curYawRad;
+          while (dYaw > Math.PI) dYaw -= 2 * Math.PI;
+          while (dYaw < -Math.PI) dYaw += 2 * Math.PI;
+          const stepYaw = clamp(dYaw, -0.08, 0.08);
+          const newYawRad = curYawRad + stepYaw;
+          proj.vel.x = Math.cos(newYawRad) * hSpeed;
+          proj.vel.y = Math.sin(newYawRad) * hSpeed;
         }
       }
     } else if (proj.homingTurnDegPerSec > 0 && proj.targetId) {
       const tgt = state.mechs.find((m) => m.id === proj.targetId && m.alive);
       if (tgt) {
+        const distToTgt = distance3D(
+          proj.pos.x,
+          proj.pos.y,
+          proj.pos.z,
+          tgt.pos.x,
+          tgt.pos.y,
+          tgt.pos.z + getMechCenterZ(tgt.stats.sizeScale)
+        );
+        const speed = Math.hypot(proj.vel.x, proj.vel.y, proj.vel.z) || 1;
+        const tGo = clamp(distToTgt / speed, 0, 1.5);
+
+        let lateralX = 0;
+        let lateralY = 0;
+        let scatterZ = 0;
+        if (proj.kind === 'lrm_homing') {
+          const h1 = (((proj.id * 2654435761) >>> 0) % 1000) / 1000 - 0.5;
+          const h2 = (((proj.id * 1597334677) >>> 0) % 1000) / 1000 - 0.5;
+          const scatterScale = tgt.stats.sizeScale;
+          const toX = tgt.pos.x - proj.pos.x;
+          const toY = tgt.pos.y - proj.pos.y;
+          const hLen = Math.hypot(toX, toY) || 1;
+          const perpX = -toY / hLen;
+          const perpY = toX / hLen;
+          lateralX = perpX * h1 * 1.6 * scatterScale;
+          lateralY = perpY * h1 * 1.6 * scatterScale;
+          scatterZ = (h2 * 2.2 - 0.2) * scatterScale;
+        }
+
+        const aimX = tgt.pos.x + tgt.vel.x * tGo * 0.85 + lateralX;
+        const aimY = tgt.pos.y + tgt.vel.y * tGo * 0.85 + lateralY;
+        const rawAimZ =
+          tgt.pos.z +
+          getMechCenterZ(tgt.stats.sizeScale) +
+          tgt.vel.z * tGo * 0.5 +
+          scatterZ +
+          0.5 * proj.gravity * tGo * tGo;
+        const aimZ = Math.max(tgt.pos.z + 1.5 * tgt.stats.sizeScale, rawAimZ);
+
         const desired = {
-          x: tgt.pos.x - proj.pos.x,
-          y: tgt.pos.y - proj.pos.y,
-          z: tgt.pos.z + getMechCenterZ(tgt.stats.sizeScale) - proj.pos.z,
+          x: aimX - proj.pos.x,
+          y: aimY - proj.pos.y,
+          z: aimZ - proj.pos.z,
         };
         const dLen = Math.hypot(desired.x, desired.y, desired.z) || 1;
-        const speed = Math.hypot(proj.vel.x, proj.vel.y, proj.vel.z) || 1;
-        const curDir = {
+        const curDir: Vec3 = {
           x: proj.vel.x / speed,
           y: proj.vel.y / speed,
           z: proj.vel.z / speed,
         };
-        const maxTurnRad = degToRad(proj.homingTurnDegPerSec * SIM_DT);
-        const blend = clamp(maxTurnRad, 0, 1);
-        const nx = curDir.x + (desired.x / dLen - curDir.x) * blend;
-        const ny = curDir.y + (desired.y / dLen - curDir.y) * blend;
-        const nz = curDir.z + (desired.z / dLen - curDir.z) * blend;
-        const nLen = Math.hypot(nx, ny, nz) || 1;
-        proj.vel.x = (nx / nLen) * speed;
-        proj.vel.y = (ny / nLen) * speed;
-        proj.vel.z = (nz / nLen) * speed;
+        const desiredDir: Vec3 = {
+          x: desired.x / dLen,
+          y: desired.y / dLen,
+          z: desired.z / dLen,
+        };
+        const newDir = rotateUnitVecToward(
+          curDir,
+          desiredDir,
+          degToRad(proj.homingTurnDegPerSec * SIM_DT)
+        );
+        proj.vel.x = newDir.x * speed;
+        proj.vel.y = newDir.y * speed;
+        proj.vel.z = newDir.z * speed;
       }
     }
 
@@ -1881,6 +1973,8 @@ export function stepSimulation(
       }
     }
 
+    const effectiveMaxRange = proj.kind === 'lrm_homing' ? proj.maxRange * 1.18 : proj.maxRange;
+
     if (
       earliestMechHit &&
       (!terrainHit.hit || earliestMechHit.hit.t <= terrainHit.t)
@@ -1889,7 +1983,7 @@ export function stepSimulation(
       const rangeMult = computeRangeFalloffMultiplier(
         proj.distanceTraveled,
         proj.optimalRange,
-        proj.maxRange
+        effectiveMaxRange
       );
       if (rangeMult > 0.01) {
         const landed = resolveHitOnMech(
@@ -1938,7 +2032,7 @@ export function stepSimulation(
       nextPos.y < -20 ||
       nextPos.y > state.terrain.depth + 20 ||
       nextPos.z < -20 ||
-      proj.distanceTraveled >= proj.maxRange
+      proj.distanceTraveled >= effectiveMaxRange
     ) {
       continue;
     }

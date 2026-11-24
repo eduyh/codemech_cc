@@ -259,7 +259,7 @@ export default function App() {
           <div>
             <h1 className="cm-title">CodeMech.py</h1>
             <p className="cm-subtitle">
-              v2.0 — 3D メック戦＆階層グリッドプログラミング教材 (6×6 + 5サブルーチン)
+              ver0.0.3 — 3D メック戦＆階層グリッドプログラミング教材 (6×6 + 5サブルーチン)
             </p>
           </div>
         </div>

@@ -39,14 +39,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          TITLE="CodeMech.py v${VERSION} オフライン配布版"
+          TITLE="CodeMech.py ver${VERSION} オフライン配布版"
           NOTES_FILE=$(mktemp)
           node -e '
             const fs = require("fs");
             const ver = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
             const sha = process.env.GITHUB_SHA.slice(0, 7);
             const lines = [
-              `# CodeMech.py v${ver} オフライン配布版`,
+              `# CodeMech.py ver${ver} オフライン配布版`,
               "",
               `\`main\` ブランチ (\`${sha}\`) から自動ビルドされたオフライン版です。`,
               "",

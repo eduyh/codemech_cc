@@ -879,6 +879,132 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(amsSim.mechs[1].heat).toBeGreaterThan(0);
   });
 
+  it('lands locked LRM salvos and streams reliably across direct, indirect cover-clearing, and moving-target trajectories', () => {
+    // A. Direct 600m locked Stream & Salvo LRM-5 both hit target
+    const streamBp = structuredClone(PRESET_VANGUARD);
+    streamBp.lrmFireMode = 'stream';
+    const salvoBp = structuredClone(PRESET_VANGUARD);
+    salvoBp.lrmFireMode = 'salvo';
+
+    const directSim = createSimulation({
+      seed: 410,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
+      entries: [
+        { id: 'stream', name: 'Stream', teamId: 'A', blueprint: streamBp },
+        { id: 'salvo', name: 'Salvo', teamId: 'A', blueprint: salvoBp },
+        { id: 'tgt', name: 'Target', teamId: 'B', blueprint: PRESET_FORTRESS },
+      ],
+    });
+    directSim.terrain.obstacles = [];
+    directSim.mechs[0].pos = { x: 580, y: 800, z: 0 };
+    directSim.mechs[0].yawDeg = 0;
+    directSim.mechs[1].pos = { x: 620, y: 800, z: 0 };
+    directSim.mechs[1].yawDeg = 0;
+    directSim.mechs[2].pos = { x: 600, y: 200, z: 0 };
+
+    for (let t = 0; t < 40; t++) {
+      stepSimulation(directSim, {
+        stream: { ...EMPTY_CONTROL_INPUT, lockTargetId: 'tgt' },
+        salvo: { ...EMPTY_CONTROL_INPUT, lockTargetId: 'tgt' },
+      });
+    }
+    stepSimulation(directSim, {
+      stream: { ...EMPTY_CONTROL_INPUT, fireRightShoulder: true, lockTargetId: 'tgt' },
+      salvo: { ...EMPTY_CONTROL_INPUT, fireRightShoulder: true, lockTargetId: 'tgt' },
+    });
+
+    let streamHits = 0;
+    let salvoHits = 0;
+    for (let t = 0; t < 160; t++) {
+      stepSimulation(directSim, {});
+      for (const ev of directSim.lastTickEvents) {
+        if (ev.type === 'hit' && ev.targetId === 'tgt') {
+          if (ev.actorId === 'stream') streamHits += 1;
+          if (ev.actorId === 'salvo') salvoHits += 1;
+        }
+      }
+    }
+    expect(streamHits).toBeGreaterThanOrEqual(4);
+    expect(salvoHits).toBeGreaterThanOrEqual(4);
+    expect(directSim.mechs[2].damageTaken).toBeGreaterThan(70);
+
+    // B. Indirect LRM-5 clears 28m obstacle wall at 260m and lands on covered target
+    const indirectSim = createSimulation({
+      seed: 411,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
+      entries: [
+        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: salvoBp },
+        { id: 'spotter', name: 'Spotter', teamId: 'A', blueprint: { ...PRESET_STRIKER, ecmEnabled: false } },
+        { id: 'covered', name: 'Covered', teamId: 'B', blueprint: PRESET_FORTRESS },
+      ],
+    });
+    indirectSim.terrain.obstacles = [
+      { id: 'wall', x: 540, y: 490, width: 120, height: 25, baseZ: 0, topZ: 28 },
+    ];
+    indirectSim.mechs[0].pos = { x: 600, y: 600, z: 0 };
+    indirectSim.mechs[0].yawDeg = 0;
+    indirectSim.mechs[1].pos = { x: 820, y: 340, z: 0 };
+    indirectSim.mechs[1].yawDeg = 270;
+    indirectSim.mechs[2].pos = { x: 600, y: 340, z: 0 };
+
+    for (let t = 0; t < 60; t++) {
+      stepSimulation(indirectSim, {
+        shooter: { ...EMPTY_CONTROL_INPUT, lockTargetId: 'covered' },
+      });
+    }
+    expect(indirectSim.mechs[0].lockComplete).toBe(true);
+    stepSimulation(indirectSim, {
+      shooter: { ...EMPTY_CONTROL_INPUT, fireRightShoulder: true, lockTargetId: 'covered' },
+    });
+    let indirectHits = 0;
+    for (let t = 0; t < 100; t++) {
+      stepSimulation(indirectSim, {});
+      indirectHits += indirectSim.lastTickEvents.filter(
+        (ev) => ev.type === 'hit' && ev.actorId === 'shooter' && ev.targetId === 'covered'
+      ).length;
+    }
+    expect(indirectHits).toBeGreaterThanOrEqual(4);
+    expect(indirectSim.mechs[2].damageTaken).toBeGreaterThan(35);
+
+    // C. Direct locked LRM-5 hits perpendicularly moving Light target at ~400m
+    const moverSim = createSimulation({
+      seed: 412,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
+      entries: [
+        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: salvoBp },
+        { id: 'runner', name: 'Runner', teamId: 'B', blueprint: { ...PRESET_STRIKER, ecmEnabled: false } },
+      ],
+    });
+    moverSim.terrain.obstacles = [];
+    moverSim.mechs[0].pos = { x: 600, y: 800, z: 0 };
+    moverSim.mechs[0].yawDeg = 0;
+    moverSim.mechs[1].pos = { x: 520, y: 400, z: 0 };
+    moverSim.mechs[1].yawDeg = 90;
+
+    for (let t = 0; t < 40; t++) {
+      stepSimulation(moverSim, {
+        shooter: { ...EMPTY_CONTROL_INPUT, lockTargetId: 'runner' },
+        runner: { ...EMPTY_CONTROL_INPUT, moveForward: 1 },
+      });
+    }
+    expect(moverSim.mechs[0].lockComplete).toBe(true);
+    stepSimulation(moverSim, {
+      shooter: { ...EMPTY_CONTROL_INPUT, fireRightShoulder: true, lockTargetId: 'runner' },
+      runner: { ...EMPTY_CONTROL_INPUT, moveForward: 1 },
+    });
+    let moverHits = 0;
+    for (let t = 0; t < 120; t++) {
+      stepSimulation(moverSim, {
+        runner: { ...EMPTY_CONTROL_INPUT, moveForward: 1 },
+      });
+      moverHits += moverSim.lastTickEvents.filter(
+        (ev) => ev.type === 'hit' && ev.actorId === 'shooter' && ev.targetId === 'runner'
+      ).length;
+    }
+    expect(moverHits).toBeGreaterThanOrEqual(3);
+    expect(moverSim.mechs[1].damageTaken).toBeGreaterThan(25);
+  });
+
   it('supports per-slot extra ammo bins, keeps energy blade, and removes buckler shield', () => {
     expect(ARM_WEAPONS.some((w) => w.id === 'buckler_shield')).toBe(false);
     const blade = ARM_WEAPONS.find((w) => w.id === 'laser_blade');

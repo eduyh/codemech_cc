@@ -350,7 +350,7 @@ function isWeaponSlotReadyForBranch(
           (target.allySpotted && !(ecmProt && target.distance > 400));
         if (!hasIndirectLink) return false;
         if (!mech.lockComplete || mech.lockTargetId !== target.id) return false;
-      } else if (spec.kind === 'lrm_homing' && target.distance > 180) {
+      } else if (spec.kind === 'lrm_homing' && target.distance > (spec.minRange ?? 120)) {
         if (!mech.lockComplete || mech.lockTargetId !== target.id) return false;
       }
     }

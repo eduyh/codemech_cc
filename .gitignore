@@ -1,0 +1,63 @@
+# Reference repository (must never be tracked or pushed to GitHub)
+/codepanzer_cc/
+
+# Dependencies
+node_modules/
+
+# Build & distribution artifacts
+dist/
+dist-ssr/
+*.zip
+*.local
+
+# Caches & typecheck incremental outputs
+.vite/
+*.tsbuildinfo
+coverage/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local user experiments, exported mechs/pilots/scripts & user profile/backup data
+# (Prevent personal author_name / author_uuid from being committed)
+*.cmmech.json
+*.cmmech.*
+*.cmpilot.json
+*.cmpilot.*
+!/mechs_sample/[0-9][0-9]_*.cmmech.json
+/mechs_user/*
+!/mechs_user/README.txt
+/mechs_import/*
+!/mechs_import/README.txt
+!/mechs_import/replays/
+/mechs_import/replays/*
+!/mechs_import/replays/README.txt
+*.cmmech-backup*
+*.cmenv.json
+*.cmreplay.json
+*codemech_env*
+*cmmech_user*
+*user_profile*
+*user-profile*
+*.py
+user_data/
+my_mechs/
+local_mechs/
+backups/
+dumps/

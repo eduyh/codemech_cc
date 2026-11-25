@@ -285,6 +285,7 @@ const CALL_OP_FOR_SLOT: Record<MechSubroutineSlotId, string> = {
   S3: 'call_s3',
   S4: 'call_s4',
   S5: 'call_s5',
+  S6: 'call_s6',
 };
 
 function checkCellsCompatibility(
@@ -363,6 +364,7 @@ export function analyzeMechRomCompatibility(
     S3: [],
     S4: [],
     S5: [],
+    S6: [],
   };
 
   const tierSpec = getControlTierSpec(bp.controlTier);

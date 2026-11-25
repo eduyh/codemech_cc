@@ -4,6 +4,7 @@ import {
   extractCustomTagFromName,
   formatCustomMechName,
   getBaseMechName,
+  isStarterMechId,
   normalizeCustomTag,
 } from '../utils/customMechStorage';
 import {
@@ -37,6 +38,7 @@ import {
   getWeaponGroupSummary,
   getWeaponMaxMountCount,
   getWeaponSlotExtraAmmoTons,
+  getWeaponSlotLrmFireMode,
   getWeaponSlotMountCount,
   inferChassisIdFromParts,
   isPassiveModuleSpec,
@@ -66,9 +68,10 @@ interface MechGarageProps {
   savedMechs: SavedCustomMech[];
   allRoms: readonly ProgramRomEntry[];
   pilot?: PilotProfile;
+  isStarterDirty?: boolean;
   onChange: (next: MechBlueprint) => void;
   onSaveCustomMech: (tag: string) => { saved: SavedCustomMech; updated: boolean };
-  onLoadBlueprint: (bp: MechBlueprint) => void;
+  onLoadBlueprint: (bp: MechBlueprint, pilotId?: string) => void;
   onDeleteCustomMech: (id: string) => void;
 }
 
@@ -207,6 +210,7 @@ export function MechGarage({
   savedMechs,
   allRoms,
   pilot,
+  isStarterDirty = false,
   onChange,
   onSaveCustomMech,
   onLoadBlueprint,
@@ -221,6 +225,10 @@ export function MechGarage({
   );
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setCustomTag(extractCustomTagFromName(blueprint.name));
+  }, [blueprint.id, blueprint.name]);
 
   useEffect(() => {
     return () => {
@@ -279,7 +287,7 @@ export function MechGarage({
       return;
     }
     if (selectedCustom) {
-      onLoadBlueprint(selectedCustom.blueprint);
+      onLoadBlueprint(selectedCustom.blueprint, selectedCustom.pilotId);
       setCustomTag(selectedCustom.tag);
       const codeLabel = selectedCustom.blueprint.name.split(' ')[0] ?? selectedCustom.tag;
       flashNotice(`読込 ${codeLabel}`);
@@ -337,11 +345,15 @@ export function MechGarage({
     });
   };
 
-  const handleSetLrmMode = (mode: 'salvo' | 'stream') => {
+  const handleSetSlotLrmMode = (slot: WeaponSlotId, mode: 'salvo' | 'stream') => {
+    const nextLrmModes = {
+      ...(blueprint.lrmFireModes ?? {}),
+      [slot]: mode,
+    };
     onChange({
       ...blueprint,
       chassisId: chassis.id,
-      lrmFireMode: mode,
+      lrmFireModes: nextLrmModes,
     });
   };
 
@@ -375,9 +387,14 @@ export function MechGarage({
     } else if (curMount > maxMount) {
       nextMounts[slot] = maxMount;
     }
+    const nextLrmModes = { ...(blueprint.lrmFireModes ?? {}) };
+    if (nextSpec.kind !== 'lrm_homing') {
+      delete nextLrmModes[slot];
+    }
     onChange({
       ...blueprint,
       chassisId: chassis.id,
+      lrmFireModes: Object.keys(nextLrmModes).length > 0 ? nextLrmModes : undefined,
       extraAmmo: Object.keys(nextExtraAmmo).length > 0 ? nextExtraAmmo : undefined,
       weaponMountCounts: Object.keys(nextMounts).length > 0 ? nextMounts : undefined,
       parts: nextParts,
@@ -583,6 +600,12 @@ export function MechGarage({
   const mobileHiddenClass = (sec: 'chassis' | 'weapons' | 'armor') =>
     mobileSection !== 'all' && mobileSection !== sec ? 'is-mobile-hidden' : '';
 
+  const isStarterMech = isStarterMechId(blueprint.id);
+  const normalizedGarageTag = normalizeCustomTag(customTag);
+  const hasSameTagCustom =
+    Boolean(normalizedGarageTag) &&
+    savedMechs.some((m) => m.chassisId === chassis.id && m.tag === normalizedGarageTag);
+
   return (
     <section className="cm-panel cm-garage-panel">
       <div className="cm-panel-head cm-garage-head">
@@ -594,7 +617,7 @@ export function MechGarage({
         </div>
 
         <div className="cm-garage-slot-bar">
-          <div className="cm-garage-save-group">
+          <div className={`cm-garage-save-group ${isStarterDirty ? 'is-attention' : ''}`}>
             <input
               type="text"
               className="cm-tag-input"
@@ -608,11 +631,11 @@ export function MechGarage({
             <span className="cm-tag-count">{customTag.length}/3</span>
             <button
               type="button"
-              className="cm-btn-primary-xs"
+              className={`cm-btn-primary-xs ${isStarterDirty ? 'is-attention' : ''}`}
               onClick={handleSaveSlot}
-              title="半角3文字までの識別名を CM-XX/ABC 形式で付けて保存します（同フレーム・同識別名は上書き）"
+              title="半角3文字までの識別名を CM-XX/ABC 形式で付けてユーザー機体として保存します"
             >
-              保存
+              {isStarterMech ? '新規保存' : hasSameTagCustom ? '上書き保存' : '新規保存'}
             </button>
           </div>
 
@@ -662,6 +685,17 @@ export function MechGarage({
           {saveNotice && <span className="cm-save-notice">{saveNotice}</span>}
         </div>
       </div>
+
+      {isStarterDirty && (
+        <div className="cm-starter-save-guide">
+          <span>
+            標準機体「{getBaseMechName(chassis.id)}」を編集中です。標準機体は上書きできません — 識別名（半角3文字）を付けて「新規保存」し、ユーザー機体として保存してください。
+          </span>
+          <button type="button" className="cm-btn-primary-xs is-attention" onClick={handleSaveSlot}>
+            新規ユーザー機体として保存
+          </button>
+        </div>
+      )}
 
       <div className="cm-stats-summary cm-garage-sticky-summary">
         <div className="cm-stat-row">
@@ -838,7 +872,7 @@ export function MechGarage({
             </select>
           </label>
           <div className="cm-booster-note">
-            {tierSpec.description} パイロット席 0.5t は骨格に確保済。搭載 ROM は一律 4×4 ({ROM_WEIGHT_4X4.toFixed(1)}t)／未搭載 0.0t（最大5枠 = 2.5t）。
+            {tierSpec.description} パイロット席 0.5t は骨格に確保済。搭載 ROM は一律 4×4 ({ROM_WEIGHT_4X4.toFixed(1)}t)／未搭載 0.0t（最大6枠 = 3.0t）。
           </div>
 
           <div className="cm-rom-slot-list">
@@ -960,24 +994,6 @@ export function MechGarage({
             <div className="cm-subhead" style={{ marginBottom: 0 }}>
               3. 武装カスタマイズ（4枠）＋追加弾薬
             </div>
-            <div className="cm-seg">
-              <button
-                type="button"
-                className={(blueprint.lrmFireMode ?? 'salvo') === 'salvo' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
-                onClick={() => handleSetLrmMode('salvo')}
-                title="全弾同時発射：AMS を飽和突破しやすい"
-              >
-                一斉斉射
-              </button>
-              <button
-                type="button"
-                className={blueprint.lrmFireMode === 'stream' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
-                onClick={() => handleSetLrmMode('stream')}
-                title="連続垂れ流し：高精度で断続的に制圧（AMS に落とされやすい）"
-              >
-                垂れ流し
-              </button>
-            </div>
           </div>
           {(
             [
@@ -1022,6 +1038,7 @@ export function MechGarage({
             const maxMount = getWeaponMaxMountCount(row.spec);
             const curMount = getWeaponSlotMountCount(blueprint, row.slot);
             const passive = isPassiveModuleSpec(row.spec);
+            const curLrmMode = getWeaponSlotLrmFireMode(blueprint, row.slot);
             const isEmpty = row.spec.id === row.noneId;
             const slotTotalTons = row.spec.weight * curMount + extraTons;
             return (
@@ -1089,6 +1106,31 @@ export function MechGarage({
                           ×{cnt}
                         </button>
                       ))}
+                    </div>
+                  </div>
+                )}
+                {row.spec.kind === 'lrm_homing' && (
+                  <div className="cm-weapon-subrow">
+                    <span>
+                      発射方式: <strong>{curLrmMode === 'salvo' ? '斉射' : '連射'}</strong>
+                    </span>
+                    <div className="cm-seg">
+                      <button
+                        type="button"
+                        className={curLrmMode === 'salvo' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
+                        onClick={() => handleSetSlotLrmMode(row.slot, 'salvo')}
+                        title="全弾同時発射：AMS を飽和突破しやすい"
+                      >
+                        斉射
+                      </button>
+                      <button
+                        type="button"
+                        className={curLrmMode === 'stream' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
+                        onClick={() => handleSetSlotLrmMode(row.slot, 'stream')}
+                        title="連続発射：高精度で断続的に制圧（AMS に落とされやすい）"
+                      >
+                        連射
+                      </button>
                     </div>
                   </div>
                 )}

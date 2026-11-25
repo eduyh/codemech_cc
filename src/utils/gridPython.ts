@@ -70,7 +70,8 @@ function pilotStmt(cell: PilotGridCell): string {
     case 'call_s2':
     case 'call_s3':
     case 'call_s4':
-    case 'call_s5': {
+    case 'call_s5':
+    case 'call_s6': {
       const argPart =
         cell.param !== undefined && Number.isFinite(cell.param)
           ? `, arg=${Math.round(cell.param)}`

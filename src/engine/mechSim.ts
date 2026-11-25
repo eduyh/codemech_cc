@@ -7,6 +7,7 @@ import {
   getChassisSpec,
   getShoulderWeaponSpec,
   getWeaponMaxRange,
+  getWeaponSlotLrmFireMode,
   getWeaponSlotMaxAmmo,
   getWeaponSlotMountCount,
   getWeaponSpec,
@@ -1211,7 +1212,7 @@ function tryFireWeaponSlot(
     const isIndirect = Boolean(target && !hasDirectLos);
     const loft = computeLrmLoftParams(rawHoriz, isIndirect, guided);
     const totalBurst = spec.burstCount * actualCount;
-    const isStream = mech.blueprint.lrmFireMode === 'stream' && totalBurst > 1;
+    const isStream = getWeaponSlotLrmFireMode(mech.blueprint, slot) === 'stream' && totalBurst > 1;
     const initialCount = isStream ? Math.min(actualCount, totalBurst) : totalBurst;
     const lrmSpread = isStream ? totalSpread * 0.75 : totalSpread;
 

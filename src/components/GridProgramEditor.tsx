@@ -265,6 +265,19 @@ const PILOT_CHIPS: readonly PilotChipMeta[] = [
     timed: true,
     defaultDur: 0.6,
   },
+  {
+    op: 'call_s6',
+    short: 'CALL S6',
+    label: 'S6 呼出 (4×4)',
+    cat: 'call',
+    conceptTag: 'サブルーチン呼出',
+    execBadge: '最大指定秒',
+    tip: '機体枠 S6 (4×4 ROM) を実行します。予備・追加戦術など自由な拡張枠です。',
+    hasTarget: true,
+    hasOptionalArg: true,
+    timed: true,
+    defaultDur: 0.6,
+  },
   // Emergency
   {
     op: 'emergency_cool',
@@ -336,7 +349,7 @@ const PILOT_CHIPS: readonly PilotChipMeta[] = [
     cat: 'branch',
     conceptTag: '数値比較 (if/else)',
     execBadge: '0 tick',
-    tip: '敵との距離が指定(m)より遠ければ T。狙撃武器や LRM・接近開始の判定に便利です。',
+    tip: '敵との距離が指定(m)より遠ければ T。狙撃武器や遠距離ミサイル・接近開始の判定に便利です。',
     branch: true,
     hasParam: true,
     paramLabel: '距離(m)',
@@ -433,7 +446,7 @@ const PILOT_CHIPS: readonly PilotChipMeta[] = [
     cat: 'branch',
     conceptTag: 'ロックオン判定',
     execBadge: '0 tick',
-    tip: '対象への誘導ロックが完了していれば T。ロック後に LRM を発射する制御に使います。',
+    tip: '対象への誘導ロックが完了していれば T。ロック後に遠距離ミサイルを発射する制御に使います。',
     branch: true,
   },
   {
@@ -453,7 +466,7 @@ const PILOT_CHIPS: readonly PilotChipMeta[] = [
     cat: 'branch',
     conceptTag: '電子戦検知',
     execBadge: '0 tick',
-    tip: '敵 ECM のジャミング圏内にいるとき T。接近突破や PPC による解除判断に使えます。',
+    tip: '敵 ECM のジャミング圏内にいるとき T。接近突破や荷電粒子砲による解除判断に使えます。',
     branch: true,
   },
   {
@@ -684,7 +697,7 @@ const SUB_CHIPS: readonly SubChipMeta[] = [
     cat: 'weapon',
     conceptTag: 'グループ射撃 (照準待ち)',
     execBadge: '発射後即次へ',
-    tip: 'G2 に割り当てた武装を発射します。LRM 等を含めるとレーダー範囲内の敵へ遮蔽越し曲射も行えます。',
+    tip: 'G2 に割り当てた武装を発射します。遠距離ミサイル等を含めるとレーダー範囲内の敵へ遮蔽越し曲射も行えます。',
     timed: true,
     defaultDur: 0.45,
     weaponGroupKey: 'G2',
@@ -908,7 +921,7 @@ const SUB_CHIPS: readonly SubChipMeta[] = [
     cat: 'branch',
     conceptTag: 'ロックオン判定',
     execBadge: '0 tick',
-    tip: '対象への誘導ロックが完了していれば T。LRM の無誘導誤射を防げます。',
+    tip: '対象への誘導ロックが完了していれば T。遠距離ミサイルの無誘導誤射を防げます。',
     branch: true,
   },
   {
@@ -928,7 +941,7 @@ const SUB_CHIPS: readonly SubChipMeta[] = [
     cat: 'branch',
     conceptTag: '電子戦検知',
     execBadge: '0 tick',
-    tip: '敵 ECM ジャミング圏内にいるなら T。近接や PPC 攻撃への切替に使えます。',
+    tip: '敵 ECM ジャミング圏内にいるなら T。近接や荷電粒子砲への切替に使えます。',
     branch: true,
   },
 ];
@@ -2070,7 +2083,7 @@ export function GridProgramEditor({
           <h2 className="cm-panel-title">統合グリッド・プログラミング</h2>
           <p className="cm-panel-sub">
             {tierSpec.pilotEnabled
-              ? 'パイロット (6×6) で戦況を見て ARG 付き CALL S1〜S5 を選び、4×4 ROM で脚・腰・武装を動かします'
+              ? 'パイロット (6×6) で戦況を見て ARG 付き CALL S1〜S6 を選び、4×4 ROM で脚・腰・武装を動かします'
               : `ロボット単体モード (${tierSpec.slotGridSizes.S1}×${tierSpec.slotGridSizes.S1})：パイロット層なしで S1 パネル 1 枚を直接ループ実行します`}
           </p>
         </div>
@@ -2607,7 +2620,7 @@ export function GridProgramEditor({
                         if (v) handleMountCatalogRom(v);
                       }}
                     >
-                      <option value="">搭載先 (S1〜S5)...</option>
+                      <option value="">搭載先 (S1〜S6)...</option>
                       {tierSpec.enabledSlots.map((sl) => {
                         const curRef = mech.romSlots?.[sl];
                         const curRom =

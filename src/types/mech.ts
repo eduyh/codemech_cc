@@ -202,7 +202,7 @@ export interface MechPartsSelection {
 export type GridDir = 'N' | 'E' | 'S' | 'W';
 export type PilotTargetMode = 'main' | 'nearest' | 'flank' | 'attacker' | 'weakest';
 
-export type MechSubroutineSlotId = 'S1' | 'S2' | 'S3' | 'S4' | 'S5';
+export type MechSubroutineSlotId = 'S1' | 'S2' | 'S3' | 'S4' | 'S5' | 'S6';
 
 export const MECH_SUBROUTINE_SLOT_SPECS: ReadonlyArray<{
   slotId: MechSubroutineSlotId;
@@ -214,6 +214,7 @@ export const MECH_SUBROUTINE_SLOT_SPECS: ReadonlyArray<{
   { slotId: 'S3', gridSize: 4, defaultName: '索敵・移動 (4×4)' },
   { slotId: 'S4', gridSize: 4, defaultName: '冷却・防御 (4×4)' },
   { slotId: 'S5', gridSize: 4, defaultName: '近接・迎撃 (4×4)' },
+  { slotId: 'S6', gridSize: 4, defaultName: '予備・特化 (4×4)' },
 ];
 
 export type MechSubroutineOp =
@@ -318,6 +319,7 @@ export interface MechBlueprint {
   boosterEnabled: boolean;
   ecmEnabled?: boolean;
   lrmFireMode?: LrmFireMode;
+  lrmFireModes?: Partial<Record<WeaponSlotId, LrmFireMode>>;
   extraHeatSinks?: number;
   extraAmmo?: Partial<Record<WeaponSlotId, number>>;
   weaponMountCounts?: Partial<Record<WeaponSlotId, 1 | 2 | 3>>;
@@ -381,12 +383,13 @@ export type PilotGridOp =
   | 'empty'
   | 'start'
   | 'wire'
-  // Subroutine dispatch (calls S1..S5 on whichever mech the pilot boards)
+  // Subroutine dispatch (calls S1..S6 on whichever mech the pilot boards)
   | 'call_s1'
   | 'call_s2'
   | 'call_s3'
   | 'call_s4'
   | 'call_s5'
+  | 'call_s6'
   // Emergency & Flag memory operations
   | 'emergency_cool'
   | 'override_on'

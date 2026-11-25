@@ -4,6 +4,7 @@ import {
   deleteSavedCustomMech,
   extractCustomTagFromName,
   formatCustomMechName,
+  isStarterMechId,
   normalizeCustomTag,
   saveCustomMech,
 } from '../customMechStorage';
@@ -51,8 +52,14 @@ describe('customMechStorage', () => {
     expect(stored?.blueprint.extraHeatSinks).toBe(3);
   });
 
-  it('deletes saved custom mechs cleanly by id', () => {
-    const s1 = saveCustomMech([], PRESET_FORTRESS, 'A1', 1000);
+  it('deletes saved custom mechs cleanly by id and stores pilotId with starter check', () => {
+    expect(isStarterMechId(PRESET_FORTRESS.id)).toBe(true);
+    expect(isStarterMechId('custom_nonexistent')).toBe(false);
+
+    const s1 = saveCustomMech([], PRESET_FORTRESS, 'A1', 1000, 'pilot_custom_alpha');
+    expect(s1.saved.pilotId).toBe('pilot_custom_alpha');
+    expect(isStarterMechId(s1.saved.id)).toBe(false);
+
     const s2 = saveCustomMech(s1.nextList, PRESET_VANGUARD, 'B2', 2000);
     const remaining = deleteSavedCustomMech(s2.nextList, s1.saved.id);
     expect(remaining).toHaveLength(1);

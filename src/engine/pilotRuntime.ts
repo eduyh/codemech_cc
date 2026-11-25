@@ -210,6 +210,8 @@ function callOpToSlotId(op: PilotGridCell['op']): MechSubroutineSlotId | null {
       return 'S4';
     case 'call_s5':
       return 'S5';
+    case 'call_s6':
+      return 'S6';
     default:
       return null;
   }

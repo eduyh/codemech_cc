@@ -20,18 +20,26 @@ import { MechPartsHud } from './components/MechPartsHud';
 import { MvpArenaCanvas } from './components/MvpArenaCanvas';
 import { ShareModal } from './components/ShareModal';
 import { CURRICULUM_MISSIONS } from './data/curriculum';
-import { getControlTierSpec } from './data/parts';
+import { computeMechStats, getControlTierSpec } from './data/parts';
 import { DEFAULT_PILOT_PROFILE, PRESET_VANGUARD, STARTER_MECHS, STARTER_PILOTS } from './data/presets';
 import {
   SavedCustomMech,
   deleteSavedCustomMech,
+  extractCustomTagFromName,
   formatCustomMechName,
+  getBaseMechName,
+  isStarterMechId,
   loadSavedCustomMechs,
+  normalizeCustomTag,
   saveCustomMech,
 } from './utils/customMechStorage';
 import {
+  ROM_CATEGORY_SPECS,
   deleteUserRom,
+  findRomById,
+  formatRomLabel,
   getAllRoms,
+  getRomCategory,
   loadUserRoms,
   resolveMechBlueprintRoms,
   saveUserRom,
@@ -51,6 +59,7 @@ import {
 } from './engine/pilotRuntime';
 import {
   ArenaPresetId,
+  MECH_SUBROUTINE_SLOT_SPECS,
   MatchParticipantEntry,
   MechBlueprint,
   MechControlInput,
@@ -147,6 +156,10 @@ export default function App() {
     resolveMechBlueprintRoms(structuredClone(PRESET_VANGUARD), getAllRoms(loadUserRoms()))
   );
   const [savedMechs, setSavedMechs] = useState<SavedCustomMech[]>(() => loadSavedCustomMechs());
+  const [starterEdited, setStarterEdited] = useState(false);
+  const [setupTag, setSetupTag] = useState(() => extractCustomTagFromName(playerMech.name));
+  const [setupSaveNotice, setSetupSaveNotice] = useState('');
+  const setupNoticeTimerRef = useRef<number | null>(null);
   const [seed, setSeed] = useState(2026);
   const [playerPilot, setPlayerPilot] = useState<PilotProfile>(() =>
     structuredClone(DEFAULT_PILOT_PROFILE)
@@ -173,6 +186,29 @@ export default function App() {
 
   const [renderTick, setRenderTick] = useState(0);
   const [playerDebugTrace, setPlayerDebugTrace] = useState<PilotDebugTrace | null>(null);
+
+  useEffect(() => {
+    setSetupTag(extractCustomTagFromName(playerMech.name));
+  }, [playerMech.id, playerMech.name]);
+
+  useEffect(() => {
+    return () => {
+      if (setupNoticeTimerRef.current !== null) {
+        window.clearTimeout(setupNoticeTimerRef.current);
+      }
+    };
+  }, []);
+
+  const flashSetupNotice = useCallback((msg: string) => {
+    setSetupSaveNotice(msg);
+    if (setupNoticeTimerRef.current !== null) {
+      window.clearTimeout(setupNoticeTimerRef.current);
+    }
+    setupNoticeTimerRef.current = window.setTimeout(() => {
+      setSetupSaveNotice('');
+      setupNoticeTimerRef.current = null;
+    }, 2800);
+  }, []);
 
   const resetMatch = useCallback(
     (
@@ -205,6 +241,9 @@ export default function App() {
     (nextMech: MechBlueprint) => {
       setPlayerMech(nextMech);
       playerMechRef.current = nextMech;
+      if (isStarterMechId(nextMech.id)) {
+        setStarterEdited(true);
+      }
       if (simRef.current.tick === 0) {
         resetMatch(formatId, arenaPreset, nextMech, seed);
       }
@@ -213,13 +252,22 @@ export default function App() {
   );
 
   const handleLoadMechBlueprint = useCallback(
-    (bp: MechBlueprint) => {
+    (bp: MechBlueprint, pilotId?: string) => {
       const cloned = resolveMechBlueprintRoms(structuredClone(bp), allRoms);
       setPlayerMech(cloned);
       playerMechRef.current = cloned;
-      resetMatch(formatId, arenaPreset, cloned, seed);
+      setStarterEdited(false);
+      const matchedPilot = pilotId ? allPilots.find((p) => p.id === pilotId) : undefined;
+      if (matchedPilot) {
+        const clonedPilot = structuredClone(matchedPilot);
+        setPlayerPilot(clonedPilot);
+        playerPilotRef.current = clonedPilot;
+        resetMatch(formatId, arenaPreset, cloned, seed, false, clonedPilot);
+      } else {
+        resetMatch(formatId, arenaPreset, cloned, seed);
+      }
     },
-    [allRoms, formatId, arenaPreset, seed, resetMatch]
+    [allRoms, allPilots, formatId, arenaPreset, seed, resetMatch]
   );
 
   const handleSaveUserRom = useCallback(
@@ -278,8 +326,15 @@ export default function App() {
 
   const handleSaveCustomMech = useCallback(
     (tag: string) => {
-      const res = saveCustomMech(savedMechs, playerMechRef.current, tag);
+      const res = saveCustomMech(
+        savedMechs,
+        playerMechRef.current,
+        tag,
+        Date.now(),
+        playerPilotRef.current.id
+      );
       setSavedMechs(res.nextList);
+      setStarterEdited(false);
       const savedClone = resolveMechBlueprintRoms(structuredClone(res.saved.blueprint), allRoms);
       setPlayerMech(savedClone);
       playerMechRef.current = savedClone;
@@ -287,6 +342,25 @@ export default function App() {
       return { saved: res.saved, updated: res.updated };
     },
     [savedMechs, allRoms, formatId, arenaPreset, seed, resetMatch]
+  );
+
+  const handleMountSetupRom = useCallback(
+    (slotId: MechSubroutineSlotId, value: string) => {
+      const cur = playerMechRef.current;
+      const nextRomSlots: Partial<Record<MechSubroutineSlotId, string | null>> = {
+        ...(cur.romSlots ?? {}),
+        [slotId]: value === '__none__' ? null : value,
+      };
+      const nextMech = resolveMechBlueprintRoms(
+        {
+          ...cur,
+          romSlots: nextRomSlots,
+        },
+        allRoms
+      );
+      handleUpdatePlayerMech(nextMech);
+    },
+    [allRoms, handleUpdatePlayerMech]
   );
 
   const handleDeleteCustomMech = useCallback(
@@ -395,6 +469,9 @@ export default function App() {
   const livePlayerSensor = playerSimMech ? buildMechSensorState(sim, playerSimMech.id) : null;
   const recentEvents = sim.events.slice(-8).reverse();
   const playerTierSpec = getControlTierSpec(playerMech.controlTier);
+  const playerStats = useMemo(() => computeMechStats(playerMech), [playerMech]);
+  const isStarterMech = isStarterMechId(playerMech.id);
+  const isStarterDirty = isStarterMech && starterEdited;
   const isGarageFull = studioTab === 'garage';
 
   return (
@@ -407,7 +484,7 @@ export default function App() {
           <div>
             <h1 className="cm-title">CodeMech.py</h1>
             <p className="cm-subtitle">
-              ver0.1.0 — 3D メック戦＆階層グリッドプログラミング教材 (パイロット 6×6 ＋ 4×4 ROM 最大5枠)
+              ver0.1.0 — 3D メック戦＆階層グリッドプログラミング教材 (パイロット 6×6 ＋ 4×4 ROM 最大6枠)
             </p>
           </div>
         </div>
@@ -421,7 +498,7 @@ export default function App() {
             >
               <Grid2X2 size={15} />{' '}
               {playerTierSpec.pilotEnabled
-                ? 'プログラム (6×6 / 4×4×5枠)'
+                ? 'プログラム (6×6 / 4×4×6枠)'
                 : `プログラム (${playerTierSpec.shortLabel})`}
             </button>
             <button
@@ -482,6 +559,7 @@ export default function App() {
               savedMechs={savedMechs}
               allRoms={allRoms}
               pilot={playerPilot}
+              isStarterDirty={isStarterDirty}
               onChange={handleUpdatePlayerMech}
               onSaveCustomMech={handleSaveCustomMech}
               onLoadBlueprint={handleLoadMechBlueprint}
@@ -558,14 +636,14 @@ export default function App() {
                   </select>
                 </label>
 
-                <label className="cm-ctl" title="現在のパイロット 6×6 を保ったまま搭乗機体を乗り換えます">
+                <label className="cm-ctl" title="現在の搭乗機体を切り替えます（ユーザー機体は保存時のパイロット設定も復元）">
                   <span>搭乗機体(乗換)</span>
                   <select
                     value={playerMech.id}
                     onChange={(e) => {
                       const custom = savedMechs.find((m) => m.id === e.target.value);
                       if (custom) {
-                        handleLoadMechBlueprint(custom.blueprint);
+                        handleLoadMechBlueprint(custom.blueprint, custom.pilotId);
                         return;
                       }
                       const bp = STARTER_MECHS.find((m) => m.id === e.target.value);
@@ -575,7 +653,7 @@ export default function App() {
                     }}
                   >
                     {savedMechs.length > 0 && (
-                      <optgroup label="保存済みカスタム">
+                      <optgroup label="ユーザー機体">
                         {savedMechs.map((m) => (
                           <option key={m.id} value={m.id}>
                             {formatCustomMechName(m.baseName, m.tag)}
@@ -587,48 +665,6 @@ export default function App() {
                       {STARTER_MECHS.map((bp) => (
                         <option key={bp.id} value={bp.id}>
                           {bp.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  </select>
-                </label>
-
-                <label
-                  className="cm-ctl"
-                  style={!playerTierSpec.pilotEnabled ? { opacity: 0.52 } : undefined}
-                  title={
-                    playerTierSpec.pilotEnabled
-                      ? 'パイロット 6×6 の AI 雛形を切り替えます'
-                      : 'ロボット単体制御モード中はパイロット AI 未使用です'
-                  }
-                >
-                  <span>AI雛形{!playerTierSpec.pilotEnabled ? ' (単体中)' : ''}</span>
-                  <select
-                    disabled={!playerTierSpec.pilotEnabled}
-                    value={playerPilot.id}
-                    onChange={(e) => {
-                      const found = allPilots.find((p) => p.id === e.target.value);
-                      if (found) {
-                        handleSelectPilot(found);
-                      }
-                    }}
-                  >
-                    {!allPilots.some((p) => p.id === playerPilot.id) && (
-                      <option value={playerPilot.id}>{playerPilot.name}</option>
-                    )}
-                    {userPilots.length > 0 && (
-                      <optgroup label="自作パイロット">
-                        {userPilots.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    <optgroup label="標準パイロット">
-                      {STARTER_PILOTS.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
                         </option>
                       ))}
                     </optgroup>
@@ -659,6 +695,168 @@ export default function App() {
                     <Shuffle size={14} />
                   </button>
                 </label>
+              </div>
+
+              <div className="cm-ai-setup-card">
+                <div className="cm-ai-setup-head">
+                  <span>AI雛形・ROMセットアップ</span>
+                  {playerStats.overweight && (
+                    <span className="cm-ai-setup-overweight">重量超過</span>
+                  )}
+                </div>
+
+                <label
+                  className="cm-ai-pilot-row"
+                  style={!playerTierSpec.pilotEnabled ? { opacity: 0.55 } : undefined}
+                  title={
+                    playerTierSpec.pilotEnabled
+                      ? 'パイロット 6×6 の AI を選択します'
+                      : 'ロボット単体制御モード中はパイロット AI 未使用です'
+                  }
+                >
+                  <span>パイロット</span>
+                  <select
+                    aria-label="パイロットAI選択"
+                    disabled={!playerTierSpec.pilotEnabled}
+                    value={playerPilot.id}
+                    onChange={(e) => {
+                      const found = allPilots.find((p) => p.id === e.target.value);
+                      if (found) {
+                        handleSelectPilot(found);
+                        if (isStarterMech) setStarterEdited(true);
+                      }
+                    }}
+                  >
+                    {!allPilots.some((p) => p.id === playerPilot.id) && (
+                      <option value={playerPilot.id}>{playerPilot.name}</option>
+                    )}
+                    {userPilots.length > 0 && (
+                      <optgroup label="自作パイロット">
+                        {userPilots.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <optgroup label="標準パイロット">
+                      {STARTER_PILOTS.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </label>
+
+                <div className="cm-ai-rom-grid">
+                  {MECH_SUBROUTINE_SLOT_SPECS.map((spec) => {
+                    const slotEnabled = playerTierSpec.enabledSlots.includes(spec.slotId);
+                    const refId = playerMech.romSlots?.[spec.slotId];
+                    const inlineSub = playerMech.subroutines.find((s) => s.slotId === spec.slotId);
+                    const resolvedRom =
+                      typeof refId === 'string' ? findRomById(allRoms, refId) : undefined;
+                    const isMissingRef = typeof refId === 'string' && !resolvedRom;
+                    const selectValue =
+                      refId === null
+                        ? '__none__'
+                        : typeof refId === 'string'
+                          ? refId
+                          : inlineSub
+                            ? '__inline__'
+                            : '__none__';
+                    const userRomList = allRoms.filter((r) => !r.builtIn);
+                    return (
+                      <label
+                        key={spec.slotId}
+                        className={`cm-ai-rom-slot ${!slotEnabled ? 'is-disabled' : ''}`}
+                      >
+                        <span className="cm-ai-rom-slot-lbl">{spec.slotId}</span>
+                        <select
+                          aria-label={`${spec.slotId} ROM選択`}
+                          disabled={!slotEnabled}
+                          value={selectValue}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v === '__inline__') return;
+                            handleMountSetupRom(spec.slotId, v);
+                          }}
+                        >
+                          <option value="__none__">未搭載</option>
+                          {selectValue === '__inline__' && inlineSub && (
+                            <option value="__inline__">直接編集: {inlineSub.name}</option>
+                          )}
+                          {isMissingRef && typeof refId === 'string' && (
+                            <option value={refId}>⚠ 欠損 ({refId})</option>
+                          )}
+                          {userRomList.length > 0 && (
+                            <optgroup label="自作 ROM">
+                              {userRomList.map((r) => {
+                                const cSpec = ROM_CATEGORY_SPECS.find(
+                                  (c) => c.id === getRomCategory(r)
+                                );
+                                return (
+                                  <option key={r.id} value={r.id}>
+                                    [{cSpec?.short ?? '制'}] {formatRomLabel(r)}
+                                  </option>
+                                );
+                              })}
+                            </optgroup>
+                          )}
+                          {ROM_CATEGORY_SPECS.map((cat) => {
+                            const list = allRoms.filter(
+                              (r) => r.builtIn && getRomCategory(r) === cat.id
+                            );
+                            if (list.length === 0) return null;
+                            return (
+                              <optgroup key={cat.id} label={`標準ROM・${cat.label}`}>
+                                {list.map((r) => (
+                                  <option key={r.id} value={r.id}>
+                                    [{cat.short}] {formatRomLabel(r)}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            );
+                          })}
+                        </select>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                {isStarterDirty && (
+                  <div className="cm-starter-save-guide cm-starter-save-guide--compact">
+                    標準機体「{getBaseMechName(playerMech.chassisId)}」を編集中です。標準機体は上書きできないため、識別名（3文字）を付けて下のボタンから新規のユーザー機体として保存してください。
+                  </div>
+                )}
+
+                <div className="cm-ai-setup-footer">
+                  <input
+                    type="text"
+                    className="cm-tag-input"
+                    maxLength={3}
+                    inputMode="text"
+                    value={setupTag}
+                    placeholder="C1等"
+                    aria-label="ユーザー機体識別名（半角3文字まで）"
+                    onChange={(e) => setSetupTag(normalizeCustomTag(e.target.value))}
+                  />
+                  <button
+                    type="button"
+                    className={`cm-btn-primary-xs ${isStarterDirty ? 'is-attention' : ''}`}
+                    onClick={() => {
+                      const res = handleSaveCustomMech(setupTag);
+                      setSetupTag(res.saved.tag);
+                      const codeLabel = res.saved.blueprint.name.split(' ')[0] ?? res.saved.tag;
+                      flashSetupNotice(
+                        res.updated ? `上書き保存: ${codeLabel}` : `新規保存: ${codeLabel}`
+                      );
+                    }}
+                  >
+                    {isStarterMech ? 'ユーザー機体として新規保存' : 'ユーザー機体に保存'}
+                  </button>
+                  {setupSaveNotice && <span className="cm-save-notice">{setupSaveNotice}</span>}
+                </div>
               </div>
 
               <div className="cm-sim-bar">

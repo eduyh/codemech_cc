@@ -17,6 +17,7 @@ import { DEFAULT_PILOT_PROFILE, PRESET_VANGUARD } from '../data/presets';
 import { clamp, normalizeMatchSeed } from '../engine/math';
 import {
   ArenaPresetId,
+  LrmFireMode,
   MECH_SUBROUTINE_SLOT_SPECS,
   MatchRules,
   MechBlueprint,
@@ -253,6 +254,7 @@ export function validateAndRepairMechBlueprint(raw: MechBlueprint): MechBlueprin
   };
   const slotList: WeaponSlotId[] = ['rightArm', 'leftArm', 'rightShoulder', 'leftShoulder'];
   const weaponMountCounts: Partial<Record<WeaponSlotId, 1 | 2 | 3>> = {};
+  const lrmFireModes: Partial<Record<WeaponSlotId, LrmFireMode>> = {};
   for (const slot of slotList) {
     const val = raw?.extraAmmo?.[slot];
     if (slotWeapons[slot].maxAmmo > 0 && typeof val === 'number' && Number.isFinite(val)) {
@@ -264,6 +266,12 @@ export function validateAndRepairMechBlueprint(raw: MechBlueprint): MechBlueprin
     if (maxMount > 1 && typeof rawMount === 'number' && Number.isFinite(rawMount)) {
       const mc = clamp(Math.round(rawMount), 1, maxMount) as 1 | 2 | 3;
       if (mc > 1) weaponMountCounts[slot] = mc;
+    }
+    if (slotWeapons[slot].kind === 'lrm_homing') {
+      const slotMode = raw?.lrmFireModes?.[slot];
+      if (slotMode === 'stream' || slotMode === 'salvo') {
+        lrmFireModes[slot] = slotMode;
+      }
     }
   }
 
@@ -346,6 +354,7 @@ export function validateAndRepairMechBlueprint(raw: MechBlueprint): MechBlueprin
     boosterEnabled,
     ecmEnabled,
     lrmFireMode,
+    ...(Object.keys(lrmFireModes).length > 0 ? { lrmFireModes } : {}),
     extraHeatSinks,
     ...(Object.keys(extraAmmo).length > 0 ? { extraAmmo } : {}),
     ...(Object.keys(weaponMountCounts).length > 0 ? { weaponMountCounts } : {}),

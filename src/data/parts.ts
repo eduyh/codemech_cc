@@ -1,5 +1,6 @@
 import {
   BoosterPartSpec,
+  LrmFireMode,
   MAX_CHASSIS_TONNAGE,
   MechArmorAllocation,
   MechBlueprint,
@@ -24,7 +25,7 @@ export const HEAT_SINK_DISSIPATION_PER_UNIT = 2.0;
 export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
   {
     id: 'ac5',
-    name: 'AC/5 オートキャノン',
+    name: '軽キャノン砲',
     slotGroup: 'arm',
     kind: 'ballistic',
     weight: 5.5,
@@ -47,11 +48,11 @@ export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
     maxMountCount: 2,
     partStructureHp: 200,
     maxPartArmor: 140,
-    description: '低発熱・長射程の中口径実弾砲（5.5t / 45発 / 熱6 / 最大×2）。傾斜装甲で跳弾あり。',
+    description: '低発熱・長射程の軽量実弾キャノン（5.5t / 45発 / 熱6 / 最大×2）。傾斜装甲で跳弾あり。',
   },
   {
     id: 'ac10',
-    name: 'AC/10 重オートキャノン',
+    name: '中キャノン砲',
     slotGroup: 'arm',
     kind: 'ballistic',
     weight: 9.0,
@@ -74,11 +75,11 @@ export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
     maxMountCount: 1,
     partStructureHp: 215,
     maxPartArmor: 155,
-    description: '重装甲を一撃で削る大口径オートキャノン（9.0t / 24発 / 熱12）。',
+    description: '重装甲を一撃で削る中口径実弾キャノン（9.0t / 24発 / 熱12）。',
   },
   {
     id: 'ac20',
-    name: 'AC/20 重破砕砲',
+    name: '重キャノン砲',
     slotGroup: 'arm',
     kind: 'ballistic',
     weight: 14.0,
@@ -101,11 +102,11 @@ export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
     maxMountCount: 1,
     partStructureHp: 235,
     maxPartArmor: 170,
-    description: '近距離で重装甲を一撃粉砕する超重量実弾砲（14.0t / 12発 / 熱18 / 射程180-320m）。',
+    description: '近距離で重装甲を一撃粉砕する超重量キャノン砲（14.0t / 12発 / 熱18 / 射程180-320m）。',
   },
   {
     id: 'mg_light',
-    name: 'MG/2 連装機関砲',
+    name: 'マシンガン',
     slotGroup: 'arm',
     kind: 'ballistic',
     weight: 2.5,
@@ -132,7 +133,7 @@ export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'gauss_rifle',
-    name: 'ガウスライフル',
+    name: 'ライフル砲',
     slotGroup: 'arm',
     kind: 'ballistic',
     weight: 12.0,
@@ -159,7 +160,7 @@ export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'lbx_shotgun',
-    name: 'LB-X 散弾砲',
+    name: '散弾砲',
     slotGroup: 'arm',
     kind: 'shotgun',
     weight: 6.5,
@@ -186,7 +187,7 @@ export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'small_laser',
-    name: 'S-Laser 小口径レーザー',
+    name: '小口径レーザー',
     slotGroup: 'arm',
     kind: 'laser',
     weight: 1.0,
@@ -213,7 +214,7 @@ export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'medium_laser',
-    name: 'M-Laser 中口径レーザー',
+    name: '中口径レーザー',
     slotGroup: 'arm',
     kind: 'laser',
     weight: 2.0,
@@ -236,11 +237,11 @@ export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
     maxMountCount: 3,
     partStructureHp: 195,
     maxPartArmor: 135,
-    description: 'BattleTech の基本主力レーザー（2.0t / 残弾∞ / 熱18 / 最大×3）。即着光線・跳弾なし。',
+    description: '汎用性に優れた基本主力レーザー（2.0t / 残弾∞ / 熱18 / 最大×3）。即着光線・跳弾なし。',
   },
   {
     id: 'large_laser',
-    name: 'L-Laser 大口径レーザー',
+    name: '大口径レーザー',
     slotGroup: 'arm',
     kind: 'laser',
     weight: 5.0,
@@ -267,7 +268,7 @@ export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'ppc',
-    name: 'PPC 荷電粒子砲',
+    name: '荷電粒子砲',
     slotGroup: 'arm',
     kind: 'energy',
     weight: 7.0,
@@ -288,11 +289,11 @@ export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
     maxMountCount: 1,
     partStructureHp: 200,
     maxPartArmor: 135,
-    description: '強烈な発熱と引き換えに遠距離へ大打撃を与える光学粒子砲（7.0t / 残弾∞ / 熱42）。',
+    description: '強烈な発熱と引き換えに遠距離へ大打撃を与える荷電粒子砲（7.0t / 残弾∞ / 熱42）。',
   },
   {
     id: 'srm_rocket',
-    name: 'SRM-6 ロケットランチャー (無誘導)',
+    name: '短距離ロケット砲',
     slotGroup: 'arm',
     kind: 'srm_rocket',
     weight: 3.5,
@@ -318,7 +319,7 @@ export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'streak_srm',
-    name: 'Streak SRM-4 (追尾短距離)',
+    name: '短距離ミサイル',
     slotGroup: 'arm',
     kind: 'srm_homing',
     weight: 4.5,
@@ -344,7 +345,7 @@ export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'laser_blade',
-    name: 'エネルギーブレード (近接)',
+    name: 'エネルギーソード（近接用）',
     slotGroup: 'arm',
     kind: 'melee',
     weight: 3.0,
@@ -365,7 +366,7 @@ export const ARM_WEAPONS: readonly WeaponPartSpec[] = [
     maxMountCount: 1,
     partStructureHp: 220,
     maxPartArmor: 155,
-    description: '超近距離高威力のエネルギーブレード（3.0t / 熱4 / 残弾∞）。',
+    description: '超近距離高威力のエネルギーソード（3.0t / 熱4 / 残弾∞）。',
   },
   {
     id: 'arm_none',
@@ -420,7 +421,7 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'lrm5',
-    name: 'LRM-5 遠距離ミサイル (追尾)',
+    name: '遠距離ミサイル5',
     slotGroup: 'shoulder',
     kind: 'lrm_homing',
     weight: 4.0,
@@ -449,7 +450,7 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'lrm10',
-    name: 'LRM-10 重遠距離ミサイル (追尾)',
+    name: '遠距離ミサイル10',
     slotGroup: 'shoulder',
     kind: 'lrm_homing',
     weight: 7.0,
@@ -474,11 +475,11 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
     maxMountCount: 2,
     partStructureHp: 0,
     maxPartArmor: 0,
-    description: '遠距離火力投射用の10発誘導弾（7.0t / 18発 / 熱22 / 射程120-900m / 最大×2）。一斉/垂れ流し切替可。',
+    description: '遠距離火力投射用の10発誘導ミサイル（7.0t / 18発 / 熱22 / 射程120-900m / 最大×2）。一斉/垂れ流し切替可。',
   },
   {
     id: 'lrm15',
-    name: 'LRM-15 大型遠距離ミサイル (追尾)',
+    name: '遠距離ミサイル15',
     slotGroup: 'shoulder',
     kind: 'lrm_homing',
     weight: 9.5,
@@ -506,37 +507,8 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
     description: 'AMS を飽和貫通する15発大弾幕ミサイル（9.5t / 14発 / 熱30 / 射程120-900m）。',
   },
   {
-    id: 'lrm20',
-    name: 'LRM-20 超大弾幕ミサイル (追尾)',
-    slotGroup: 'shoulder',
-    kind: 'lrm_homing',
-    weight: 11.5,
-    cost: 340,
-    damage: 10,
-    projectileSpeed: 155,
-    projectileGravity: 1.0,
-    range: 750,
-    maxRange: 900,
-    minRange: 120,
-    cooldownSec: 7.4,
-    enCost: 0,
-    heatCost: 38,
-    maxAmmo: 12,
-    ammoPerTon: 12,
-    spreadDeg: 4.4,
-    burstCount: 20,
-    canRicochet: false,
-    ricochetAngleDeg: 89,
-    homingTurnDegPerSec: 160,
-    streamIntervalTicks: 2,
-    maxMountCount: 1,
-    partStructureHp: 0,
-    maxPartArmor: 0,
-    description: '20発連続曲射で敵陣と AMS を押し切る最大級 LRM ポッド（11.5t / 12発 / 熱38 / 射程120-900m）。',
-  },
-  {
     id: 'ams_ballistic',
-    name: 'AMS 対ミサイル迎撃機関砲 (常時)',
+    name: 'ミサイル迎撃機関砲 AMS',
     slotGroup: 'shoulder',
     kind: 'ams',
     weight: 1.5,
@@ -564,7 +536,7 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'ams_laser',
-    name: 'L-AMS レーザー迎撃システム (常時)',
+    name: 'ミサイル迎撃レーザー LMS',
     slotGroup: 'shoulder',
     kind: 'ams',
     weight: 2.0,
@@ -587,11 +559,11 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
     amsIsLaser: true,
     partStructureHp: 0,
     maxPartArmor: 0,
-    description: '弾薬不要のレーザー式自動迎撃装置（2.0t / 残弾∞ / 作動時発熱）。',
+    description: '弾薬不要のレーザー式自動迎撃装置 LMS（2.0t / 残弾∞ / 作動時発熱）。',
   },
   {
     id: 'bap_probe',
-    name: 'BAP アクティブプローブ (常時)',
+    name: 'シーカーポッド',
     slotGroup: 'shoulder',
     kind: 'bap',
     weight: 1.5,
@@ -613,11 +585,11 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
     providesBap: true,
     partStructureHp: 0,
     maxPartArmor: 0,
-    description: '半径240m以内の敵ECM妨害を無効化しロック時間を25%短縮する電子探査装置（1.5t）。',
+    description: '半径240m以内の敵ECM妨害を無効化しロック時間を25%短縮する電子探査ポッド（1.5t）。',
   },
   {
     id: 'ams_bap_pod',
-    name: 'AMS＋BAP 複合防護ポッド (常時)',
+    name: 'AMS＋シーカーポッド',
     slotGroup: 'shoulder',
     kind: 'ams',
     weight: 3.0,
@@ -642,11 +614,11 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
     providesBap: true,
     partStructureHp: 0,
     maxPartArmor: 0,
-    description: '1枠で実弾AMS(80m迎撃)とBAP(240m対ECM・ロック短縮)を両立する防護複合ポッド（3.0t / 120発）。',
+    description: '1枠で実弾AMS(80m迎撃)とシーカーポッド(240m対ECM・ロック短縮)を両立する複合防護ポッド（3.0t / 120発）。',
   },
   {
     id: 'lams_bap_pod',
-    name: 'L-AMS＋BAP 複合防護ポッド (常時)',
+    name: 'LMS＋シーカーポッド',
     slotGroup: 'shoulder',
     kind: 'ams',
     weight: 3.5,
@@ -670,11 +642,11 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
     providesBap: true,
     partStructureHp: 0,
     maxPartArmor: 0,
-    description: '1枠でレーザーAMS(弾∞)とBAP(240m対ECM)を同時搭載する複合防衛ポッド（3.5t）。',
+    description: '1枠でレーザー迎撃LMS(弾∞)とシーカーポッド(240m対ECM・ロック短縮)を同時搭載する複合防護ポッド（3.5t）。',
   },
   {
     id: 'ecm_suite',
-    name: 'ECM ジャミングスイート (対応機限定)',
+    name: 'ECMポッド',
     slotGroup: 'shoulder',
     kind: 'ecm',
     weight: 1.5,
@@ -701,7 +673,7 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'ecm_ams_pod',
-    name: 'ECM＋AMS 複合電子戦ポッド (対応機限定)',
+    name: 'AMS＋ECMポッド',
     slotGroup: 'shoulder',
     kind: 'ecm',
     weight: 3.0,
@@ -731,7 +703,7 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'srm_rocket',
-    name: 'SRM-6 ロケットランチャー (無誘導)',
+    name: '短距離ロケット砲',
     slotGroup: 'shoulder',
     kind: 'srm_rocket',
     weight: 3.5,
@@ -757,7 +729,7 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'streak_srm',
-    name: 'Streak SRM-4 (追尾短距離)',
+    name: '短距離ミサイル',
     slotGroup: 'shoulder',
     kind: 'srm_homing',
     weight: 4.5,
@@ -783,7 +755,7 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'lbx_shotgun',
-    name: 'LB-X 散弾砲',
+    name: '散弾砲',
     slotGroup: 'shoulder',
     kind: 'shotgun',
     weight: 6.5,
@@ -810,7 +782,7 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'ac5',
-    name: 'AC/5 オートキャノン',
+    name: '軽キャノン砲',
     slotGroup: 'shoulder',
     kind: 'ballistic',
     weight: 5.5,
@@ -833,11 +805,11 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
     maxMountCount: 2,
     partStructureHp: 0,
     maxPartArmor: 0,
-    description: '右胴・左胴搭載の中口径オートキャノン（5.5t / 45発 / 熱6 / 最大×2）。',
+    description: '右胴・左胴搭載の軽量実弾キャノン（5.5t / 45発 / 熱6 / 最大×2）。',
   },
   {
     id: 'ac20',
-    name: 'AC/20 重破砕砲',
+    name: '重キャノン砲',
     slotGroup: 'shoulder',
     kind: 'ballistic',
     weight: 14.0,
@@ -860,11 +832,11 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
     maxMountCount: 1,
     partStructureHp: 0,
     maxPartArmor: 0,
-    description: '右胴・左胴搭載型の超重量破砕砲（14.0t / 12発 / 熱18 / 射程180-320m）。',
+    description: '右胴・左胴搭載型の超重量キャノン砲（14.0t / 12発 / 熱18 / 射程180-320m）。',
   },
   {
     id: 'medium_laser',
-    name: 'M-Laser 中口径レーザー',
+    name: '中口径レーザー',
     slotGroup: 'shoulder',
     kind: 'laser',
     weight: 2.0,
@@ -891,7 +863,7 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'large_laser',
-    name: 'L-Laser 大口径レーザー',
+    name: '大口径レーザー',
     slotGroup: 'shoulder',
     kind: 'laser',
     weight: 5.0,
@@ -918,7 +890,7 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
   },
   {
     id: 'ppc',
-    name: 'PPC 荷電粒子砲',
+    name: '荷電粒子砲',
     slotGroup: 'shoulder',
     kind: 'energy',
     weight: 7.0,
@@ -939,11 +911,11 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
     maxMountCount: 1,
     partStructureHp: 0,
     maxPartArmor: 0,
-    description: '右胴・左胴搭載の粒子砲（7.0t / 残弾∞ / 熱42）。',
+    description: '右胴・左胴搭載の荷電粒子砲（7.0t / 残弾∞ / 熱42）。',
   },
   {
     id: 'gauss_rifle',
-    name: 'ガウスライフル',
+    name: 'ライフル砲',
     slotGroup: 'shoulder',
     kind: 'ballistic',
     weight: 12.0,
@@ -966,7 +938,7 @@ export const SHOULDER_WEAPONS: readonly WeaponPartSpec[] = [
     maxMountCount: 1,
     partStructureHp: 0,
     maxPartArmor: 0,
-    description: '右胴・左胴搭載の超長距離ガウスキャノン（12.0t / 16発 / 熱4）。',
+    description: '右胴・左胴搭載の超長距離電磁ライフル砲（12.0t / 16発 / 熱4）。',
   },
 ];
 
@@ -984,7 +956,7 @@ export const BOOSTER_PARTS: readonly BoosterPartSpec[] = [
   },
   {
     id: 'boost_std',
-    name: 'JJ-01 標準ジャンプ＆スラスター',
+    name: '標準スラスター',
     weight: 4.0,
     cost: 120,
     boostSpeed: 30,
@@ -995,7 +967,7 @@ export const BOOSTER_PARTS: readonly BoosterPartSpec[] = [
   },
   {
     id: 'boost_high_thrust',
-    name: 'JJ-02 高出力ジャンプジェット',
+    name: '高出力スラスター',
     weight: 3.5,
     cost: 175,
     boostSpeed: 36,
@@ -1006,7 +978,7 @@ export const BOOSTER_PARTS: readonly BoosterPartSpec[] = [
   },
   {
     id: 'boost_heavy',
-    name: 'JJ-03 重機体用補助ジェット',
+    name: '大型スラスター',
     weight: 5.5,
     cost: 165,
     boostSpeed: 24,
@@ -1017,7 +989,7 @@ export const BOOSTER_PARTS: readonly BoosterPartSpec[] = [
   },
   {
     id: 'boost_eco',
-    name: 'JJ-04 省燃費スラスター',
+    name: '軽量スラスター',
     weight: 3.5,
     cost: 140,
     boostSpeed: 28,
@@ -1292,6 +1264,7 @@ const LEGACY_WEAPON_ALIASES: Record<string, string> = {
   rail_cannon: 'gauss_rifle',
   flak_pod: 'lbx_shotgun',
   buckler_shield: 'medium_laser',
+  lrm20: 'lrm15',
 };
 
 export function resolveLegacyWeaponId(id: string): string {
@@ -1396,6 +1369,15 @@ export function getWeaponSlotMaxAmmo(bp: MechBlueprint, slot: WeaponSlotId): num
   if (spec.maxAmmo <= 0) return spec.maxAmmo;
   const extraTons = getWeaponSlotExtraAmmoTons(bp, slot);
   return spec.maxAmmo + extraTons * (spec.ammoPerTon ?? spec.maxAmmo);
+}
+
+export function getWeaponSlotLrmFireMode(
+  bp: Pick<MechBlueprint, 'lrmFireMode' | 'lrmFireModes'>,
+  slot: WeaponSlotId
+): LrmFireMode {
+  const slotMode = bp.lrmFireModes?.[slot];
+  if (slotMode === 'stream' || slotMode === 'salvo') return slotMode;
+  return bp.lrmFireMode === 'stream' ? 'stream' : 'salvo';
 }
 
 export function getArmWeaponSpec(id: string): WeaponPartSpec {
@@ -1555,19 +1537,19 @@ export const CONTROL_TIER_CATALOG: readonly MechControlTierSpec[] = [
     cost: 0,
     pilotEnabled: false,
     enabledSlots: ['S1'],
-    slotGridSizes: { S1: 4, S2: 4, S3: 4, S4: 4, S5: 4 },
+    slotGridSizes: { S1: 4, S2: 4, S3: 4, S4: 4, S5: 4, S6: 4 },
     description: 'パイロット層を使わず、4×4 ROM 1 枚（S1）だけで機体を動かす入門・単体制御モードです。',
   },
   {
     id: 'pilot_full',
-    name: 'Lv.2 パイロット 6×6 ＋ 4×4 ROM (最大5枠)',
-    shortLabel: 'パイロット 6×6 + 5枠',
+    name: 'Lv.2 パイロット 6×6 ＋ 4×4 ROM (最大6枠)',
+    shortLabel: 'パイロット 6×6 + 6枠',
     weight: 0,
     cost: 0,
     pilotEnabled: true,
-    enabledSlots: ['S1', 'S2', 'S3', 'S4', 'S5'],
-    slotGridSizes: { S1: 4, S2: 4, S3: 4, S4: 4, S5: 4 },
-    description: 'パイロット 6×6 で戦況を見て 4×4 ROM（最大5枠 S1〜S5）を ARG 引数付きで呼び分ける標準制御モードです。',
+    enabledSlots: ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'],
+    slotGridSizes: { S1: 4, S2: 4, S3: 4, S4: 4, S5: 4, S6: 4 },
+    description: 'パイロット 6×6 で戦況を見て 4×4 ROM（最大6枠 S1〜S6）を ARG 引数付きで呼び分ける標準制御モードです。',
   },
 ];
 

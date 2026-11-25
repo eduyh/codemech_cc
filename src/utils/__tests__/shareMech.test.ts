@@ -217,5 +217,20 @@ describe('shareMech closed-network packages & codec', () => {
     expect(decodedDirect.mech.controlTier).toBe('direct_4x4');
     expect(decodedDirect.mech.weaponMountCounts).toEqual({ leftArm: 3 });
     expect(decodedDirect.mech.parts.leftShoulderWeapon).toBe('ams_bap_pod');
+
+    const dualLrmMech = structuredClone(STARTER_MECHS[0]);
+    dualLrmMech.parts.rightShoulderWeapon = 'lrm5';
+    dualLrmMech.parts.leftShoulderWeapon = 'lrm10';
+    dualLrmMech.lrmFireModes = {
+      rightArm: 'stream',
+      rightShoulder: 'salvo',
+      leftShoulder: 'stream',
+    };
+    const lrmCode = encodeMechCode({ mech: dualLrmMech, pilot: DEFAULT_PILOT_PROFILE });
+    const decodedLrm = decodeMechCode(lrmCode);
+    expect(decodedLrm.mech.lrmFireModes).toEqual({
+      rightShoulder: 'salvo',
+      leftShoulder: 'stream',
+    });
   });
 });

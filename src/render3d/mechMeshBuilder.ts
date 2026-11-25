@@ -182,15 +182,13 @@ function buildSideTorsoWeaponSingle(
     mast.position.set(0.16, 1.9, -0.05);
     g.add(pod, barrel, mast);
   } else {
-    // lrm5 / lrm10 / lrm15 / lrm20 / srm_rocket / streak_srm: integrated torso missile pod
+    // lrm5 / lrm10 / lrm15 / srm_rocket / streak_srm: integrated torso missile pod
     const w =
-      weaponId === 'lrm20'
-        ? 1.24
-        : weaponId === 'lrm15'
-          ? 1.12
-          : weaponId === 'lrm10'
-            ? 0.96
-            : 0.78;
+      weaponId === 'lrm15'
+        ? 1.12
+        : weaponId === 'lrm10'
+          ? 0.96
+          : 0.78;
     const pod = new THREE.Mesh(new THREE.BoxGeometry(w, 0.76, 1.35), gunMat);
     pod.position.set(0, 1.12, -0.22);
     const cap = new THREE.Mesh(new THREE.BoxGeometry(w * 0.84, 0.58, 0.14), accentMat);

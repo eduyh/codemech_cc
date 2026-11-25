@@ -141,7 +141,7 @@ export function MechPartsHud({ mech }: MechPartsHudProps) {
                 : 'ECM停止'}
           </span>
         )}
-        {mech.stats.hasBap && <span>{isMechBapActive(mech) ? 'BAP稼働' : 'BAP停止'}</span>}
+        {mech.stats.hasBap && <span>{isMechBapActive(mech) ? 'シーカー稼働' : 'シーカー停止'}</span>}
         {mech.stats.hasAms && <span>{isMechAmsActive(mech) ? 'AMS稼働' : 'AMS停止'}</span>}
         {lockPct !== null && <span>LOCK {lockPct}%</span>}
       </div>

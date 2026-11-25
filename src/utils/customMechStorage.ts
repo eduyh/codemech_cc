@@ -12,7 +12,12 @@ export interface SavedCustomMech {
   baseName: string;
   tag: string;
   savedAt: number;
+  pilotId?: string;
   blueprint: MechBlueprint;
+}
+
+export function isStarterMechId(id: string): boolean {
+  return STARTER_MECHS.some((m) => m.id === id);
 }
 
 /**
@@ -90,6 +95,9 @@ export function loadSavedCustomMechs(): SavedCustomMech[] {
         return {
           ...item,
           tag,
+          ...(typeof item.pilotId === 'string' && item.pilotId.trim()
+            ? { pilotId: item.pilotId.trim() }
+            : {}),
           blueprint: {
             ...item.blueprint,
             name: formattedName,
@@ -114,7 +122,8 @@ export function saveCustomMech(
   list: SavedCustomMech[],
   blueprint: MechBlueprint,
   rawTag: string,
-  now = Date.now()
+  now = Date.now(),
+  pilotId?: string
 ): { nextList: SavedCustomMech[]; saved: SavedCustomMech; updated: boolean } {
   const chassisId = blueprint.chassisId || inferChassisIdFromParts(blueprint.parts);
   const baseName = getBaseMechName(chassisId);
@@ -132,12 +141,14 @@ export function saveCustomMech(
   clonedBp.chassisId = chassisId;
   clonedBp.name = formatCustomMechName(baseName, tag);
 
+  const cleanPilotId = typeof pilotId === 'string' && pilotId.trim() ? pilotId.trim() : undefined;
   const entry: SavedCustomMech = {
     id,
     chassisId,
     baseName,
     tag,
     savedAt: now,
+    ...(cleanPilotId ? { pilotId: cleanPilotId } : {}),
     blueprint: clonedBp,
   };
 

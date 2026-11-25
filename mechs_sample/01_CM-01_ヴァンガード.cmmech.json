@@ -10,7 +10,8 @@
     "S2": "rom_std_s2_backup",
     "S3": "rom_std_s3_range",
     "S4": "rom_std_s4_cool",
-    "S5": "rom_std_s5_close"
+    "S5": "rom_std_s5_close",
+    "S6": null
   },
   "boosterEnabled": true,
   "ecmEnabled": false,

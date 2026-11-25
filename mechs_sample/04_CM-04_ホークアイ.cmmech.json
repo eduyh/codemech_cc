@@ -10,7 +10,8 @@
     "S2": "rom_std_s2_lrm",
     "S3": "rom_std_s3_sniper",
     "S4": "rom_std_s4_cool",
-    "S5": "rom_std_s5_retreat"
+    "S5": "rom_std_s5_retreat",
+    "S6": null
   },
   "boosterEnabled": false,
   "ecmEnabled": false,

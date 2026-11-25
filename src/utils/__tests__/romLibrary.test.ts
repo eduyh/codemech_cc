@@ -176,4 +176,39 @@ describe('romLibrary & ROM weight rules', () => {
     expect(out.activeSubroutineSlot).toBeNull();
     expect(rt.activeCall).toBeNull();
   });
+
+  it('supports mounting a 6th ROM in S6 (3.0t total) and executing call_s6 from the pilot grid', () => {
+    const bp6 = resolveMechBlueprintRoms(
+      {
+        ...structuredClone(PRESET_VANGUARD),
+        romSlots: {
+          ...PRESET_VANGUARD.romSlots,
+          S6: 'rom_std_s5_close',
+        },
+      },
+      BUILTIN_ROMS
+    );
+    expect(computeBlueprintRomWeight(bp6)).toBe(3.0);
+
+    const pilotCallingS6 = {
+      ...structuredClone(DEFAULT_PILOT_PROFILE),
+      grid: {
+        gridSize: 6 as const,
+        cells: [
+          { row: 0, col: 0, op: 'start' as const, dir: 'E' as const },
+          { row: 0, col: 1, op: 'call_s6' as const, dir: 'S' as const, durationSec: 0.6 },
+        ],
+      },
+    };
+    const sim = createSimulation({
+      seed: 99,
+      entries: [
+        { id: 'm1', name: 'P1', teamId: 'T1', blueprint: bp6, pilot: pilotCallingS6 },
+        { id: 'm2', name: 'E1', teamId: 'T2', blueprint: PRESET_VANGUARD, pilot: DEFAULT_PILOT_PROFILE },
+      ],
+    });
+    const rt = createPilotRuntimeState(pilotCallingS6);
+    const out = evaluatePilotTick(pilotCallingS6, rt, buildMechSensorState(sim, 'm1'), sim.mechs[0], sim);
+    expect(out.activeSubroutineSlot).toBe('S6');
+  });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ARM_WEAPONS,
+  SHOULDER_WEAPONS,
   computeMechStats,
   computeRangeFalloffMultiplier,
   getWeaponSlotMaxAmmo,
@@ -1032,11 +1033,16 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(moverSim.mechs[1].damageTaken).toBeGreaterThan(25);
   });
 
-  it('supports per-slot extra ammo bins, keeps energy blade, and removes buckler shield', () => {
+  it('supports per-slot extra ammo bins, keeps energy blade, and removes buckler shield and lrm20', () => {
     expect(ARM_WEAPONS.some((w) => w.id === 'buckler_shield')).toBe(false);
+    expect(SHOULDER_WEAPONS.some((w) => w.id === 'lrm20')).toBe(false);
     const blade = ARM_WEAPONS.find((w) => w.id === 'laser_blade');
     expect(blade).toBeDefined();
     expect(blade!.kind).toBe('melee');
+
+    const legacyLrm20Bp = structuredClone(PRESET_VANGUARD);
+    legacyLrm20Bp.parts.rightShoulderWeapon = 'lrm20';
+    expect(validateAndRepairMechBlueprint(legacyLrm20Bp).parts.rightShoulderWeapon).toBe('lrm15');
 
     const baseStats = computeMechStats(PRESET_VANGUARD);
     const upAmmoBp = structuredClone(PRESET_VANGUARD);
@@ -1251,5 +1257,52 @@ describe('deterministic 30 TPS mech simulator', () => {
     const overStats = computeMechStats(overTorso);
     expect(overStats.valid).toBe(false);
     expect(overStats.validationErrors.some((e) => e.includes('中央胴の前後装甲合計'))).toBe(true);
+  });
+
+  it('supports per-slot LRM fire modes (salvo vs stream) on different shoulder mounts', () => {
+    const bp = structuredClone(PRESET_VANGUARD);
+    bp.parts.rightShoulderWeapon = 'lrm5';
+    bp.parts.leftShoulderWeapon = 'lrm5';
+    bp.lrmFireMode = 'salvo';
+    bp.lrmFireModes = {
+      rightShoulder: 'salvo',
+      leftShoulder: 'stream',
+    };
+
+    const sim = createSimulation({
+      seed: 909,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
+      entries: [
+        { id: 'lrmer', name: 'LRM', teamId: 'A', blueprint: bp },
+        { id: 'tgt', name: 'TGT', teamId: 'B', blueprint: PRESET_FORTRESS },
+      ],
+    });
+    sim.terrain.obstacles = [];
+    sim.mechs[0].pos = { x: 600, y: 800, z: 0 };
+    sim.mechs[0].yawDeg = 0;
+    sim.mechs[1].pos = { x: 600, y: 300, z: 0 };
+    sim.mechs[1].yawDeg = 180;
+
+    for (let t = 0; t < 40; t++) {
+      stepSimulation(sim, {
+        lrmer: { ...EMPTY_CONTROL_INPUT, lockTargetId: 'tgt' },
+      });
+    }
+    expect(sim.mechs[0].lockComplete).toBe(true);
+
+    stepSimulation(sim, {
+      lrmer: {
+        ...EMPTY_CONTROL_INPUT,
+        fireRightShoulder: true,
+        fireLeftShoulder: true,
+        lockTargetId: 'tgt',
+      },
+    });
+
+    expect(sim.projectiles.filter((p) => p.ownerId === 'lrmer' && p.slot === 'rightShoulder')).toHaveLength(5);
+    expect(sim.projectiles.filter((p) => p.ownerId === 'lrmer' && p.slot === 'leftShoulder')).toHaveLength(1);
+    const queued = sim.mechs[0].salvoQueue.filter((q) => q.slot === 'leftShoulder');
+    expect(queued).toHaveLength(1);
+    expect(queued[0].remainingShots).toBe(4);
   });
 });

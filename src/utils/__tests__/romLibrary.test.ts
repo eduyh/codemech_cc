@@ -140,7 +140,7 @@ describe('romLibrary & ROM weight rules', () => {
     );
     expect(issues.S2.some((i) => i.text.includes('跳躍不可'))).toBe(true);
     expect(issues.S1.some((i) => i.text.includes('G2 未割当'))).toBe(true);
-    expect(issues.S3.some((i) => i.text.includes('未搭載'))).toBe(true);
+    expect(issues.S3.some((i) => i.text.includes('要搭載'))).toBe(true);
   });
 
   it('does not fall back to S1 in runtime when an unmounted slot is called', () => {

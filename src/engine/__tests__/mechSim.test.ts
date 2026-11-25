@@ -260,6 +260,7 @@ describe('deterministic 30 TPS mech simulator', () => {
           ...EMPTY_CONTROL_INPUT,
           fireRightArm: true,
           fireLeftArm: true,
+          fireRightShoulder: true,
           jump: true,
           lockTargetId: 'dummy',
         },
@@ -1304,5 +1305,71 @@ describe('deterministic 30 TPS mech simulator', () => {
     const queued = sim.mechs[0].salvoQueue.filter((q) => q.slot === 'leftShoulder');
     expect(queued).toHaveLength(1);
     expect(queued[0].remainingShots).toBe(4);
+  });
+
+  it('supports 3-direction timed jump jets (forward, vertical, backward) and airborne Jump-Turn bonus', () => {
+    const sim = createSimulation({
+      seed: 910,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
+      entries: [
+        { id: 'fwd', name: 'Fwd', teamId: 'A', blueprint: PRESET_VANGUARD },
+        { id: 'vert', name: 'Vert', teamId: 'B', blueprint: PRESET_VANGUARD },
+        { id: 'back', name: 'Back', teamId: 'C', blueprint: PRESET_VANGUARD },
+        { id: 'turn_boost', name: 'TurnBoost', teamId: 'D', blueprint: PRESET_VANGUARD },
+        { id: 'turn_coast', name: 'TurnCoast', teamId: 'E', blueprint: PRESET_VANGUARD },
+      ],
+    });
+    sim.terrain.obstacles = [];
+    sim.terrain.heightAmplitude = 0;
+
+    for (let i = 0; i < sim.mechs.length; i++) {
+      sim.mechs[i].pos = { x: 200 + i * 160, y: 600, z: 0 };
+      sim.mechs[i].yawDeg = 0; // Facing North (-Y)
+    }
+
+    // Trigger 0.8s burn on tick 0 for fwd / vert / back, and 1.0s burn for Jump-Turn comparison
+    stepSimulation(sim, {
+      fwd: { ...EMPTY_CONTROL_INPUT, jump: true, boost: true, jumpDir: 'forward', jumpBurnSec: 0.9 },
+      vert: { ...EMPTY_CONTROL_INPUT, jump: true, boost: true, jumpDir: 'vertical', jumpBurnSec: 0.8 },
+      back: { ...EMPTY_CONTROL_INPUT, jump: true, boost: true, jumpDir: 'backward', jumpBurnSec: 0.8 },
+      turn_boost: { ...EMPTY_CONTROL_INPUT, jump: true, boost: true, jumpDir: 'vertical', jumpBurnSec: 1.0 },
+      turn_coast: { ...EMPTY_CONTROL_INPUT, jump: true, boost: true, jumpDir: 'vertical', jumpBurnSec: 0.25 },
+    });
+
+    let maxZFwd = 0;
+    let maxZVert = 0;
+    let deltaYawBoost = 0;
+    let deltaYawCoast = 0;
+
+    for (let t = 1; t < 85; t++) {
+      const prevBoostYaw = sim.mechs[3].yawDeg;
+      const prevCoastYaw = sim.mechs[4].yawDeg;
+      // Measure turning between tick 20..45 when turn_boost is still burning and turn_coast is coasting
+      const measureTurn = t >= 20 && t < 45;
+      stepSimulation(sim, {
+        fwd: EMPTY_CONTROL_INPUT,
+        vert: EMPTY_CONTROL_INPUT,
+        back: EMPTY_CONTROL_INPUT,
+        turn_boost: measureTurn ? { ...EMPTY_CONTROL_INPUT, turnYaw: 1 } : EMPTY_CONTROL_INPUT,
+        turn_coast: measureTurn ? { ...EMPTY_CONTROL_INPUT, turnYaw: 1 } : EMPTY_CONTROL_INPUT,
+      });
+      maxZFwd = Math.max(maxZFwd, sim.mechs[0].pos.z);
+      maxZVert = Math.max(maxZVert, sim.mechs[1].pos.z);
+      if (measureTurn) {
+        deltaYawBoost += Math.abs(sim.mechs[3].yawDeg - prevBoostYaw);
+        deltaYawCoast += Math.abs(sim.mechs[4].yawDeg - prevCoastYaw);
+      }
+    }
+
+    // Forward clears 14m mesa height and moves North (-Y)
+    expect(maxZFwd).toBeGreaterThan(14.5);
+    expect(sim.mechs[0].pos.y).toBeLessThan(580);
+    // Vertical reaches >= 15m with much less horizontal travel than forward
+    expect(maxZVert).toBeGreaterThan(15);
+    expect(Math.abs(600 - sim.mechs[1].pos.y)).toBeLessThan(Math.abs(600 - sim.mechs[0].pos.y) * 0.5);
+    // Backward jumps South (+Y), opposite yaw
+    expect(sim.mechs[2].pos.y).toBeGreaterThan(610);
+    // Jump-Turn: active booster burn turns faster in air than coasting
+    expect(deltaYawBoost).toBeGreaterThan(deltaYawCoast * 1.15);
   });
 });

@@ -81,7 +81,7 @@ export function buildArchetypeS2Cells(archetype: RomArchetype): MechSubroutineCe
     return [
       { row: 0, col: 0, op: 'start', dir: 'E' },
       { row: 0, col: 1, op: 'if_airborne', dir: 'S', elseDir: 'E' },
-      { row: 0, col: 2, op: 'move_jump', dir: 'S' },
+      { row: 0, col: 2, op: 'move_jump', dir: 'S', jumpDir: 'forward', durationSec: 0.75 },
       { row: 1, col: 2, op: 'torso_track', dir: 'W' },
       { row: 1, col: 1, op: 'move_approach', dir: 'S' },
       { row: 2, col: 1, op: 'fire_alpha', dir: 'E', durationSec: 0.45 },
@@ -300,6 +300,24 @@ export const BUILTIN_ROMS: readonly ProgramRomEntry[] = [
     gridSize: 4,
     builtIn: true,
     cells: buildArchetypeS2Cells('sniper'),
+  },
+  {
+    id: 'rom_std_poptart',
+    name: '飛出狙撃',
+    category: 'attack',
+    gridSize: 4,
+    builtIn: true,
+    cells: [
+      { row: 0, col: 0, op: 'start', dir: 'E' },
+      { row: 0, col: 1, op: 'if_airborne', dir: 'S', elseDir: 'E' },
+      { row: 0, col: 2, op: 'move_jump', dir: 'S', jumpDir: 'vertical', durationSec: 0.8 },
+      { row: 1, col: 2, op: 'torso_track', dir: 'W' },
+      { row: 1, col: 1, op: 'torso_track', dir: 'S' },
+      { row: 2, col: 1, op: 'wait', dir: 'S', durationSec: 0.35 },
+      { row: 3, col: 1, op: 'if_enemy_in_sight', dir: 'E', elseDir: 'S' },
+      { row: 3, col: 2, op: 'fire_group_1', dir: 'E', durationSec: 0.45 },
+      { row: 3, col: 3, op: 'return', dir: 'S' },
+    ],
   },
   {
     id: 'rom_std_s5_close',

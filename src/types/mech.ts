@@ -201,6 +201,7 @@ export interface MechPartsSelection {
 
 export type GridDir = 'N' | 'E' | 'S' | 'W';
 export type PilotTargetMode = 'main' | 'nearest' | 'flank' | 'attacker' | 'weakest';
+export type JumpDirectionMode = 'forward' | 'vertical' | 'backward';
 
 export type MechSubroutineSlotId = 'S1' | 'S2' | 'S3' | 'S4' | 'S5' | 'S6';
 
@@ -272,7 +273,8 @@ export type MechSubroutineOp =
   | 'if_incoming_fire'
   | 'if_target_locked'
   | 'if_incoming_missile'
-  | 'if_ecm_jammed';
+  | 'if_ecm_jammed'
+  | 'if_obstacle_ahead';
 
 export interface MechSubroutineCell {
   row: number;
@@ -284,6 +286,7 @@ export interface MechSubroutineCell {
   param?: number;
   useArg?: boolean;
   direction?: 'left' | 'right' | 'auto';
+  jumpDir?: JumpDirectionMode;
   weaponSlot?: WeaponSlotId;
 }
 
@@ -413,6 +416,7 @@ export type PilotGridOp =
   | 'if_target_locked'
   | 'if_incoming_missile'
   | 'if_ecm_jammed'
+  | 'if_obstacle_ahead'
   | 'if_enemy_hp_below'
   | 'if_flag_a'
   | 'if_flag_b';
@@ -543,6 +547,8 @@ export interface MechControlInput {
   targetPitch?: number; // degrees, +up / -down
   boost: boolean;
   jump: boolean;
+  jumpDir?: JumpDirectionMode;
+  jumpBurnSec?: number;
   fireRightArm: boolean;
   fireLeftArm: boolean;
   fireRightShoulder: boolean;
@@ -598,6 +604,7 @@ export interface MechSensorState {
   ecmActive: boolean;
   ecmJammed: boolean;
   bapActive: boolean;
+  obstacleAhead: boolean;
   destroyedParts: MechPartId[];
   visibleEnemies: VisibleEnemyInfo[];
   radarContacts: VisibleEnemyInfo[];
@@ -653,6 +660,8 @@ export interface MechRuntimeState {
   lockDecayGraceSec: number;
   lockComplete: boolean;
   ecmDisruptedTicks: number;
+  jumpBurnRemainingSec: number;
+  jumpDir: JumpDirectionMode;
   salvoQueue: SalvoQueueItem[];
   damageDealt: number;
   damageTaken: number;

@@ -19,7 +19,6 @@ import {
 import { MechPaperdoll } from './MechPaperdoll';
 import {
   ARM_WEAPONS,
-  CONTROL_TIER_CATALOG,
   HEAT_SINK_DISSIPATION_PER_UNIT,
   MAX_EXTRA_AMMO_TONS,
   MAX_EXTRA_HEAT_SINKS,
@@ -43,7 +42,7 @@ import {
   inferChassisIdFromParts,
   isPassiveModuleSpec,
 } from '../data/parts';
-import { STARTER_MECHS } from '../data/presets';
+import { STARTER_MECHS, STARTER_PILOTS } from '../data/presets';
 import { clamp } from '../engine/math';
 import {
   DualArmorPartId,
@@ -51,7 +50,6 @@ import {
   MechArmorAllocation,
   MechBlueprint,
   MechChassisSpec,
-  MechControlTier,
   MechPartId,
   MechPartsSelection,
   MechSubroutineSlotId,
@@ -68,11 +66,14 @@ interface MechGarageProps {
   savedMechs: SavedCustomMech[];
   allRoms: readonly ProgramRomEntry[];
   pilot?: PilotProfile;
+  allPilots?: readonly PilotProfile[];
+  userPilots?: readonly PilotProfile[];
   isStarterDirty?: boolean;
   onChange: (next: MechBlueprint) => void;
   onSaveCustomMech: (tag: string) => { saved: SavedCustomMech; updated: boolean };
   onLoadBlueprint: (bp: MechBlueprint, pilotId?: string) => void;
   onDeleteCustomMech: (id: string) => void;
+  onSelectPilot?: (pilot: PilotProfile) => void;
 }
 
 const WEIGHT_CLASS_LABEL: Record<MechChassisSpec['weightClass'], string> = {
@@ -210,11 +211,14 @@ export function MechGarage({
   savedMechs,
   allRoms,
   pilot,
+  allPilots,
+  userPilots,
   isStarterDirty = false,
   onChange,
   onSaveCustomMech,
   onLoadBlueprint,
   onDeleteCustomMech,
+  onSelectPilot,
 }: MechGarageProps) {
   const [selectedPart, setSelectedPart] = useState<MechPartId>('torso');
   const [symLock, setSymLock] = useState<boolean>(true);
@@ -301,14 +305,6 @@ export function MechGarage({
     const remaining = savedMechs.filter((m) => m.id !== selectedCustom.id);
     setSelectedSlotId(remaining[0]?.id ?? '');
     flashNotice(`削除 ${codeLabel}`);
-  };
-
-  const handleSelectControlTier = (nextTier: MechControlTier) => {
-    onChange({
-      ...blueprint,
-      chassisId: chassis.id,
-      controlTier: nextTier,
-    });
   };
 
   const handleMountRom = (slotId: MechSubroutineSlotId, value: string) => {
@@ -609,12 +605,7 @@ export function MechGarage({
   return (
     <section className="cm-panel cm-garage-panel">
       <div className="cm-panel-head cm-garage-head">
-        <div>
-          <h2 className="cm-panel-title">機体ガレージ — {blueprint.name}</h2>
-          <p className="cm-panel-sub">
-            フレーム骨格は機体固有（最大100t）。トン数内で武装・中央胴ブースター有無・8部位前後装甲を調整します
-          </p>
-        </div>
+        <h2 className="cm-panel-title">機体ガレージ — {blueprint.name}</h2>
 
         <div className="cm-garage-slot-bar">
           <div className={`cm-garage-save-group ${isStarterDirty ? 'is-attention' : ''}`}>
@@ -689,7 +680,7 @@ export function MechGarage({
       {isStarterDirty && (
         <div className="cm-starter-save-guide">
           <span>
-            標準機体「{getBaseMechName(chassis.id)}」を編集中です。標準機体は上書きできません — 識別名（半角3文字）を付けて「新規保存」し、ユーザー機体として保存してください。
+            標準機体「{getBaseMechName(chassis.id)}」を編集中です。標準機体は上書きできません — 識別名（半角3文字以内）を付けて「新規保存」し、ユーザー機体として保存してください。
           </span>
           <button type="button" className="cm-btn-primary-xs is-attention" onClick={handleSaveSlot}>
             新規ユーザー機体として保存
@@ -718,7 +709,7 @@ export function MechGarage({
 
         <div className="cm-weight-breakdown">
           内訳: 骨格 {stats.skeletonWeight.toFixed(1)}t ＋ ブースト {stats.boosterWeight.toFixed(1)}t ＋
-          ECM {stats.ecmWeight.toFixed(1)}t ＋ ROM {stats.romWeight.toFixed(1)}t ＋ 冷却器{' '}
+          ECM {stats.ecmWeight.toFixed(1)}t ＋ ルーチン {stats.romWeight.toFixed(1)}t ＋ 冷却器{' '}
           {stats.heatSinkWeight.toFixed(1)}t ＋ 弾薬 {stats.ammoWeight.toFixed(1)}t ＋ 武装{' '}
           {stats.weaponsWeight.toFixed(1)}t ＋ 装甲 {stats.armorWeight.toFixed(1)}t
         </div>
@@ -817,7 +808,9 @@ export function MechGarage({
                 </span>
               </label>
               <div className="cm-booster-note">
-                ※ OFF にすると {chassis.boosterModuleWeight.toFixed(1)}t 軽量化し装甲や武装に回せます（脚部損傷時はブースト・跳躍性能も低下／喪失します）
+                ※ OFF にすると {chassis.boosterModuleWeight.toFixed(1)}t 軽量化し装甲や武装に回せます
+                <br />
+                （脚部損傷時はブースト・跳躍性能も低下／喪失します）
               </div>
             </div>
           ) : (
@@ -856,24 +849,41 @@ export function MechGarage({
           </div>
 
           <div className="cm-subhead" style={{ marginTop: '0.2rem' }}>
-            2c. 制御コンピュータ＆搭載 ROM（{stats.romWeight.toFixed(1)}t）
+            2c. 制御コンピュータ＆搭載ルーチン（{stats.romWeight.toFixed(1)}t）
           </div>
           <label className="cm-select-row">
-            <span>制御モード</span>
+            <span>パイロットAI</span>
             <select
-              value={tierSpec.id}
-              onChange={(e) => handleSelectControlTier(e.target.value as MechControlTier)}
+              aria-label="パイロットAI選択"
+              disabled={!tierSpec.pilotEnabled || !onSelectPilot || !pilot}
+              value={pilot?.id ?? STARTER_PILOTS[0].id}
+              onChange={(e) => {
+                const pool = allPilots && allPilots.length > 0 ? allPilots : STARTER_PILOTS;
+                const found = pool.find((p) => p.id === e.target.value);
+                if (found) onSelectPilot?.(found);
+              }}
             >
-              {CONTROL_TIER_CATALOG.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
+              {pilot && !(allPilots ?? STARTER_PILOTS).some((p) => p.id === pilot.id) && (
+                <option value={pilot.id}>{pilot.name}</option>
+              )}
+              {userPilots && userPilots.length > 0 && (
+                <optgroup label="自作パイロット">
+                  {userPilots.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              <optgroup label="標準パイロット">
+                {STARTER_PILOTS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </label>
-          <div className="cm-booster-note">
-            {tierSpec.description} パイロット席 0.5t は骨格に確保済。搭載 ROM は一律 4×4 ({ROM_WEIGHT_4X4.toFixed(1)}t)／未搭載 0.0t（最大6枠 = 3.0t）。
-          </div>
 
           <div className="cm-rom-slot-list">
             {MECH_SUBROUTINE_SLOT_SPECS.filter((s) => tierSpec.enabledSlots.includes(s.slotId)).map(
@@ -905,7 +915,7 @@ export function MechGarage({
                   <div key={spec.slotId} className="cm-rom-slot-row">
                     <div className="cm-rom-slot-top">
                       <span className="cm-rom-slot-label">
-                        {spec.slotId} (4×4枠)
+                        Slot {spec.slotId.replace(/^S/, '')}
                       </span>
                       <span className="cm-rom-slot-badges">
                         {catSpec && (
@@ -922,7 +932,7 @@ export function MechGarage({
                     </div>
                     <select
                       className="cm-weapon-select"
-                      aria-label={`${spec.slotId} 搭載ROM`}
+                      aria-label={`${spec.slotId} 搭載ルーチン`}
                       value={selectValue}
                       onChange={(e) => {
                         const v = e.target.value;
@@ -937,10 +947,10 @@ export function MechGarage({
                         </option>
                       )}
                       {isMissingRef && typeof refId === 'string' && (
-                        <option value={refId}>⚠ 欠損ROM ({refId})</option>
+                        <option value={refId}>⚠ 欠損ルーチン ({refId})</option>
                       )}
                       {userRomList.length > 0 && (
-                        <optgroup label="自作 ROM">
+                        <optgroup label="自作ルーチン">
                           {userRomList.map((r) => {
                             const tags = getRomFeatureTags(r);
                             const cSpec = ROM_CATEGORY_SPECS.find(
@@ -955,7 +965,7 @@ export function MechGarage({
                           })}
                         </optgroup>
                       )}
-                      <optgroup label="標準 ROM">
+                      <optgroup label="標準ルーチン">
                         {builtInRomList.map((r) => {
                           const tags = getRomFeatureTags(r);
                           const cSpec = ROM_CATEGORY_SPECS.find(

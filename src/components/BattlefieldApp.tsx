@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import pkg from '../../package.json';
 import {
   Check,
   Copy,
@@ -306,9 +307,7 @@ export function BattlefieldApp() {
           </span>
           <div>
             <h1 className="cm-title">CodeMech.py - BATTLEFIELD</h1>
-            <p className="cm-subtitle">
-              ver0.1.0 — 大会・閉域共有・3D 観戦アリーナ（最大 12 機 / 固定 30 TPS）
-            </p>
+            <p className="cm-subtitle">ver{pkg.version}</p>
           </div>
         </div>
 

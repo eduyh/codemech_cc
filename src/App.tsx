@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import pkg from '../package.json';
 import {
   Award,
   Cpu,
@@ -20,7 +21,14 @@ import { MechPartsHud } from './components/MechPartsHud';
 import { MvpArenaCanvas } from './components/MvpArenaCanvas';
 import { ShareModal } from './components/ShareModal';
 import { CURRICULUM_MISSIONS } from './data/curriculum';
-import { computeMechStats, getControlTierSpec } from './data/parts';
+import {
+  computeMechStats,
+  getArmWeaponSpec,
+  getControlTierSpec,
+  getResolvedWeaponGroups,
+  getShoulderWeaponSpec,
+  isPassiveModuleSpec,
+} from './data/parts';
 import { DEFAULT_PILOT_PROFILE, PRESET_VANGUARD, STARTER_MECHS, STARTER_PILOTS } from './data/presets';
 import {
   SavedCustomMech,
@@ -72,6 +80,9 @@ import {
   RomCategory,
   SIM_TPS,
   SimState,
+  WEAPON_GROUP_IDS,
+  WeaponGroupId,
+  WeaponSlotId,
 } from './types/mech';
 
 type FormatId = '1v1' | '3x3' | '2x6' | '3x4' | '4x3' | '6x2' | 'br12';
@@ -100,7 +111,8 @@ function buildMatchSetup(
   arenaPreset: ArenaPresetId,
   playerMech: MechBlueprint,
   seed: number,
-  playerPilot: PilotProfile
+  playerPilot: PilotProfile,
+  opponentOverride?: { blueprint: MechBlueprint; pilot?: PilotProfile }
 ): {
   sim: SimState;
   pilotProfiles: Record<string, PilotProfile>;
@@ -115,16 +127,25 @@ function buildMatchSetup(
     for (let m = 0; m < fmt.perTeam; m++) {
       const id = `mech_${t}_${m}`;
       const isPlayer = t === 0 && m === 0;
+      const useOpponentOverride = !isPlayer && formatId === '1v1' && Boolean(opponentOverride);
       const mechBp = isPlayer
         ? playerMech
-        : STARTER_MECHS[(t * fmt.perTeam + m + 1) % STARTER_MECHS.length];
+        : useOpponentOverride
+          ? opponentOverride!.blueprint
+          : STARTER_MECHS[(t * fmt.perTeam + m + 1) % STARTER_MECHS.length];
       const pilot = isPlayer
         ? playerPilot
-        : STARTER_PILOTS[(t + m) % STARTER_PILOTS.length];
+        : useOpponentOverride && opponentOverride!.pilot
+          ? opponentOverride!.pilot
+          : STARTER_PILOTS[(t + m) % STARTER_PILOTS.length];
 
       entries.push({
         id,
-        name: isPlayer ? `★${mechBp.name}` : `T${t + 1}-${m + 1}`,
+        name: isPlayer
+          ? `★${mechBp.name}`
+          : useOpponentOverride
+            ? mechBp.name
+            : `T${t + 1}-${m + 1}`,
         teamId: `T${t + 1}`,
         blueprint: mechBp,
         pilot,
@@ -170,9 +191,17 @@ export default function App() {
   const [speed, setSpeed] = useState<1 | 2 | 4>(1);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>('3d');
   const [focusedMechId, setFocusedMechId] = useState('mech_0_0');
+  const [opponentMechId, setOpponentMechId] = useState<string>(
+    () => STARTER_MECHS[1]?.id ?? STARTER_MECHS[0].id
+  );
 
   const initialSetup = useRef(
-    buildMatchSetup('1v1', 'plains_ridge', PRESET_VANGUARD, 2026, DEFAULT_PILOT_PROFILE)
+    buildMatchSetup('1v1', 'plains_ridge', PRESET_VANGUARD, 2026, DEFAULT_PILOT_PROFILE, {
+      blueprint: resolveMechBlueprintRoms(
+        structuredClone(STARTER_MECHS[1] ?? STARTER_MECHS[0]),
+        getAllRoms(loadUserRoms())
+      ),
+    })
   );
   const simRef = useRef<SimState>(initialSetup.current.sim);
   const pilotProfilesRef = useRef<Record<string, PilotProfile>>(initialSetup.current.pilotProfiles);
@@ -183,6 +212,8 @@ export default function App() {
   playerPilotRef.current = playerPilot;
   const playerMechRef = useRef<MechBlueprint>(playerMech);
   playerMechRef.current = playerMech;
+  const opponentMechIdRef = useRef<string>(opponentMechId);
+  opponentMechIdRef.current = opponentMechId;
 
   const [renderTick, setRenderTick] = useState(0);
   const [playerDebugTrace, setPlayerDebugTrace] = useState<PilotDebugTrace | null>(null);
@@ -210,6 +241,28 @@ export default function App() {
     }, 2800);
   }, []);
 
+  const resolveOpponentOverride = useCallback(
+    (oppId: string): { blueprint: MechBlueprint; pilot?: PilotProfile } => {
+      const custom = savedMechs.find((m) => m.id === oppId);
+      if (custom) {
+        const bp = resolveMechBlueprintRoms(structuredClone(custom.blueprint), allRoms);
+        const matchedPilot = custom.pilotId
+          ? allPilots.find((p) => p.id === custom.pilotId)
+          : undefined;
+        return {
+          blueprint: bp,
+          pilot: matchedPilot ? structuredClone(matchedPilot) : undefined,
+        };
+      }
+      const starter =
+        STARTER_MECHS.find((m) => m.id === oppId) ?? STARTER_MECHS[1] ?? STARTER_MECHS[0];
+      return {
+        blueprint: resolveMechBlueprintRoms(structuredClone(starter), allRoms),
+      };
+    },
+    [savedMechs, allRoms, allPilots]
+  );
+
   const resetMatch = useCallback(
     (
       nextFormat = formatId,
@@ -217,14 +270,18 @@ export default function App() {
       nextMech = playerMechRef.current,
       nextSeed = seed,
       autoPlay = false,
-      nextPilot = playerPilotRef.current
+      nextPilot = playerPilotRef.current,
+      nextOpponentId = opponentMechIdRef.current
     ) => {
+      const oppOverride =
+        nextFormat === '1v1' ? resolveOpponentOverride(nextOpponentId) : undefined;
       const setup = buildMatchSetup(
         nextFormat,
         nextArena,
         nextMech,
         nextSeed,
-        nextPilot
+        nextPilot,
+        oppOverride
       );
       simRef.current = setup.sim;
       pilotProfilesRef.current = setup.pilotProfiles;
@@ -234,7 +291,7 @@ export default function App() {
       setPlaying(autoPlay);
       setRenderTick((n) => n + 1);
     },
-    [formatId, arenaPreset, seed]
+    [formatId, arenaPreset, seed, resolveOpponentOverride]
   );
 
   const handleUpdatePlayerMech = useCallback(
@@ -470,9 +527,43 @@ export default function App() {
   const recentEvents = sim.events.slice(-8).reverse();
   const playerTierSpec = getControlTierSpec(playerMech.controlTier);
   const playerStats = useMemo(() => computeMechStats(playerMech), [playerMech]);
+  const playerResolvedGroups = useMemo(() => getResolvedWeaponGroups(playerMech), [playerMech]);
+  const playerEquippedWeapons = useMemo(() => {
+    const ra = getArmWeaponSpec(playerMech.parts.rightArmWeapon);
+    const la = getArmWeaponSpec(playerMech.parts.leftArmWeapon);
+    const rs = getShoulderWeaponSpec(playerMech.parts.rightShoulderWeapon);
+    const ls = getShoulderWeaponSpec(playerMech.parts.leftShoulderWeapon);
+    return {
+      rightArm: { spec: ra, equipped: ra.id !== 'arm_none', passive: isPassiveModuleSpec(ra) },
+      leftArm: { spec: la, equipped: la.id !== 'arm_none', passive: isPassiveModuleSpec(la) },
+      rightShoulder: { spec: rs, equipped: rs.id !== 'shd_none', passive: isPassiveModuleSpec(rs) },
+      leftShoulder: { spec: ls, equipped: ls.id !== 'shd_none', passive: isPassiveModuleSpec(ls) },
+    };
+  }, [playerMech.parts]);
+
+  const togglePlayerWeaponGroupMember = useCallback(
+    (groupId: WeaponGroupId, slot: WeaponSlotId) => {
+      const cur = playerResolvedGroups[groupId];
+      const nextMembers = cur.includes(slot) ? cur.filter((s) => s !== slot) : [...cur, slot];
+      handleUpdatePlayerMech({
+        ...playerMechRef.current,
+        weaponGroups: {
+          ...playerResolvedGroups,
+          [groupId]: nextMembers,
+        },
+      });
+    },
+    [playerResolvedGroups, handleUpdatePlayerMech]
+  );
+
   const isStarterMech = isStarterMechId(playerMech.id);
   const isStarterDirty = isStarterMech && starterEdited;
   const isGarageFull = studioTab === 'garage';
+  const effectiveOpponentMechId =
+    savedMechs.some((m) => m.id === opponentMechId) ||
+    STARTER_MECHS.some((m) => m.id === opponentMechId)
+      ? opponentMechId
+      : STARTER_MECHS[1]?.id ?? STARTER_MECHS[0].id;
 
   return (
     <div className="cm-studio">
@@ -483,9 +574,7 @@ export default function App() {
           </span>
           <div>
             <h1 className="cm-title">CodeMech.py</h1>
-            <p className="cm-subtitle">
-              ver0.1.0 — 3D メック戦＆階層グリッドプログラミング教材 (パイロット 6×6 ＋ 4×4 ROM 最大6枠)
-            </p>
+            <p className="cm-subtitle">ver{pkg.version}</p>
           </div>
         </div>
 
@@ -559,11 +648,17 @@ export default function App() {
               savedMechs={savedMechs}
               allRoms={allRoms}
               pilot={playerPilot}
+              allPilots={allPilots}
+              userPilots={userPilots}
               isStarterDirty={isStarterDirty}
               onChange={handleUpdatePlayerMech}
               onSaveCustomMech={handleSaveCustomMech}
               onLoadBlueprint={handleLoadMechBlueprint}
               onDeleteCustomMech={handleDeleteCustomMech}
+              onSelectPilot={(found) => {
+                handleSelectPilot(found);
+                if (isStarterMech) setStarterEdited(true);
+              }}
             />
           )}
 
@@ -599,46 +694,20 @@ export default function App() {
         {!isGarageFull && (
           <div className="cm-col-right">
             <section className="cm-panel">
-              <div className="cm-battle-cfg-bar">
-                <label className="cm-ctl">
-                  <span>対戦形式</span>
-                  <select
-                    value={formatId}
-                    onChange={(e) => {
-                      const v = e.target.value as FormatId;
-                      setFormatId(v);
-                      resetMatch(v, arenaPreset, playerMech, seed);
-                    }}
-                  >
-                    {FORMAT_OPTIONS.map((f) => (
-                      <option key={f.id} value={f.id}>
-                        {f.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+              <div className="cm-ai-setup-card">
+                <div className="cm-ai-setup-head">
+                  <span>機体・AI・ルーチンセットアップ</span>
+                  {playerStats.overweight && (
+                    <span className="cm-ai-setup-overweight">重量超過</span>
+                  )}
+                </div>
 
-                <label className="cm-ctl">
-                  <span>地形</span>
+                <div
+                  className="cm-mech-select-row"
+                  title="現在の搭乗機体を切り替えます（ユーザー機体は保存時のパイロット設定も復元）"
+                >
                   <select
-                    value={arenaPreset}
-                    onChange={(e) => {
-                      const v = e.target.value as ArenaPresetId;
-                      setArenaPreset(v);
-                      resetMatch(formatId, v, playerMech, seed);
-                    }}
-                  >
-                    {ARENA_OPTIONS.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="cm-ctl" title="現在の搭乗機体を切り替えます（ユーザー機体は保存時のパイロット設定も復元）">
-                  <span>搭乗機体(乗換)</span>
-                  <select
+                    aria-label="搭乗機体選択"
                     value={playerMech.id}
                     onChange={(e) => {
                       const custom = savedMechs.find((m) => m.id === e.target.value);
@@ -669,40 +738,107 @@ export default function App() {
                       ))}
                     </optgroup>
                   </select>
-                </label>
 
-                <label className="cm-ctl cm-ctl--seed">
-                  <span>Seed</span>
-                  <input
-                    type="number"
-                    value={seed}
-                    onChange={(e) => {
-                      const s = Number(e.target.value) || 1;
-                      setSeed(s);
-                      resetMatch(formatId, arenaPreset, playerMech, s);
-                    }}
-                  />
                   <button
                     type="button"
-                    className="cm-icon-btn"
+                    className="cm-btn-primary-xs"
+                    disabled={isStarterMech}
+                    title={
+                      isStarterMech
+                        ? '標準機体は上書きできません。下の欄から新規ユーザー機体として保存してください'
+                        : '現在のユーザー機体に上書き保存します'
+                    }
                     onClick={() => {
-                      const next = ((seed * 1664525 + 1013904223) >>> 0) % 100000;
-                      setSeed(next);
-                      resetMatch(formatId, arenaPreset, playerMech, next);
+                      const res = handleSaveCustomMech(setupTag);
+                      setSetupTag(res.saved.tag);
+                      const codeLabel = res.saved.blueprint.name.split(' ')[0] ?? res.saved.tag;
+                      flashSetupNotice(`保存: ${codeLabel}`);
                     }}
-                    title="シード変更"
                   >
-                    <Shuffle size={14} />
+                    保存
                   </button>
-                </label>
-              </div>
+                  {setupSaveNotice && <span className="cm-save-notice">{setupSaveNotice}</span>}
+                </div>
 
-              <div className="cm-ai-setup-card">
-                <div className="cm-ai-setup-head">
-                  <span>AI雛形・ROMセットアップ</span>
-                  {playerStats.overweight && (
-                    <span className="cm-ai-setup-overweight">重量超過</span>
-                  )}
+                {isStarterMech && (
+                  <>
+                    {isStarterDirty && (
+                      <div className="cm-starter-save-guide cm-starter-save-guide--compact">
+                        標準機体「{getBaseMechName(playerMech.chassisId)}」を編集中です。上書きできないため、識別名（半角3文字以内）を付けて新規ユーザー機体として保存してください。
+                      </div>
+                    )}
+                    <div className="cm-starter-save-row">
+                      <input
+                        type="text"
+                        className="cm-tag-input"
+                        maxLength={3}
+                        inputMode="text"
+                        value={setupTag}
+                        placeholder="C1等"
+                        aria-label="ユーザー機体識別名（半角3文字まで）"
+                        onChange={(e) => setSetupTag(normalizeCustomTag(e.target.value))}
+                      />
+                      <button
+                        type="button"
+                        className={`cm-btn-primary-xs ${isStarterDirty ? 'is-attention' : ''}`}
+                        onClick={() => {
+                          const res = handleSaveCustomMech(setupTag);
+                          setSetupTag(res.saved.tag);
+                          const codeLabel = res.saved.blueprint.name.split(' ')[0] ?? res.saved.tag;
+                          flashSetupNotice(`新規保存: ${codeLabel}`);
+                        }}
+                      >
+                        新規ユーザー機体として保存
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                <div className="cm-wgroup-quick-panel">
+                  <div className="cm-wgroup-quick-note">
+                    武装グループ (G1〜G4・ガレージ連動)
+                  </div>
+                  <div className="cm-wgroup-matrix">
+                    {(
+                      [
+                        { slot: 'rightArm', label: '右腕' },
+                        { slot: 'leftArm', label: '左腕' },
+                        { slot: 'rightShoulder', label: '右胴' },
+                        { slot: 'leftShoulder', label: '左胴' },
+                      ] as const
+                    ).map((row) => {
+                      const info = playerEquippedWeapons[row.slot];
+                      const activeUsable = info.equipped && !info.passive;
+                      return (
+                        <div
+                          key={row.slot}
+                          className={`cm-wgroup-row ${activeUsable ? '' : 'is-empty-slot'}`}
+                        >
+                          <span className="cm-wgroup-slot-label">
+                            <b>{row.label}</b>: {info.equipped ? info.spec.name : '未装備'}
+                          </span>
+                          <div className="cm-wgroup-btns">
+                            {WEAPON_GROUP_IDS.map((gid) => {
+                              const active = playerResolvedGroups[gid].includes(row.slot);
+                              return (
+                                <button
+                                  key={gid}
+                                  type="button"
+                                  disabled={info.passive}
+                                  className={`cm-wgroup-btn ${
+                                    active ? `is-active is-${gid.toLowerCase()}` : ''
+                                  }`}
+                                  onClick={() => togglePlayerWeaponGroupMember(gid, row.slot)}
+                                >
+                                  {gid}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <label
@@ -714,7 +850,7 @@ export default function App() {
                       : 'ロボット単体制御モード中はパイロット AI 未使用です'
                   }
                 >
-                  <span>パイロット</span>
+                  <span>パイロットAI</span>
                   <select
                     aria-label="パイロットAI選択"
                     disabled={!playerTierSpec.pilotEnabled}
@@ -773,7 +909,7 @@ export default function App() {
                       >
                         <span className="cm-ai-rom-slot-lbl">{spec.slotId}</span>
                         <select
-                          aria-label={`${spec.slotId} ROM選択`}
+                          aria-label={`${spec.slotId} ルーチン選択`}
                           disabled={!slotEnabled}
                           value={selectValue}
                           onChange={(e) => {
@@ -790,7 +926,7 @@ export default function App() {
                             <option value={refId}>⚠ 欠損 ({refId})</option>
                           )}
                           {userRomList.length > 0 && (
-                            <optgroup label="自作 ROM">
+                            <optgroup label="自作ルーチン">
                               {userRomList.map((r) => {
                                 const cSpec = ROM_CATEGORY_SPECS.find(
                                   (c) => c.id === getRomCategory(r)
@@ -809,7 +945,7 @@ export default function App() {
                             );
                             if (list.length === 0) return null;
                             return (
-                              <optgroup key={cat.id} label={`標準ROM・${cat.label}`}>
+                              <optgroup key={cat.id} label={`標準ルーチン・${cat.label}`}>
                                 {list.map((r) => (
                                   <option key={r.id} value={r.id}>
                                     [{cat.short}] {formatRomLabel(r)}
@@ -823,39 +959,113 @@ export default function App() {
                     );
                   })}
                 </div>
+              </div>
 
-                {isStarterDirty && (
-                  <div className="cm-starter-save-guide cm-starter-save-guide--compact">
-                    標準機体「{getBaseMechName(playerMech.chassisId)}」を編集中です。標準機体は上書きできないため、識別名（3文字）を付けて下のボタンから新規のユーザー機体として保存してください。
-                  </div>
-                )}
+              <div className="cm-sim-control-card">
+                <div className="cm-battle-cfg-bar">
+                <div className="cm-battle-cfg-row">
+                  <label className="cm-ctl">
+                    <span>対戦形式</span>
+                    <select
+                      value={formatId}
+                      onChange={(e) => {
+                        const v = e.target.value as FormatId;
+                        setFormatId(v);
+                        resetMatch(v, arenaPreset, playerMech, seed);
+                      }}
+                    >
+                      {FORMAT_OPTIONS.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-                <div className="cm-ai-setup-footer">
-                  <input
-                    type="text"
-                    className="cm-tag-input"
-                    maxLength={3}
-                    inputMode="text"
-                    value={setupTag}
-                    placeholder="C1等"
-                    aria-label="ユーザー機体識別名（半角3文字まで）"
-                    onChange={(e) => setSetupTag(normalizeCustomTag(e.target.value))}
-                  />
-                  <button
-                    type="button"
-                    className={`cm-btn-primary-xs ${isStarterDirty ? 'is-attention' : ''}`}
-                    onClick={() => {
-                      const res = handleSaveCustomMech(setupTag);
-                      setSetupTag(res.saved.tag);
-                      const codeLabel = res.saved.blueprint.name.split(' ')[0] ?? res.saved.tag;
-                      flashSetupNotice(
-                        res.updated ? `上書き保存: ${codeLabel}` : `新規保存: ${codeLabel}`
-                      );
-                    }}
-                  >
-                    {isStarterMech ? 'ユーザー機体として新規保存' : 'ユーザー機体に保存'}
-                  </button>
-                  {setupSaveNotice && <span className="cm-save-notice">{setupSaveNotice}</span>}
+                  {formatId === '1v1' && (
+                    <label className="cm-ctl" title="1v1 の対戦相手機体を選択します">
+                      <span>相手機体</span>
+                      <select
+                        aria-label="対戦相手機体選択"
+                        value={effectiveOpponentMechId}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setOpponentMechId(v);
+                          resetMatch(
+                            formatId,
+                            arenaPreset,
+                            playerMech,
+                            seed,
+                            false,
+                            playerPilot,
+                            v
+                          );
+                        }}
+                      >
+                        {savedMechs.length > 0 && (
+                          <optgroup label="ユーザー機体">
+                            {savedMechs.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {formatCustomMechName(m.baseName, m.tag)}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        <optgroup label="標準機体">
+                          {STARTER_MECHS.map((bp) => (
+                            <option key={bp.id} value={bp.id}>
+                              {bp.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      </select>
+                    </label>
+                  )}
+                </div>
+
+                <div className="cm-battle-cfg-row">
+                  <label className="cm-ctl">
+                    <span>マップ</span>
+                    <select
+                      value={arenaPreset}
+                      onChange={(e) => {
+                        const v = e.target.value as ArenaPresetId;
+                        setArenaPreset(v);
+                        resetMatch(formatId, v, playerMech, seed);
+                      }}
+                    >
+                      {ARENA_OPTIONS.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="cm-ctl cm-ctl--seed">
+                    <span>Seed</span>
+                    <input
+                      type="number"
+                      value={seed}
+                      onChange={(e) => {
+                        const s = Number(e.target.value) || 1;
+                        setSeed(s);
+                        resetMatch(formatId, arenaPreset, playerMech, s);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="cm-icon-btn"
+                      onClick={() => {
+                        const next = ((seed * 1664525 + 1013904223) >>> 0) % 100000;
+                        setSeed(next);
+                        resetMatch(formatId, arenaPreset, playerMech, next);
+                      }}
+                      title="シード変更"
+                    >
+                      <Shuffle size={14} />
+                    </button>
+                  </label>
                 </div>
               </div>
 
@@ -923,16 +1133,17 @@ export default function App() {
                       2D 戦術図
                     </button>
                   </div>
-                </div>
 
-                <div className="cm-sim-clock">
-                  {sim.terrain.width}×{sim.terrain.depth}m ・ Tick {sim.tick} / {sim.time.toFixed(1)}s
-                  {sim.finished && (
-                    <span className="cm-winner-pill">
-                      勝者: {sim.winnerTeamId}
-                    </span>
-                  )}
+                  <div className="cm-sim-clock">
+                    {sim.terrain.width}×{sim.terrain.depth}m ・ Tick {sim.tick} / {sim.time.toFixed(1)}s
+                    {sim.finished && (
+                      <span className="cm-winner-pill">
+                        勝者: {sim.winnerTeamId}
+                      </span>
+                    )}
+                  </div>
                 </div>
+              </div>
               </div>
 
               <div className="cm-arena-wrap">

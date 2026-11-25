@@ -11,24 +11,20 @@ import {
   HelpCircle,
   Plus,
   Radar,
-  SlidersHorizontal,
   Trash2,
 } from 'lucide-react';
 import {
-  CONTROL_TIER_CATALOG,
-  ROM_WEIGHT_4X4,
   getArmWeaponSpec,
   getChassisSpec,
   getControlTierSpec,
-  getResolvedWeaponGroups,
   getShoulderWeaponSpec,
   getWeaponGroupSummary,
   isPassiveModuleSpec,
 } from '../data/parts';
 import {
   GridDir,
+  JumpDirectionMode,
   MechBlueprint,
-  MechControlTier,
   MechPartId,
   MechSensorState,
   MechSubroutineCell,
@@ -41,7 +37,6 @@ import {
   PilotTargetMode,
   ProgramRomEntry,
   RomCategory,
-  WEAPON_GROUP_IDS,
   WeaponGroupId,
   WeaponPartSpec,
   WeaponReadyReason,
@@ -55,7 +50,6 @@ import {
   formatRomLabel,
   getRomCategory,
   normalizeRomName,
-  resolveMechBlueprintRoms,
 } from '../utils/romLibrary';
 import { isBuiltInPilotId } from '../utils/pilotLibrary';
 import {
@@ -136,6 +130,7 @@ interface SubChipMeta {
   paramMax?: number;
   paramStep?: number;
   hasDirChoice?: boolean;
+  hasJumpDir?: boolean;
   timed?: boolean;
   defaultDur?: number;
   hasWeaponSlot?: boolean;
@@ -207,7 +202,7 @@ const PILOT_CHIPS: readonly PilotChipMeta[] = [
     cat: 'call',
     conceptTag: 'サブルーチン呼出',
     execBadge: '最大指定秒',
-    tip: '機体枠 S1 (4×4 ROM) を実行します。対象（正面・最寄りなど）と任意の数値引数 ARG を渡せます。',
+    tip: '機体枠 S1 (4×4 ルーチン) を実行します。対象（正面・最寄りなど）と任意の数値引数 ARG を渡せます。',
     hasTarget: true,
     hasOptionalArg: true,
     timed: true,
@@ -220,7 +215,7 @@ const PILOT_CHIPS: readonly PilotChipMeta[] = [
     cat: 'call',
     conceptTag: 'サブルーチン呼出',
     execBadge: '最大指定秒',
-    tip: '機体枠 S2 (4×4 ROM) を実行します。副武装や盾ひねり防御などを ARG 付きで呼び出せます。',
+    tip: '機体枠 S2 (4×4 ルーチン) を実行します。副武装や盾ひねり防御などを ARG 付きで呼び出せます。',
     hasTarget: true,
     hasOptionalArg: true,
     timed: true,
@@ -233,7 +228,7 @@ const PILOT_CHIPS: readonly PilotChipMeta[] = [
     cat: 'call',
     conceptTag: 'サブルーチン呼出',
     execBadge: '最大指定秒',
-    tip: '機体枠 S3 (4×4 ROM) を実行します。索敵・間合い制御・高台確保などの移動制御に最適です。',
+    tip: '機体枠 S3 (4×4 ルーチン) を実行します。索敵・間合い制御・高台確保などの移動制御に最適です。',
     hasTarget: true,
     hasOptionalArg: true,
     timed: true,
@@ -246,7 +241,7 @@ const PILOT_CHIPS: readonly PilotChipMeta[] = [
     cat: 'call',
     conceptTag: 'サブルーチン呼出',
     execBadge: '最大指定秒',
-    tip: '機体枠 S4 (4×4 ROM) を実行します。冷却しながらの斜行回避や盾ひねり防御などに向いています。',
+    tip: '機体枠 S4 (4×4 ルーチン) を実行します。冷却しながらの斜行回避や盾ひねり防御などに向いています。',
     hasTarget: true,
     hasOptionalArg: true,
     timed: true,
@@ -259,7 +254,7 @@ const PILOT_CHIPS: readonly PilotChipMeta[] = [
     cat: 'call',
     conceptTag: 'サブルーチン呼出',
     execBadge: '最大指定秒',
-    tip: '機体枠 S5 (4×4 ROM) を実行します。近接迎撃・離脱・トドメの一撃など特化動作向けです。',
+    tip: '機体枠 S5 (4×4 ルーチン) を実行します。近接迎撃・離脱・トドメの一撃など特化動作向けです。',
     hasTarget: true,
     hasOptionalArg: true,
     timed: true,
@@ -272,7 +267,7 @@ const PILOT_CHIPS: readonly PilotChipMeta[] = [
     cat: 'call',
     conceptTag: 'サブルーチン呼出',
     execBadge: '最大指定秒',
-    tip: '機体枠 S6 (4×4 ROM) を実行します。予備・追加戦術など自由な拡張枠です。',
+    tip: '機体枠 S6 (4×4 ルーチン) を実行します。予備・追加戦術など自由な拡張枠です。',
     hasTarget: true,
     hasOptionalArg: true,
     timed: true,
@@ -470,6 +465,16 @@ const PILOT_CHIPS: readonly PilotChipMeta[] = [
     branch: true,
   },
   {
+    op: 'if_obstacle_ahead',
+    short: '前方障害?',
+    label: '前方に障害物/段差?',
+    cat: 'branch',
+    conceptTag: '地形検知',
+    execBadge: '0 tick',
+    tip: '進行方向の前方に壁や段差があれば T。跳躍ルーチンの起動や飛出狙撃のタイミング判定に使えます。',
+    branch: true,
+  },
+  {
     op: 'if_enemy_hp_below',
     short: '敵瀕死?',
     label: '敵残HP < (%)',
@@ -597,12 +602,15 @@ const SUB_CHIPS: readonly SubChipMeta[] = [
   },
   {
     op: 'move_jump',
-    short: '脚:60°跳',
-    label: '60°前進ジャンプ',
+    short: '脚:跳躍',
+    label: 'ジャンプジェット跳躍',
     cat: 'leg',
     conceptTag: 'ブースター跳躍',
-    execBadge: '0 tick保持',
-    tip: 'ブースター搭載機で斜め前60°へ前進跳躍します。段差越えや高台乗り上げ、急接近に使えます。',
+    execBadge: '噴射タイマー',
+    tip: '指定方向（前進/垂直/後退）へ指定秒数ジェット噴射を起動し次マスへ進みます。滞空しながら射撃や旋回を並行できます。',
+    hasJumpDir: true,
+    timed: true,
+    defaultDur: 0.8,
   },
   {
     op: 'move_stop',
@@ -905,6 +913,16 @@ const SUB_CHIPS: readonly SubChipMeta[] = [
     branch: true,
   },
   {
+    op: 'if_obstacle_ahead',
+    short: '前方障害?',
+    label: '前方に障害物/段差?',
+    cat: 'branch',
+    conceptTag: '地形検知',
+    execBadge: '0 tick',
+    tip: '進行方向の前方に壁や段差があれば T。飛び越え跳躍や飛出狙撃の起動に使えます。',
+    branch: true,
+  },
+  {
     op: 'if_incoming_fire',
     short: '被弾中?',
     label: '被弾・接近弾?',
@@ -1066,6 +1084,11 @@ function formatCellParamSummary(
   if (sCell.op === 'move_evade') {
     return sCell.direction === 'left' ? '左斜' : '右斜';
   }
+  if (sCell.op === 'move_jump') {
+    const dirLabel =
+      sCell.jumpDir === 'vertical' ? '垂直' : sCell.jumpDir === 'backward' ? '後退' : '前進';
+    return `${dirLabel}${(sCell.durationSec ?? 0.8).toFixed(1)}s`;
+  }
   if (sCell.op === 'torso_twist_r') {
     return `右${sCell.useArg ? 'ARG' : Math.round(sCell.param ?? 55)}°`;
   }
@@ -1091,7 +1114,7 @@ const LEGACY_SUB_CHIPS: readonly SubChipMeta[] = [
     cat: 'leg',
     conceptTag: '脚制御 (互換)',
     execBadge: '0 tick保持',
-    tip: '旧形式チップです。現在は「距離<? → 後退 / 接近」を 4×4 ROM に組みます。',
+    tip: '旧形式チップです。現在は「距離<? → 後退 / 接近」を 4×4 ルーチンに組みます。',
     hasParam: true,
     paramLabel: '距離(m)',
     defaultParam: 170,
@@ -1246,7 +1269,6 @@ export function GridProgramEditor({
   const [subFilter, setSubFilter] = useState<SubPaletteFilter>('all');
   const [copiedPython, setCopiedPython] = useState<boolean>(false);
   const [dragCellPos, setDragCellPos] = useState<{ row: number; col: number } | null>(null);
-  const [showQuickGroups, setShowQuickGroups] = useState<boolean>(false);
   const [romNameDraft, setRomNameDraft] = useState<string>('');
   const [romNotice, setRomNotice] = useState<string | null>(null);
   const romNoticeTimerRef = useRef<number | null>(null);
@@ -1269,7 +1291,6 @@ export function GridProgramEditor({
 
   const chassisSpec = useMemo(() => getChassisSpec(mech.chassisId), [mech.chassisId]);
   const tierSpec = useMemo(() => getControlTierSpec(mech.controlTier), [mech.controlTier]);
-  const resolvedGroups = useMemo(() => getResolvedWeaponGroups(mech), [mech]);
   const romIssues = useMemo(
     () => analyzeMechRomCompatibility(mech, allRoms, pilot),
     [mech, allRoms, pilot]
@@ -1316,18 +1337,6 @@ export function GridProgramEditor({
     }
     return base;
   }, [allPilots, pilot]);
-
-  const toggleWeaponGroupMember = (groupId: WeaponGroupId, slot: WeaponSlotId) => {
-    const cur = resolvedGroups[groupId];
-    const nextMembers = cur.includes(slot) ? cur.filter((s) => s !== slot) : [...cur, slot];
-    onChangeMech({
-      ...mech,
-      weaponGroups: {
-        ...resolvedGroups,
-        [groupId]: nextMembers,
-      },
-    });
-  };
 
   useEffect(() => {
     if (!tierSpec.pilotEnabled && selection.kind === 'pilot') {
@@ -1532,28 +1541,6 @@ export function GridProgramEditor({
     updateCurrentRomState(nextCells);
   };
 
-  const handleMountCatalogRom = (slotId: MechSubroutineSlotId) => {
-    if (!editingCatalogRom) return;
-    const nextBp = resolveMechBlueprintRoms(
-      {
-        ...mech,
-        romSlots: {
-          ...(mech.romSlots ?? {}),
-          [slotId]: editingCatalogRom.id,
-        },
-      },
-      allRoms
-    );
-    const draft = romDrafts[editingCatalogRom.id];
-    if (draft) {
-      nextBp.subroutines = nextBp.subroutines.map((s) =>
-        s.slotId === slotId ? { ...s, cells: draft.cells, category: draft.category } : s
-      );
-    }
-    onChangeMech(nextBp);
-    flashRomNotice(`${formatRomLabel(editingCatalogRom)} を ${slotId} へ搭載しました`);
-  };
-
   const updatePilotCellAt = (
     row: number,
     col: number,
@@ -1627,6 +1614,7 @@ export function GridProgramEditor({
       param: meta.hasParam ? (existing?.param ?? meta.defaultParam) : undefined,
       useArg: meta.hasParam ? existing?.useArg : undefined,
       durationSec: meta.timed ? (existing?.durationSec ?? meta.defaultDur) : undefined,
+      jumpDir: meta.hasJumpDir ? (existing?.jumpDir ?? 'forward') : undefined,
       direction: meta.hasDirChoice
         ? existing?.direction === 'left'
           ? 'left'
@@ -1846,6 +1834,7 @@ export function GridProgramEditor({
             elseDir: meta.branch ? 'S' : undefined,
             param: meta.defaultParam,
             durationSec: meta.defaultDur,
+            jumpDir: meta.hasJumpDir ? 'forward' : undefined,
             direction: meta.hasDirChoice ? 'auto' : undefined,
           };
           return {
@@ -2079,67 +2068,20 @@ export function GridProgramEditor({
   return (
     <section className="cm-panel cm-grid-studio">
       <div className="cm-panel-head">
-        <div>
-          <h2 className="cm-panel-title">統合グリッド・プログラミング</h2>
-          <p className="cm-panel-sub">
-            {tierSpec.pilotEnabled
-              ? 'パイロット (6×6) で戦況を見て ARG 付き CALL S1〜S6 を選び、4×4 ROM で脚・腰・武装を動かします'
-              : `ロボット単体モード (${tierSpec.slotGridSizes.S1}×${tierSpec.slotGridSizes.S1})：パイロット層なしで S1 パネル 1 枚を直接ループ実行します`}
-          </p>
-        </div>
-        {tierSpec.pilotEnabled ? (
-          <label className="cm-field cm-field--inline">
-            <span>パイロット名</span>
-            <input
-              type="text"
-              value={pilot.name}
-              onChange={(e) => onChangePilot({ ...pilot, name: e.target.value })}
-            />
-          </label>
-        ) : (
+        <h2 className="cm-panel-title">統合グリッド・プログラミング</h2>
+        {!tierSpec.pilotEnabled && (
           <span className="cm-tier-badge">ロボット単体モード（パイロット未使用）</span>
         )}
       </div>
 
-      {/* Control Tier Switcher Bar */}
-      <div className="cm-tier-bar">
-        <span className="cm-tier-bar-label">制御段階:</span>
-        <div className="cm-seg">
-          {CONTROL_TIER_CATALOG.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={tierSpec.id === t.id ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
-              title={t.description}
-              onClick={() => {
-                const nextTier: MechControlTier = t.id;
-                onChangeMech({ ...mech, controlTier: nextTier });
-                if (!t.pilotEnabled) {
-                  const s1Ref = mech.romSlots?.S1;
-                  const s1Rom =
-                    typeof s1Ref === 'string' ? findRomById(allRoms, s1Ref) : undefined;
-                  if (s1Rom) setSelection({ kind: 'rom', romId: s1Rom.id });
-                  else if (allRoms[0]) setSelection({ kind: 'rom', romId: allRoms[0].id });
-                  else setSelection({ kind: 'inline', slotId: 'S1' });
-                }
-                setHoveredCellPos(null);
-                setHoveredPaletteOp(null);
-              }}
-            >
-              {t.shortLabel}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Two-Row Selector: Upper Pilot Row + Lower Color-Coded ROM Row */}
+      {/* Two-Row Selector: Upper Pilot AI Row + Lower Color-Coded ROM Row */}
       <div className="cm-selector-stack">
         {tierSpec.pilotEnabled && (
           <div className="cm-selector-row">
             <span className="cm-selector-label">
-              <Cpu size={12} /> パイロット 6×6
+              <Cpu size={12} /> パイロットAI
             </span>
-            <div className="cm-pilot-btn-row" role="tablist" aria-label="パイロット一覧">
+            <div className="cm-pilot-btn-row" role="tablist" aria-label="パイロットAI一覧">
               {pilotButtonList.map((p) => {
                 const isEquipped = p.id === pilot.id;
                 const isActive = isMain && isEquipped;
@@ -2192,9 +2134,9 @@ export function GridProgramEditor({
 
         <div className="cm-selector-row">
           <span className="cm-selector-label">
-            <Grid3X3 size={12} /> ROM 4×4
+            <Grid3X3 size={12} /> ルーチン
           </span>
-          <div className="cm-rom-btn-row" role="tablist" aria-label="ROM一覧">
+          <div className="cm-rom-btn-row" role="tablist" aria-label="ルーチン一覧">
             {inlineSubSlots.map((slotId) => {
               const sub = mech.subroutines.find((s) => s.slotId === slotId);
               if (!sub) return null;
@@ -2279,10 +2221,10 @@ export function GridProgramEditor({
               <button
                 type="button"
                 className="cm-add-lib-btn cm-rom-add-tile"
-                title="新しい 4×4 ROM を作成して編集します"
+                title="新しい 4×4 ルーチンを作成して編集します"
                 onClick={() => {
                   const res = onSaveRom({
-                    name: '新規ROM',
+                    name: '新規ルーチン',
                     category: 'attack',
                     gridSize: 4,
                     cells: [{ row: 0, col: 0, op: 'start', dir: 'E' }],
@@ -2290,11 +2232,11 @@ export function GridProgramEditor({
                   setSelection({ kind: 'rom', romId: res.saved.id });
                   setHoveredCellPos(null);
                   setHoveredPaletteOp(null);
-                  flashRomNotice(`新規ROM「${formatRomLabel(res.saved)}」を作成しました`);
+                  flashRomNotice(`新規ルーチン「${formatRomLabel(res.saved)}」を作成しました`);
                 }}
               >
                 <Plus size={14} />
-                <span>新規ROM</span>
+                <span>新規ルーチン</span>
               </button>
             )}
           </div>
@@ -2396,49 +2338,63 @@ export function GridProgramEditor({
       {/* Main Split: Grid Board + Guide | Inspector + Palette/Code */}
       <div className="cm-studio-grid-layout">
         <div className="cm-grid-board-col">
-          {isMain && onSavePilot && (
+          {isMain && (
             <div className="cm-rom-editor-bar">
-              <div className="cm-rom-ref-row">
-                <span className="cm-rom-kind-pill">
-                  {isBuiltInPilotId(pilot.id) ? '標準パイロット' : '自作パイロット'}
-                </span>
-                <strong className="cm-rom-ref-name">{pilot.name}</strong>
-                {romNotice && <span className="cm-save-notice">{romNotice}</span>}
-              </div>
               <div className="cm-rom-action-row">
-                <button
-                  type="button"
-                  className="cm-btn-primary-xs"
-                  disabled={isBuiltInPilotId(pilot.id) || !allPilots?.some((p) => p.id === pilot.id)}
-                  title={
-                    !isBuiltInPilotId(pilot.id) && allPilots?.some((p) => p.id === pilot.id)
-                      ? '編集中の自作パイロットを上書き保存します'
-                      : '標準パイロットは上書きできません。「新規保存」を使ってください'
-                  }
-                  onClick={() => {
-                    const res = onSavePilot({
-                      id: pilot.id,
-                      name: pilot.name,
-                      cells: pilot.grid.cells,
-                    });
-                    flashRomNotice(`上書き: ${res.saved.name}`);
-                  }}
-                >
-                  パイロット上書き
-                </button>
-                <button
-                  type="button"
-                  className="cm-btn-xs"
-                  onClick={() => {
-                    const res = onSavePilot({
-                      name: isBuiltInPilotId(pilot.id) ? `${pilot.name.replace(/\s*\(6×6\)$/, '')}改` : pilot.name,
-                      cells: pilot.grid.cells,
-                    });
-                    flashRomNotice(`新規保存: ${res.saved.name}`);
-                  }}
-                >
-                  新規パイロット保存
-                </button>
+                <input
+                  type="text"
+                  className="cm-rom-name-input cm-pilot-name-input"
+                  value={pilot.name}
+                  placeholder="パイロットAI名"
+                  aria-label="パイロットAI名"
+                  onChange={(e) => onChangePilot({ ...pilot, name: e.target.value })}
+                />
+
+                {onSavePilot && (
+                  <>
+                    <button
+                      type="button"
+                      className="cm-btn-primary-xs"
+                      disabled={isBuiltInPilotId(pilot.id) || !allPilots?.some((p) => p.id === pilot.id)}
+                      title={
+                        !isBuiltInPilotId(pilot.id) && allPilots?.some((p) => p.id === pilot.id)
+                          ? '編集中の自作パイロットAIを上書保存します'
+                          : '標準パイロットAIは上書保存できません。「新規保存」を使ってください'
+                      }
+                      onClick={() => {
+                        const res = onSavePilot({
+                          id: pilot.id,
+                          name: pilot.name,
+                          cells: pilot.grid.cells,
+                        });
+                        flashRomNotice(`上書保存: ${res.saved.name}`);
+                      }}
+                    >
+                      上書保存
+                    </button>
+                    <button
+                      type="button"
+                      className="cm-btn-xs"
+                      title="現在の6×6グリッドを新しい自作パイロットAIとして保存します"
+                      onClick={() => {
+                        const baseName = pilot.name.trim();
+                        const matchedBuiltIn = allPilots?.find((p) => p.id === pilot.id);
+                        const nextName =
+                          isBuiltInPilotId(pilot.id) && baseName === matchedBuiltIn?.name
+                            ? `${baseName.replace(/\s*\(6×6\)$/, '')}改`
+                            : baseName || '新規パイロット';
+                        const res = onSavePilot({
+                          name: nextName,
+                          cells: pilot.grid.cells,
+                        });
+                        flashRomNotice(`新規保存: ${res.saved.name}`);
+                      }}
+                    >
+                      新規保存
+                    </button>
+                  </>
+                )}
+
                 {onDeletePilot && (
                   <button
                     type="button"
@@ -2453,6 +2409,8 @@ export function GridProgramEditor({
                     削除
                   </button>
                 )}
+
+                {romNotice && <span className="cm-save-notice">{romNotice}</span>}
               </div>
             </div>
           )}
@@ -2460,63 +2418,14 @@ export function GridProgramEditor({
           {!isMain && (
             <>
               <div className="cm-rom-editor-bar">
-                <div className="cm-rom-ref-row">
-                  <span className="cm-rom-kind-pill">
-                    {editingCatalogRom
-                      ? editingCatalogRom.builtIn
-                        ? '標準ROM'
-                        : '自作ROM'
-                      : '直接編集'}
-                  </span>
-                  <span className={`cm-rom-cat-pill is-cat-${editingCategory}`}>
-                    {ROM_CATEGORY_SPECS.find((c) => c.id === editingCategory)?.label ?? '制御系'}
-                  </span>
-                  <strong className="cm-rom-ref-name">
-                    {editingCatalogRom
-                      ? formatRomLabel(editingCatalogRom)
-                      : `${
-                          normalizeRomName(
-                            (editingInlineSub?.name ?? 'S1').replace(/\s*\([46]×[46]\)$/, '')
-                          ) || editingInlineSub?.slotId || 'S1'
-                        } (4×4)`}
-                  </strong>
-                  <span className="cm-rom-wt-pill">{ROM_WEIGHT_4X4.toFixed(1)}t</span>
-                  {editingCatalogRom && editingRomMountedSlots.length > 0 && (
-                    <span className="cm-rom-dirty-pill" style={{ borderColor: 'rgba(56, 189, 248, 0.45)', background: 'rgba(14, 116, 144, 0.3)', color: '#bae6fd' }}>
-                      搭載: {editingRomMountedSlots.join(', ')}
-                    </span>
-                  )}
-                  {editingCatalogRom && editingRomMountedSlots.length === 0 && (
-                    <span className="cm-tag-count">未搭載</span>
-                  )}
-                  {isRomDirty && <span className="cm-rom-dirty-pill">未保存変更</span>}
-                  {romNotice && <span className="cm-save-notice">{romNotice}</span>}
-                </div>
-
                 <div className="cm-rom-action-row">
-                  <div className="cm-cat-seg" role="group" aria-label="ROM種別カラー">
-                    {ROM_CATEGORY_SPECS.map((cat) => (
-                      <button
-                        key={cat.id}
-                        type="button"
-                        className={`cm-cat-seg-btn is-cat-${cat.id} ${
-                          editingCategory === cat.id ? 'is-active' : ''
-                        }`}
-                        onClick={() => updateCurrentRomState(currentRomCells, cat.id)}
-                        title={`ROM種別を「${cat.label}」に設定`}
-                      >
-                        {cat.label}
-                      </button>
-                    ))}
-                  </div>
-
                   <input
                     type="text"
                     className="cm-rom-name-input"
                     maxLength={6}
                     value={romNameDraft}
-                    placeholder="ROM名(6文字迄)"
-                    aria-label="ROM名（6文字まで）"
+                    placeholder="ルーチン名(6文字迄)"
+                    aria-label="ルーチン名（6文字まで）"
                     onChange={(e) => setRomNameDraft(normalizeRomName(e.target.value))}
                   />
                   <span className="cm-tag-count">{Array.from(romNameDraft).length}/6</span>
@@ -2529,8 +2438,8 @@ export function GridProgramEditor({
                         disabled={!editingCatalogRom || Boolean(editingCatalogRom.builtIn)}
                         title={
                           editingCatalogRom && !editingCatalogRom.builtIn
-                            ? '参照中の自作ROMを上書き更新します（他の搭載機体にも反映）'
-                            : '標準ROM・未登録は上書きできません。「新規ROM保存」を使ってください'
+                            ? '参照中の自作ルーチンを上書更新します（他の搭載機体にも反映）'
+                            : '標準ルーチン・未登録は上書保存できません。「新規保存」を使ってください'
                         }
                         onClick={() => {
                           if (!editingCatalogRom || editingCatalogRom.builtIn) return;
@@ -2548,19 +2457,19 @@ export function GridProgramEditor({
                             return next;
                           });
                           setSelection({ kind: 'rom', romId: res.saved.id });
-                          flashRomNotice(`上書き: ${formatRomLabel(res.saved)}`);
+                          flashRomNotice(`上書保存: ${formatRomLabel(res.saved)}`);
                         }}
                       >
-                        ROM上書き
+                        上書保存
                       </button>
                       <button
                         type="button"
                         className="cm-btn-xs"
-                        title="現在の盤面・色区分を新しい自作ROMとして保存します"
+                        title="現在の盤面・色区分を新しい自作ルーチンとして保存します"
                         onClick={() => {
                           const prevId = editingCatalogRom?.id;
                           const res = onSaveRom({
-                            name: romNameDraft || '自作ROM',
+                            name: romNameDraft || '自作ルーチン',
                             category: editingCategory,
                             gridSize: 4,
                             cells: currentRomCells,
@@ -2577,7 +2486,7 @@ export function GridProgramEditor({
                           flashRomNotice(`新規保存: ${formatRomLabel(res.saved)}`);
                         }}
                       >
-                        新規ROM保存
+                        新規保存
                       </button>
                     </>
                   )}
@@ -2606,42 +2515,30 @@ export function GridProgramEditor({
                         flashRomNotice(`削除: ${delLabel}`);
                       }}
                     >
-                      ROM削除
+                      削除
                     </button>
                   )}
 
-                  {editingCatalogRom && (
-                    <select
-                      className="cm-rom-mount-select"
-                      aria-label="ROMをスロットに搭載"
-                      value=""
-                      onChange={(e) => {
-                        const v = e.target.value as MechSubroutineSlotId | '';
-                        if (v) handleMountCatalogRom(v);
-                      }}
-                    >
-                      <option value="">搭載先 (S1〜S6)...</option>
-                      {tierSpec.enabledSlots.map((sl) => {
-                        const curRef = mech.romSlots?.[sl];
-                        const curRom =
-                          typeof curRef === 'string' ? findRomById(allRoms, curRef) : undefined;
-                        return (
-                          <option key={sl} value={sl}>
-                            {sl} へ搭載 ({curRom ? `現在: ${curRom.name}` : '未搭載/直接'})
-                          </option>
-                        );
-                      })}
-                    </select>
-                  )}
+                  {isRomDirty && <span className="cm-rom-dirty-pill">未保存変更</span>}
+                  {romNotice && <span className="cm-save-notice">{romNotice}</span>}
+                </div>
 
-                  <button
-                    type="button"
-                    className={`cm-mini-btn ${showQuickGroups ? 'is-active' : ''}`}
-                    onClick={() => setShowQuickGroups((v) => !v)}
-                    title="武装グループ G1〜G4 の割当をここから変更できます"
-                  >
-                    <SlidersHorizontal size={12} /> 武装G設定
-                  </button>
+                <div className="cm-rom-action-row">
+                  <div className="cm-cat-seg" role="group" aria-label="ルーチン種別カラー">
+                    {ROM_CATEGORY_SPECS.map((cat) => (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        className={`cm-cat-seg-btn is-cat-${cat.id} ${
+                          editingCategory === cat.id ? 'is-active' : ''
+                        }`}
+                        onClick={() => updateCurrentRomState(currentRomCells, cat.id)}
+                        title={`ルーチン種別を「${cat.label}」に設定`}
+                      >
+                        {cat.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -2667,55 +2564,6 @@ export function GridProgramEditor({
                   </div>
                 );
               })()}
-
-              {showQuickGroups && (
-                <div className="cm-wgroup-quick-panel">
-                  <div className="cm-wgroup-quick-note">
-                    各武器をどのグループ (G1〜G4) で発射するか設定（複数同時も可・ガレージと連動）
-                  </div>
-                  <div className="cm-wgroup-matrix">
-                    {(
-                      [
-                        { slot: 'rightArm', label: '右腕' },
-                        { slot: 'leftArm', label: '左腕' },
-                        { slot: 'rightShoulder', label: '右胴' },
-                        { slot: 'leftShoulder', label: '左胴' },
-                      ] as const
-                    ).map((row) => {
-                      const info = equippedWeapons[row.slot];
-                      const activeUsable = info.equipped && !info.passive;
-                      return (
-                        <div
-                          key={row.slot}
-                          className={`cm-wgroup-row ${activeUsable ? '' : 'is-empty-slot'}`}
-                        >
-                          <span className="cm-wgroup-slot-label">
-                            <b>{row.label}</b>: {info.equipped ? info.spec.name : '未装備'}
-                          </span>
-                          <div className="cm-wgroup-btns">
-                            {WEAPON_GROUP_IDS.map((gid) => {
-                              const active = resolvedGroups[gid].includes(row.slot);
-                              return (
-                                <button
-                                  key={gid}
-                                  type="button"
-                                  disabled={info.passive}
-                                  className={`cm-wgroup-btn ${
-                                    active ? `is-active is-${gid.toLowerCase()}` : ''
-                                  }`}
-                                  onClick={() => toggleWeaponGroupMember(gid, row.slot)}
-                                >
-                                  {gid}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
             </>
           )}
 
@@ -2725,7 +2573,7 @@ export function GridProgramEditor({
             <div
               className={gridSize === 6 ? 'cm-chip-grid is-6x6' : 'cm-chip-grid is-4x4'}
               role="grid"
-              aria-label={`${isMain ? pilot.name : editingCatalogRom?.name ?? editingInlineSub?.name ?? 'ROM'} フローグリッド`}
+              aria-label={`${isMain ? pilot.name : editingCatalogRom?.name ?? editingInlineSub?.name ?? 'ルーチン'} フローグリッド`}
             >
               {Array.from({ length: gridSize }, (_, row) =>
                 Array.from({ length: gridSize }, (_, col) => {
@@ -3052,7 +2900,7 @@ export function GridProgramEditor({
                     </label>
                   )}
                   {isMain && selectedPilotMeta?.hasOptionalArg && (
-                    <label className="cm-field cm-field--sm" title="呼出先 ROM で「ARG を使う」に設定した距離・角度などに渡されます（空欄＝ROM既定値）">
+                    <label className="cm-field cm-field--sm" title="呼出先ルーチンで「ARG を使う」に設定した距離・角度などに渡されます（空欄＝ルーチン既定値）">
                       <span>引数 ARG（省略可）</span>
                       <input
                         type="number"
@@ -3190,19 +3038,47 @@ export function GridProgramEditor({
                   )}
                   {((isMain && selectedPilotMeta?.timed) || (!isMain && selectedSubMeta?.timed)) && (
                     <label className="cm-field cm-field--sm">
-                      <span>{isMain ? '最大時間(s)' : '秒数(s)'}</span>
+                      <span>
+                        {isMain
+                          ? '最大時間(s)'
+                          : selectedCell.op === 'move_jump'
+                            ? '噴射秒数(s)'
+                            : '秒数(s)'}
+                      </span>
                       <input
                         type="number"
                         step={0.05}
-                        min={0.1}
-                        max={3.0}
-                        value={selectedCell.durationSec ?? 0.5}
+                        min={selectedCell.op === 'move_jump' ? 0.2 : 0.1}
+                        max={selectedCell.op === 'move_jump' ? 1.5 : 3.0}
+                        value={
+                          selectedCell.durationSec ??
+                          (selectedCell.op === 'move_jump' ? 0.8 : 0.5)
+                        }
                         onChange={(e) => {
-                          const v = Math.max(0.1, Math.min(3.0, Number(e.target.value) || 0.1));
+                          const minV = selectedCell.op === 'move_jump' ? 0.2 : 0.1;
+                          const maxV = selectedCell.op === 'move_jump' ? 1.5 : 3.0;
+                          const v = Math.max(minV, Math.min(maxV, Number(e.target.value) || minV));
                           if (isMain) updatePilotCell({ durationSec: v });
                           else updateSubCell({ durationSec: v });
                         }}
                       />
+                    </label>
+                  )}
+                  {!isMain && selectedSubMeta?.hasJumpDir && (
+                    <label className="cm-field">
+                      <span>跳躍方向</span>
+                      <select
+                        value={(selectedCell as MechSubroutineCell).jumpDir ?? 'forward'}
+                        onChange={(e) =>
+                          updateSubCell({
+                            jumpDir: e.target.value as JumpDirectionMode,
+                          })
+                        }
+                      >
+                        <option value="forward">前進 (60°・突破/登頂)</option>
+                        <option value="vertical">垂直 (82°・飛出狙撃)</option>
+                        <option value="backward">後退 (55°・離脱)</option>
+                      </select>
                     </label>
                   )}
                   {isMain && selectedPilotMeta?.hasTarget && (

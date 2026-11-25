@@ -15,6 +15,7 @@ import {
 } from '../data/parts';
 import {
   ActiveBeamState,
+  JumpDirectionMode,
   MAX_MECHS,
   MatchConfig,
   MatchRules,
@@ -70,9 +71,23 @@ import {
 const GRAVITY_Z = 22;
 const MAX_STORED_EVENTS = 2500;
 const SHUTDOWN_RECOVERY_RATIO = 0.7;
-const JUMP_TAKEOFF_HEAT_COST = 12;
-const COS60 = 0.5;
-const SIN60 = 0.8660254;
+const JUMP_TAKEOFF_HEAT_COST = 5;
+
+function getJumpDirectionVectors(dirMode: JumpDirectionMode): {
+  sinP: number;
+  cosP: number;
+  horizSign: number;
+} {
+  if (dirMode === 'vertical') {
+    const rad = degToRad(82);
+    return { sinP: Math.sin(rad), cosP: Math.cos(rad), horizSign: 1 };
+  }
+  if (dirMode === 'backward') {
+    const rad = degToRad(55);
+    return { sinP: Math.sin(rad), cosP: Math.cos(rad), horizSign: -1 };
+  }
+  return { sinP: 0.8660254, cosP: 0.5, horizSign: 1 };
+}
 
 export const ECM_BUBBLE_RADIUS = 130;
 export const ECM_PROXIMITY_BREAK = 120;
@@ -305,6 +320,8 @@ export function createSimulation(config: MatchConfig): SimState {
       lockDecayGraceSec: 0,
       lockComplete: false,
       ecmDisruptedTicks: 0,
+      jumpBurnRemainingSec: 0,
+      jumpDir: 'forward',
       salvoQueue: [],
       damageDealt: 0,
       damageTaken: 0,
@@ -652,6 +669,20 @@ export function buildMechSensorState(state: SimState, mechId: string): MechSenso
   }
 
   const heatRatio = mech.maxHeat > 0 ? clamp(mech.heat / mech.maxHeat, 0, 1.35) : 0;
+  const fwdLook = angleToVector2D(mech.yawDeg);
+  const obstacleProbeRadius = getMechCollisionRadius(mech.stats.sizeScale) * 0.75;
+  let obstacleAhead = false;
+  for (const probeDist of [12, 22, 34]) {
+    const px = clamp(mech.pos.x + fwdLook.dx * probeDist, 1, state.terrain.width - 1);
+    const py = clamp(mech.pos.y + fwdLook.dy * probeDist, 1, state.terrain.depth - 1);
+    if (
+      isInsideObstacleSolid(state.terrain, px, py, mech.pos.z + 1.5, obstacleProbeRadius) ||
+      getSurfaceHeight(state.terrain, px, py) > mech.pos.z + 6.0
+    ) {
+      obstacleAhead = true;
+      break;
+    }
+  }
 
   return {
     mechId: mech.id,
@@ -685,6 +716,7 @@ export function buildMechSensorState(state: SimState, mechId: string): MechSenso
     ecmActive,
     ecmJammed,
     bapActive,
+    obstacleAhead,
     destroyedParts,
     visibleEnemies,
     radarContacts,
@@ -1412,13 +1444,25 @@ export function stepSimulation(
     const coolMult = control.emergencyCool ? 1.4 : 1.0;
     mech.heat = Math.max(0, mech.heat - mech.heatDissipationPerSec * coolMult * SIM_DT);
 
-    const wantsJetThrust = Boolean(
+    const jumpAllowed =
       boosterActive &&
-        (control.jump || control.boost) &&
-        canOperate &&
-        !control.emergencyCool &&
-        mobility.jumpMult > 0 &&
-        mobility.boostMult > 0
+      canOperate &&
+      !control.emergencyCool &&
+      mobility.jumpMult > 0 &&
+      mobility.boostMult > 0;
+    if (jumpAllowed) {
+      if (control.jump && mech.grounded && control.jumpBurnSec && control.jumpBurnSec > 0) {
+        mech.jumpBurnRemainingSec = clamp(control.jumpBurnSec, 0.2, 1.5);
+        mech.jumpDir = control.jumpDir ?? 'forward';
+      } else if (control.jump && control.jumpDir) {
+        mech.jumpDir = control.jumpDir;
+      }
+    } else {
+      mech.jumpBurnRemainingSec = 0;
+    }
+
+    const wantsJetThrust = Boolean(
+      jumpAllowed && (control.jump || control.boost || mech.jumpBurnRemainingSec > 0)
     );
 
     if (wantsJetThrust && !mech.grounded) {
@@ -1502,7 +1546,8 @@ export function stepSimulation(
     const refWalk = Math.max(1, mech.stats.walkSpeed * Math.max(0.25, mobility.walkMult));
     const speedRatio = clamp(currentHorizSpeed / refWalk, 0, 1.3);
     const speedTurnFactor =
-      clamp(1.0 - speedRatio * 0.58, 0.35, 1.0) * (mech.grounded ? 1.0 : 0.55);
+      clamp(1.0 - speedRatio * 0.58, 0.35, 1.0) *
+      (mech.grounded ? 1.0 : wantsJetThrust ? 1.3 : 0.55);
     const maxTurnStep = mech.stats.turnDegPerSec * mobility.turnMult * speedTurnFactor * SIM_DT;
     if (!mech.thermalShutdown) {
       if (control.targetYaw !== undefined && Number.isFinite(control.targetYaw)) {
@@ -1567,18 +1612,21 @@ export function stepSimulation(
       mech.vel.y *= airDrag;
     }
 
-    // Unified ~60° oblique-forward lifting boost-jump (adds jump heat; blocked on thermal shutdown unless overridden)
+    // Unified 3-direction lifting boost-jump (forward 60° / vertical 82° / backward 55°)
     if (wantsJetThrust && (!mech.thermalShutdown || override)) {
       const lightness = clamp((100 - mech.stats.totalWeight) / 65, 0.25, 1.0);
       const forwardSpeed = Math.max(0, mech.vel.x * fwdVec.dx + mech.vel.y * fwdVec.dy);
       const runupRatio = clamp(forwardSpeed / Math.max(1, mech.stats.walkSpeed), 0, 1.2);
+      const activeJumpDir: JumpDirectionMode =
+        mech.jumpBurnRemainingSec > 0 ? mech.jumpDir : control.jumpDir ?? 'forward';
+      const { sinP, cosP, horizSign } = getJumpDirectionVectors(activeJumpDir);
 
       if (mech.grounded && (mech.heat < mech.maxHeat || override)) {
-        const leapFactor = 0.45 + 0.35 * lightness + 0.35 * runupRatio * lightness;
+        const leapFactor = 0.62 + 0.25 * lightness + 0.18 * runupRatio * lightness;
         const takeoffMag = mech.stats.jumpImpulse * mobility.jumpMult * leapFactor;
-        mech.vel.z = takeoffMag * SIN60;
-        mech.vel.x += fwdVec.dx * takeoffMag * COS60;
-        mech.vel.y += fwdVec.dy * takeoffMag * COS60;
+        mech.vel.z = takeoffMag * sinP;
+        mech.vel.x += fwdVec.dx * horizSign * takeoffMag * cosP;
+        mech.vel.y += fwdVec.dy * horizSign * takeoffMag * cosP;
         mech.grounded = false;
         mech.heat = Math.min(mech.maxHeat * 1.35, mech.heat + JUMP_TAKEOFF_HEAT_COST);
         if (mech.heat >= mech.maxHeat && !override) {
@@ -1586,10 +1634,10 @@ export function stepSimulation(
           mech.enOverheated = true;
         }
       } else if (!mech.grounded && (!mech.thermalShutdown || override)) {
-        const thrustAccel = booster.airLiftAccel * mobility.jumpMult * (0.7 + 0.3 * lightness);
-        mech.vel.z = Math.min(18, mech.vel.z + thrustAccel * SIN60 * SIM_DT);
-        mech.vel.x += fwdVec.dx * thrustAccel * COS60 * SIM_DT;
-        mech.vel.y += fwdVec.dy * thrustAccel * COS60 * SIM_DT;
+        const thrustAccel = booster.airLiftAccel * mobility.jumpMult * (0.82 + 0.22 * lightness);
+        mech.vel.z = Math.min(20, mech.vel.z + thrustAccel * sinP * SIM_DT);
+        mech.vel.x += fwdVec.dx * horizSign * thrustAccel * cosP * SIM_DT;
+        mech.vel.y += fwdVec.dy * horizSign * thrustAccel * cosP * SIM_DT;
 
         const maxAirHoriz = Math.max(mech.stats.walkSpeed * 1.45, mech.stats.boostSpeed);
         const airHoriz = Math.hypot(mech.vel.x, mech.vel.y);
@@ -1597,6 +1645,9 @@ export function stepSimulation(
           mech.vel.x = (mech.vel.x / airHoriz) * maxAirHoriz;
           mech.vel.y = (mech.vel.y / airHoriz) * maxAirHoriz;
         }
+      }
+      if (mech.jumpBurnRemainingSec > 0) {
+        mech.jumpBurnRemainingSec = Math.max(0, mech.jumpBurnRemainingSec - SIM_DT);
       }
     }
 
@@ -1649,6 +1700,7 @@ export function stepSimulation(
       mech.pos.z = surfaceZ;
       if (mech.vel.z < 0) mech.vel.z = 0;
       mech.grounded = true;
+      mech.jumpBurnRemainingSec = 0;
     } else {
       mech.grounded = false;
     }

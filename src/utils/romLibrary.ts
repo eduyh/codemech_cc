@@ -305,7 +305,7 @@ function checkCellsCompatibility(
   };
 
   if (romGridSize > slotMaxSize) {
-    pushUnique('warn', `${slotMaxSize}×${slotMaxSize}枠に${romGridSize}×${romGridSize}ROM（範囲外マス無効）`);
+    pushUnique('warn', `${slotMaxSize}×${slotMaxSize}枠に${romGridSize}×${romGridSize}ルーチン（範囲外マス無効）`);
   }
 
   for (const c of cells) {
@@ -390,7 +390,7 @@ export function analyzeMechRomCompatibility(
       if (pilot && tierSpec.pilotEnabled) {
         const callOp = CALL_OP_FOR_SLOT[slotId];
         if (pilot.grid.cells.some((c) => c.op === callOp)) {
-          result[slotId].push({ level: 'warn', text: 'パイロット呼出中（未搭載）' });
+          result[slotId].push({ level: 'warn', text: 'パイロットから参照されています（要搭載）' });
         }
       }
       continue;
@@ -399,7 +399,7 @@ export function analyzeMechRomCompatibility(
     if (typeof refId === 'string') {
       const rom = findRomById(allRoms, refId);
       if (!rom) {
-        result[slotId].push({ level: 'error', text: '参照ROM欠損（削除済み）' });
+        result[slotId].push({ level: 'error', text: '参照ルーチン欠損（削除済み）' });
         continue;
       }
       result[slotId].push(
@@ -432,7 +432,7 @@ export function analyzeMechRomCompatibility(
     } else if (pilot && tierSpec.pilotEnabled) {
       const callOp = CALL_OP_FOR_SLOT[slotId];
       if (pilot.grid.cells.some((c) => c.op === callOp)) {
-        result[slotId].push({ level: 'warn', text: 'パイロット呼出中（未搭載）' });
+        result[slotId].push({ level: 'warn', text: 'パイロットから参照されています（要搭載）' });
       }
     }
   }

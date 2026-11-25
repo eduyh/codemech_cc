@@ -6,6 +6,7 @@ import {
 } from '../data/parts';
 import {
   GridDir,
+  JumpDirectionMode,
   MechControlInput,
   MechRuntimeState,
   MechSensorState,
@@ -40,7 +41,6 @@ export type LatchedLegMode =
         | 'move_evade'
         | 'move_retreat'
         | 'move_high_ground'
-        | 'move_jump'
         | 'move_stop';
       param?: number;
       direction?: 'left' | 'right' | 'auto';
@@ -221,13 +221,14 @@ export function findHighGroundDirection(
   let bestH = getSurfaceHeight(state.terrain, bestX, bestY);
 
   const sampleRadius = Math.max(45, state.terrain.width * 0.065);
+  const climbTolerance = mech.stats.boosterActive ? 15.5 : 1.5;
   for (let i = 0; i < 8; i++) {
     const angleDeg = i * 45;
     const vec = angleToVector2D(angleDeg);
     const sx = clamp(mech.pos.x + vec.dx * sampleRadius, 40, state.terrain.width - 40);
     const sy = clamp(mech.pos.y + vec.dy * sampleRadius, 40, state.terrain.depth - 40);
     if (Math.hypot(sx - cx, sy - cy) > maxInteriorRadius) continue;
-    if (isInsideObstacleSolid(state.terrain, sx, sy, selfH + 1.5, 3.0)) continue;
+    if (isInsideObstacleSolid(state.terrain, sx, sy, selfH + climbTolerance, 3.0)) continue;
     const h = getSurfaceHeight(state.terrain, sx, sy);
     if (h > bestH + 0.5) {
       bestH = h;
@@ -236,20 +237,18 @@ export function findHighGroundDirection(
     }
   }
 
-  const yaw = steerAroundObstacles(
-    state,
-    mech,
-    vectorToAngle2D(bestX - mech.pos.x, bestY - mech.pos.y)
-  );
+  const rawBearing = vectorToAngle2D(bestX - mech.pos.x, bestY - mech.pos.y);
+  const needsClimbJump =
+    mech.stats.boosterActive &&
+    bestH > selfH + 4.0 &&
+    mech.grounded &&
+    !mech.thermalShutdown &&
+    mech.heat < mech.maxHeat * 0.78;
+  const yaw = needsClimbJump ? rawBearing : steerAroundObstacles(state, mech, rawBearing);
 
   return {
     yaw,
-    climbJump:
-      mech.stats.boosterActive &&
-      bestH > selfH + 6.0 &&
-      mech.grounded &&
-      !mech.thermalShutdown &&
-      mech.heat < mech.maxHeat * 0.78,
+    climbJump: needsClimbJump,
   };
 }
 
@@ -455,6 +454,8 @@ function evaluateSubroutineBranch(
       return sensor.incomingMissile;
     case 'if_ecm_jammed':
       return sensor.ecmJammed;
+    case 'if_obstacle_ahead':
+      return sensor.obstacleAhead;
     default:
       return false;
   }
@@ -465,7 +466,7 @@ function isBranchOp(op: MechSubroutineCell['op']): boolean {
 }
 
 function isLegLatchOp(op: MechSubroutineCell['op']): op is NonNullable<LatchedLegMode>['op'] {
-  return op.startsWith('move_');
+  return op.startsWith('move_') && op !== 'move_jump';
 }
 
 function isTorsoLatchOp(
@@ -511,6 +512,8 @@ function applyLatchedLegToControl(
   if (!leg) return;
   control.moveStrafe = 0;
 
+  const airborne = mech.jumpBurnRemainingSec > 0;
+
   switch (leg.op) {
     case 'move_stop':
       control.moveForward = 0;
@@ -527,13 +530,18 @@ function applyLatchedLegToControl(
         const heading = target.hasLineOfSight
           ? target.bearingDeg
           : normalizeAngle360(target.bearingDeg + (mech.slotIndex % 2 === 0 ? 45 : -45));
-        control.targetYaw = steerAroundObstacles(state, mech, heading);
+        control.targetYaw = airborne ? heading : steerAroundObstacles(state, mech, heading);
         control.moveForward = 1;
       } else {
         const patrol = findHighGroundDirection(state, mech);
         control.targetYaw = patrol.yaw;
         control.moveForward = 0.85;
-        control.jump = patrol.climbJump;
+        if (patrol.climbJump) {
+          control.jump = true;
+          control.boost = true;
+          control.jumpDir = 'forward';
+          control.jumpBurnSec = 0.9;
+        }
       }
       break;
 
@@ -544,10 +552,12 @@ function applyLatchedLegToControl(
           const flankDeg = normalizeAngle360(
             target.bearingDeg + (mech.slotIndex % 2 === 0 ? 50 : -50)
           );
-          control.targetYaw = steerAroundObstacles(state, mech, flankDeg);
+          control.targetYaw = airborne ? flankDeg : steerAroundObstacles(state, mech, flankDeg);
           control.moveForward = 0.9;
         } else if (target.distance > desired + 25) {
-          control.targetYaw = steerAroundObstacles(state, mech, target.bearingDeg);
+          control.targetYaw = airborne
+            ? target.bearingDeg
+            : steerAroundObstacles(state, mech, target.bearingDeg);
           control.moveForward = 0.9;
         } else if (target.distance < desired - 25) {
           control.targetYaw = target.bearingDeg;
@@ -560,7 +570,12 @@ function applyLatchedLegToControl(
         const patrol = findHighGroundDirection(state, mech);
         control.targetYaw = patrol.yaw;
         control.moveForward = 0.8;
-        control.jump = patrol.climbJump;
+        if (patrol.climbJump) {
+          control.jump = true;
+          control.boost = true;
+          control.jumpDir = 'forward';
+          control.jumpBurnSec = 0.9;
+        }
       }
       break;
     }
@@ -572,13 +587,20 @@ function applyLatchedLegToControl(
         const angleOffset =
           target.distance > desired + 25 ? 48 : target.distance < desired - 25 ? 100 : 72;
         const desiredHeading = normalizeAngle360(target.bearingDeg + orbitDir * angleOffset);
-        control.targetYaw = steerAroundObstacles(state, mech, desiredHeading);
+        control.targetYaw = airborne
+          ? desiredHeading
+          : steerAroundObstacles(state, mech, desiredHeading);
         control.moveForward = 0.95;
       } else {
         const patrol = findHighGroundDirection(state, mech);
         control.targetYaw = patrol.yaw;
         control.moveForward = 0.85;
-        control.jump = patrol.climbJump;
+        if (patrol.climbJump) {
+          control.jump = true;
+          control.boost = true;
+          control.jumpDir = 'forward';
+          control.jumpBurnSec = 0.9;
+        }
       }
       break;
     }
@@ -589,11 +611,10 @@ function applyLatchedLegToControl(
       control.moveForward = 0.88;
       control.boost = false;
       control.jump = false;
-      control.targetYaw = steerAroundObstacles(
-        state,
-        mech,
-        normalizeAngle360(baseBearing + sign * 38)
-      );
+      const desiredHeading = normalizeAngle360(baseBearing + sign * 38);
+      control.targetYaw = airborne
+        ? desiredHeading
+        : steerAroundObstacles(state, mech, desiredHeading);
       break;
     }
 
@@ -610,25 +631,20 @@ function applyLatchedLegToControl(
       const hg = findHighGroundDirection(state, mech);
       control.targetYaw = hg.yaw;
       control.moveForward = 0.9;
-      control.jump = hg.climbJump;
-      if (sensor.nearestRadarEnemy && sensor.visibleEnemies.length === 0) {
+      if (hg.climbJump) {
+        control.jump = true;
+        control.boost = true;
+        control.jumpDir = 'forward';
+        control.jumpBurnSec = 0.9;
+      } else if (sensor.nearestRadarEnemy && sensor.visibleEnemies.length === 0) {
         const desiredHeading = sensor.nearestRadarEnemy.hasLineOfSight
           ? sensor.nearestRadarEnemy.bearingDeg
           : normalizeAngle360(
               sensor.nearestRadarEnemy.bearingDeg + (mech.slotIndex % 2 === 0 ? 50 : -50)
             );
-        control.targetYaw = steerAroundObstacles(state, mech, desiredHeading);
-      }
-      break;
-    }
-
-    case 'move_jump': {
-      const jetReady = mech.stats.boosterActive && !mech.thermalShutdown;
-      control.jump = jetReady;
-      control.boost = jetReady;
-      control.moveForward = 1;
-      if (target) {
-        control.targetYaw = steerAroundObstacles(state, mech, target.bearingDeg);
+        control.targetYaw = airborne
+          ? desiredHeading
+          : steerAroundObstacles(state, mech, desiredHeading);
       }
       break;
     }
@@ -858,8 +874,25 @@ export function stepSubroutineExecution(
   }
 
   // 3. Advance through 0-tick flow / latch / branch chips until hitting a timed or firing chip
+  let triggeredJump: { jumpDir: JumpDirectionMode; burnSec: number } | null = null;
+  const applyTriggeredJump = () => {
+    if (triggeredJump && mech.stats.boosterActive && !mech.thermalShutdown) {
+      control.jump = true;
+      control.boost = true;
+      control.jumpDir = triggeredJump.jumpDir;
+      control.jumpBurnSec = triggeredJump.burnSec;
+      if (target) {
+        control.targetYaw = target.bearingDeg;
+      }
+    }
+  };
+
   for (let hop = 0; hop < 24; hop++) {
     if (!isInsideGrid(exec.row, exec.col, gridSize) || exec.stepsExecuted >= 48) {
+      applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
+      applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
+      applyTriggeredJump();
+      control.overrideShutdown = exec.overrideLatched;
       exec.completed = true;
       return { completed: true, activeCell: null, lastBranch };
     }
@@ -868,6 +901,10 @@ export function stepSubroutineExecution(
     const curCol = exec.col;
     const cell = findCell(curRow, curCol);
     if (!cell || cell.op === 'empty') {
+      applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
+      applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
+      applyTriggeredJump();
+      control.overrideShutdown = exec.overrideLatched;
       exec.completed = true;
       return { completed: true, activeCell: null, lastBranch };
     }
@@ -877,6 +914,7 @@ export function stepSubroutineExecution(
     if (cell.op === 'return') {
       applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
       applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
+      applyTriggeredJump();
       control.overrideShutdown = exec.overrideLatched;
       exec.completed = true;
       return { completed: true, activeCell: { row: curRow, col: curCol }, lastBranch };
@@ -887,6 +925,7 @@ export function stepSubroutineExecution(
       if (advanceOrFinish(next.row, next.col)) {
         applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
         applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
+        applyTriggeredJump();
         control.overrideShutdown = exec.overrideLatched;
         return { completed: true, activeCell: { row: curRow, col: curCol }, lastBranch };
       }
@@ -913,6 +952,30 @@ export function stepSubroutineExecution(
       if (advanceOrFinish(next.row, next.col)) {
         applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
         applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
+        applyTriggeredJump();
+        control.overrideShutdown = exec.overrideLatched;
+        return { completed: true, activeCell: { row: curRow, col: curCol }, lastBranch };
+      }
+      continue;
+    }
+
+    if (cell.op === 'move_jump') {
+      const burnSec = clamp(
+        cell.useArg && exec.callArg !== undefined
+          ? exec.callArg
+          : (cell.durationSec ?? 0.8),
+        0.2,
+        1.5
+      );
+      triggeredJump = {
+        jumpDir: cell.jumpDir ?? 'forward',
+        burnSec,
+      };
+      const next = advanceGridCoords(curRow, curCol, cell.dir);
+      if (advanceOrFinish(next.row, next.col)) {
+        applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
+        applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
+        applyTriggeredJump();
         control.overrideShutdown = exec.overrideLatched;
         return { completed: true, activeCell: { row: curRow, col: curCol }, lastBranch };
       }
@@ -937,6 +1000,7 @@ export function stepSubroutineExecution(
       if (advanceOrFinish(next.row, next.col)) {
         applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
         applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
+        applyTriggeredJump();
         control.overrideShutdown = exec.overrideLatched;
         return { completed: true, activeCell: { row: curRow, col: curCol }, lastBranch };
       }
@@ -949,6 +1013,7 @@ export function stepSubroutineExecution(
       if (advanceOrFinish(next.row, next.col)) {
         applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
         applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
+        applyTriggeredJump();
         control.overrideShutdown = exec.overrideLatched;
         return { completed: true, activeCell: { row: curRow, col: curCol }, lastBranch };
       }
@@ -961,6 +1026,7 @@ export function stepSubroutineExecution(
       if (advanceOrFinish(next.row, next.col)) {
         applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
         applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
+        applyTriggeredJump();
         control.overrideShutdown = exec.overrideLatched;
         return { completed: true, activeCell: { row: curRow, col: curCol }, lastBranch };
       }
@@ -983,6 +1049,7 @@ export function stepSubroutineExecution(
         if (advanceOrFinish(next.row, next.col)) {
           applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
           applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
+          applyTriggeredJump();
           control.overrideShutdown = exec.overrideLatched;
           return { completed: true, activeCell: { row: curRow, col: curCol }, lastBranch };
         }
@@ -1006,6 +1073,7 @@ export function stepSubroutineExecution(
       applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
       applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
       applyFireSlotsToControl(candidateSlots, control, target);
+      applyTriggeredJump();
       control.overrideShutdown = exec.overrideLatched;
       return { completed: false, activeCell: { row: curRow, col: curCol }, lastBranch };
     }
@@ -1022,6 +1090,7 @@ export function stepSubroutineExecution(
     } else {
       applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
       applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
+      applyTriggeredJump();
       control.overrideShutdown = exec.overrideLatched;
     }
 
@@ -1040,6 +1109,7 @@ export function stepSubroutineExecution(
   // Hop limit safety guard
   applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
   applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
+  applyTriggeredJump();
   control.overrideShutdown = exec.overrideLatched;
   exec.completed = true;
   return { completed: true, activeCell: null, lastBranch };

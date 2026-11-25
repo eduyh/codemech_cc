@@ -369,4 +369,80 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
     );
     expect(ctrlOut.fireRightArm).toBe(false);
   });
+
+  it('triggers timed move_jump burn without being overwritten by subsequent leg latch ops and senses obstacles ahead', () => {
+    const sim = createSimulation({
+      seed: 55,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 1000, arenaDepth: 1000 },
+      entries: [
+        { id: 'jumper', name: 'Jumper', teamId: 'A', blueprint: PRESET_VANGUARD },
+        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: STARTER_MECHS[1] },
+      ],
+    });
+    const me = sim.mechs[0];
+    const enemy = sim.mechs[1];
+    sim.terrain.heightAmplitude = 0;
+    sim.terrain.obstacles = [
+      {
+        id: 'wall1',
+        x: 388,
+        y: 476,
+        width: 24,
+        height: 14,
+        baseZ: 0,
+        topZ: 12,
+      },
+    ];
+    me.pos = { x: 400, y: 500, z: 0 };
+    me.yawDeg = 0; // Facing North (-Y) straight into wall1
+    enemy.pos = { x: 400, y: 430, z: 0 };
+
+    // 1. if_obstacle_ahead detects the wall ahead and clears when facing open terrain
+    const sensorWall = buildMechSensorState(sim, me.id);
+    expect(sensorWall.obstacleAhead).toBe(true);
+    me.yawDeg = 180; // Facing South away from wall1
+    const sensorOpen = buildMechSensorState(sim, me.id);
+    expect(sensorOpen.obstacleAhead).toBe(false);
+    me.yawDeg = 0;
+
+    // 2. move_jump(vertical, 0.8s) followed by move_approach + fire_group_1 still triggers sustained jump burn & fires while airborne
+    const jumpAttackSub: MechSubroutine = {
+      slotId: 'S2',
+      name: 'POP',
+      category: 'attack',
+      gridSize: 4,
+      cells: [
+        { row: 0, col: 0, op: 'start', dir: 'E' },
+        { row: 0, col: 1, op: 'if_obstacle_ahead', dir: 'E', elseDir: 'S' },
+        { row: 0, col: 2, op: 'move_jump', dir: 'S', jumpDir: 'vertical', durationSec: 0.8 },
+        { row: 1, col: 1, op: 'move_approach', dir: 'S', param: 180 },
+        { row: 1, col: 2, op: 'move_approach', dir: 'S', param: 180 },
+        { row: 2, col: 2, op: 'fire_group_1', dir: 'E' },
+      ],
+    };
+
+    const exec = startSubroutineExec(jumpAttackSub, false, 4);
+    let sawJumpCtrl = false;
+    let sawFireAfterJump = false;
+    let maxBurnRemaining = 0;
+
+    for (let t = 0; t < 25; t++) {
+      const sensor = buildMechSensorState(sim, me.id);
+      const ctrl = { ...EMPTY_CONTROL_INPUT };
+      stepSubroutineExecution(jumpAttackSub, exec, ctrl, sensor, me, sim, sensor.nearestRadarEnemy, 1);
+      if (ctrl.jump && ctrl.boost && ctrl.jumpDir === 'vertical') {
+        sawJumpCtrl = true;
+      }
+      if ((ctrl.fireRightArm || ctrl.fireLeftArm) && me.pos.z > 0.5) {
+        sawFireAfterJump = true;
+      }
+      stepSimulation(sim, { jumper: ctrl, enemy: EMPTY_CONTROL_INPUT });
+      maxBurnRemaining = Math.max(maxBurnRemaining, me.jumpBurnRemainingSec);
+    }
+
+    expect(sawJumpCtrl).toBe(true);
+    expect(maxBurnRemaining).toBeGreaterThan(0.5);
+    expect(me.pos.z).toBeGreaterThan(5);
+    expect(sawFireAfterJump).toBe(true);
+  });
 });

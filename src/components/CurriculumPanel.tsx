@@ -119,14 +119,9 @@ export function CurriculumPanel({
   return (
     <section className="cm-panel">
       <div className="cm-panel-head">
-        <div>
-          <h2 className="cm-panel-title">
-            段階的デバッグ学習カリキュラム（全{CURRICULUM_MISSIONS.length}ステップ）
-          </h2>
-          <p className="cm-panel-sub">
-            ロボット 4×4 単体 → 4×4 分岐＆防御 → パイロット 6×6 ＋ 4×4 ROM 最大5枠の順で段階的に学びます
-          </p>
-        </div>
+        <h2 className="cm-panel-title">
+          段階的デバッグ学習カリキュラム（全{CURRICULUM_MISSIONS.length}ステップ）
+        </h2>
         <span className="cm-pill">
           <Award size={14} /> {clearedSteps.length} / {CURRICULUM_MISSIONS.length} クリア
         </span>

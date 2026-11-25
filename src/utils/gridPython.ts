@@ -51,6 +51,8 @@ function pilotCondExpr(cell: PilotGridCell): string {
       return 'sensor.incoming_missile()';
     case 'if_ecm_jammed':
       return 'sensor.ecm_jammed()';
+    case 'if_obstacle_ahead':
+      return 'sensor.obstacle_ahead()';
     case 'if_enemy_hp_below':
       return `target.hp_pct < ${Math.round(cell.param ?? 35)}`;
     case 'if_flag_a':
@@ -144,6 +146,8 @@ function subCondExpr(cell: MechSubroutineCell): string {
       return 'sensor.incoming_missile()';
     case 'if_ecm_jammed':
       return 'sensor.ecm_jammed()';
+    case 'if_obstacle_ahead':
+      return 'sensor.obstacle_ahead()';
     default:
       return 'False';
   }
@@ -169,7 +173,7 @@ function subStmt(cell: MechSubroutineCell): string {
     case 'move_high_ground':
       return 'legs.seek_high_ground()';
     case 'move_jump':
-      return 'legs.jump_jet_60deg()';
+      return `legs.jump_jet(dir="${cell.jumpDir ?? 'forward'}", sec=${Number((cell.durationSec ?? 0.8).toFixed(2))})`;
     case 'move_stop':
       return 'legs.halt()';
     case 'torso_track':

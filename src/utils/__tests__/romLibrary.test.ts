@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { computeBlueprintRomWeight, computeMechStats } from '../../data/parts';
-import { DEFAULT_PILOT_PROFILE, PRESET_FORTRESS, PRESET_STRIKER, PRESET_VANGUARD, STARTER_MECHS } from '../../data/presets';
+import {
+  DEFAULT_PILOT_PROFILE,
+  PILOT_BASIC,
+  PRESET_ABC,
+  PRESET_FORTRESS,
+  PRESET_STRIKER,
+  PRESET_VANGUARD,
+  STARTER_MECHS,
+  STARTER_PILOTS,
+} from '../../data/presets';
 import { createSimulation } from '../../engine/mechSim';
 import { createPilotRuntimeState, evaluatePilotTick } from '../../engine/pilotRuntime';
 import { buildMechSensorState } from '../../engine/mechSim';
@@ -210,5 +219,52 @@ describe('romLibrary & ROM weight rules', () => {
     const rt = createPilotRuntimeState(pilotCallingS6);
     const out = evaluatePilotTick(pilotCallingS6, rt, buildMechSensorState(sim, 'm1'), sim.mechs[0], sim);
     expect(out.activeSubroutineSlot).toBe('S6');
+  });
+
+  it('validates beginner preset ABC weight budget, optional booster/ECM capacity, and 基本 routines', () => {
+    const baseStats = computeMechStats(PRESET_ABC);
+    expect(baseStats.boosterActive).toBe(false);
+    expect(baseStats.hasBoosterMount).toBe(true);
+    expect(baseStats.ecmActive).toBe(false);
+    expect(baseStats.hasEcmMount).toBe(true);
+    expect(baseStats.totalWeight).toBe(49);
+    expect(baseStats.valid).toBe(true);
+
+    const upgradedStats = computeMechStats({
+      ...structuredClone(PRESET_ABC),
+      boosterEnabled: true,
+      ecmEnabled: true,
+    });
+    expect(upgradedStats.boosterActive).toBe(true);
+    expect(upgradedStats.ecmActive).toBe(true);
+    expect(upgradedStats.totalWeight).toBe(54.5);
+    expect(upgradedStats.overweight).toBe(false);
+    expect(upgradedStats.valid).toBe(true);
+
+    const issues = analyzeMechRomCompatibility(PRESET_ABC, BUILTIN_ROMS, PILOT_BASIC);
+    for (const slot of ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'] as const) {
+      expect(issues[slot]).toEqual([]);
+    }
+
+    const basicIds = [
+      'rom_basic_s1_fire',
+      'rom_basic_s2_lrm',
+      'rom_basic_s3_move',
+      'rom_basic_s4_cool',
+      'rom_basic_s5_close',
+      'rom_basic_4x4_solo',
+    ];
+    for (const id of basicIds) {
+      const rom = BUILTIN_ROMS.find((r) => r.id === id);
+      expect(rom).toBeDefined();
+      expect(rom!.name.startsWith('基本')).toBe(true);
+      expect(rom!.name.length).toBeLessThanOrEqual(6);
+    }
+
+    for (const starter of STARTER_MECHS) {
+      expect(starter.defaultPilotId).toBeDefined();
+      expect(STARTER_PILOTS.some((p) => p.id === starter.defaultPilotId)).toBe(true);
+    }
+    expect(PRESET_ABC.defaultPilotId).toBe('pilot_basic');
   });
 });

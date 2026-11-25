@@ -318,6 +318,7 @@ export interface MechBlueprint {
   color: string;
   chassisId: string;
   controlTier?: MechControlTier;
+  defaultPilotId?: string;
   romSlots?: Partial<Record<MechSubroutineSlotId, string | null>>;
   boosterEnabled: boolean;
   ecmEnabled?: boolean;

@@ -55,7 +55,10 @@ function buildSampleRoster(teamCount: number, perTeam: number): BattlefieldRoste
   for (let t = 0; t < teamCount; t++) {
     for (let m = 0; m < perTeam; m++) {
       const bp = structuredClone(STARTER_MECHS[(t * perTeam + m) % STARTER_MECHS.length]);
-      const pilot = structuredClone(STARTER_PILOTS[(t + m) % STARTER_PILOTS.length]);
+      const pilot = structuredClone(
+        STARTER_PILOTS.find((p) => p.id === bp.defaultPilotId) ??
+          STARTER_PILOTS[(t + m) % STARTER_PILOTS.length]
+      );
       bp.name = `${bp.name.split(' ')[1] ?? bp.name}-${t + 1}${m + 1}`;
       list.push({
         id: `sample_${t}_${m}_${Date.now().toString(36)}`,

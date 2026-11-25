@@ -1272,6 +1272,7 @@ export function GridProgramEditor({
   const [romNameDraft, setRomNameDraft] = useState<string>('');
   const [romNotice, setRomNotice] = useState<string | null>(null);
   const romNoticeTimerRef = useRef<number | null>(null);
+  const prevMechIdRef = useRef<string>(mech.id);
 
   useEffect(() => {
     return () => {
@@ -1318,6 +1319,29 @@ export function GridProgramEditor({
       ),
     [tierSpec.enabledSlots, mech.romSlots, mech.subroutines]
   );
+
+  useEffect(() => {
+    if (prevMechIdRef.current === mech.id) return;
+    prevMechIdRef.current = mech.id;
+    const mountedRomIds = Object.keys(mountedSlotsByRomId);
+    if (selection.kind === 'rom' && !mountedRomIds.includes(selection.romId)) {
+      if (mountedRomIds.length > 0) {
+        setSelection({ kind: 'rom', romId: mountedRomIds[0] });
+      } else if (inlineSubSlots.length > 0) {
+        setSelection({ kind: 'inline', slotId: inlineSubSlots[0] });
+      } else if (tierSpec.pilotEnabled) {
+        setSelection({ kind: 'pilot' });
+      }
+    } else if (selection.kind === 'inline' && !inlineSubSlots.includes(selection.slotId)) {
+      if (mountedRomIds.length > 0) {
+        setSelection({ kind: 'rom', romId: mountedRomIds[0] });
+      } else if (tierSpec.pilotEnabled) {
+        setSelection({ kind: 'pilot' });
+      }
+    }
+    setHoveredCellPos(null);
+    setHoveredPaletteOp(null);
+  }, [mech.id, mountedSlotsByRomId, inlineSubSlots, tierSpec.pilotEnabled, selection]);
 
   const sortedAllRoms = useMemo(() => {
     const order: Record<RomCategory, number> = { attack: 0, move: 1, control: 2 };

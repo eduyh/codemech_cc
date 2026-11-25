@@ -350,6 +350,9 @@ export function validateAndRepairMechBlueprint(raw: MechBlueprint): MechBlueprin
     color: typeof raw?.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(raw.color) ? raw.color : def.color,
     chassisId: chassis.id,
     ...(controlTier && controlTier !== 'pilot_full' ? { controlTier } : {}),
+    ...(typeof raw?.defaultPilotId === 'string' && raw.defaultPilotId.trim()
+      ? { defaultPilotId: raw.defaultPilotId.trim().slice(0, 64) }
+      : {}),
     ...(hasRomSlots ? { romSlots } : {}),
     boosterEnabled,
     ecmEnabled,

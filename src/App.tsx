@@ -137,7 +137,8 @@ function buildMatchSetup(
         ? playerPilot
         : useOpponentOverride && opponentOverride!.pilot
           ? opponentOverride!.pilot
-          : STARTER_PILOTS[(t + m) % STARTER_PILOTS.length];
+          : STARTER_PILOTS.find((p) => p.id === mechBp.defaultPilotId) ??
+            STARTER_PILOTS[(t + m) % STARTER_PILOTS.length];
 
       entries.push({
         id,
@@ -196,12 +197,19 @@ export default function App() {
   );
 
   const initialSetup = useRef(
-    buildMatchSetup('1v1', 'plains_ridge', PRESET_VANGUARD, 2026, DEFAULT_PILOT_PROFILE, {
-      blueprint: resolveMechBlueprintRoms(
-        structuredClone(STARTER_MECHS[1] ?? STARTER_MECHS[0]),
-        getAllRoms(loadUserRoms())
-      ),
-    })
+    (() => {
+      const oppStarter = STARTER_MECHS[1] ?? STARTER_MECHS[0];
+      const oppPilot = oppStarter.defaultPilotId
+        ? STARTER_PILOTS.find((p) => p.id === oppStarter.defaultPilotId)
+        : undefined;
+      return buildMatchSetup('1v1', 'plains_ridge', PRESET_VANGUARD, 2026, DEFAULT_PILOT_PROFILE, {
+        blueprint: resolveMechBlueprintRoms(
+          structuredClone(oppStarter),
+          getAllRoms(loadUserRoms())
+        ),
+        pilot: oppPilot ? structuredClone(oppPilot) : undefined,
+      });
+    })()
   );
   const simRef = useRef<SimState>(initialSetup.current.sim);
   const pilotProfilesRef = useRef<Record<string, PilotProfile>>(initialSetup.current.pilotProfiles);
@@ -246,9 +254,8 @@ export default function App() {
       const custom = savedMechs.find((m) => m.id === oppId);
       if (custom) {
         const bp = resolveMechBlueprintRoms(structuredClone(custom.blueprint), allRoms);
-        const matchedPilot = custom.pilotId
-          ? allPilots.find((p) => p.id === custom.pilotId)
-          : undefined;
+        const pId = custom.pilotId ?? custom.blueprint.defaultPilotId;
+        const matchedPilot = pId ? allPilots.find((p) => p.id === pId) : undefined;
         return {
           blueprint: bp,
           pilot: matchedPilot ? structuredClone(matchedPilot) : undefined,
@@ -256,8 +263,12 @@ export default function App() {
       }
       const starter =
         STARTER_MECHS.find((m) => m.id === oppId) ?? STARTER_MECHS[1] ?? STARTER_MECHS[0];
+      const starterPilot = starter.defaultPilotId
+        ? allPilots.find((p) => p.id === starter.defaultPilotId)
+        : undefined;
       return {
         blueprint: resolveMechBlueprintRoms(structuredClone(starter), allRoms),
+        pilot: starterPilot ? structuredClone(starterPilot) : undefined,
       };
     },
     [savedMechs, allRoms, allPilots]
@@ -314,7 +325,10 @@ export default function App() {
       setPlayerMech(cloned);
       playerMechRef.current = cloned;
       setStarterEdited(false);
-      const matchedPilot = pilotId ? allPilots.find((p) => p.id === pilotId) : undefined;
+      const resolvedPilotId = pilotId ?? bp.defaultPilotId;
+      const matchedPilot = resolvedPilotId
+        ? allPilots.find((p) => p.id === resolvedPilotId)
+        : undefined;
       if (matchedPilot) {
         const clonedPilot = structuredClone(matchedPilot);
         setPlayerPilot(clonedPilot);
@@ -704,7 +718,7 @@ export default function App() {
 
                 <div
                   className="cm-mech-select-row"
-                  title="現在の搭乗機体を切り替えます（ユーザー機体は保存時のパイロット設定も復元）"
+                  title="現在の搭乗機体を切り替えます（機体ごとのパイロットAI・ルーチン設定も切り替え）"
                 >
                   <select
                     aria-label="搭乗機体選択"
@@ -712,12 +726,15 @@ export default function App() {
                     onChange={(e) => {
                       const custom = savedMechs.find((m) => m.id === e.target.value);
                       if (custom) {
-                        handleLoadMechBlueprint(custom.blueprint, custom.pilotId);
+                        handleLoadMechBlueprint(
+                          custom.blueprint,
+                          custom.pilotId ?? custom.blueprint.defaultPilotId
+                        );
                         return;
                       }
                       const bp = STARTER_MECHS.find((m) => m.id === e.target.value);
                       if (bp) {
-                        handleLoadMechBlueprint(bp);
+                        handleLoadMechBlueprint(bp, bp.defaultPilotId);
                       }
                     }}
                   >

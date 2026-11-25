@@ -1249,6 +1249,68 @@ export const MECH_CHASSIS_CATALOG: readonly MechChassisSpec[] = [
     },
     description: '高火力の65t重量級支援機。ECM対応・ブースト跳躍機構は非搭載。',
   },
+  {
+    id: 'chassis_abc',
+    name: 'ABC級 (55t 中量級)',
+    weightClass: 'medium',
+    legStyle: 'biped',
+    sizeScale: 1.0,
+    maxTonnage: 55,
+    skeletonWeight: 23.5,
+    cost: 500,
+    headPartId: 'head_std',
+    torsoPartId: 'torso_std',
+    rightShoulderMountId: 'shd_std',
+    leftShoulderMountId: 'shd_std',
+    legPartId: 'legs_biped_std',
+    enCapacity: 100,
+    netEnRegenPerSec: 13.5,
+    maxHeat: 100,
+    baseHeatDissipation: 13.5,
+    radarRange: 800,
+    radarSignatureRange: 210,
+    walkSpeed: 22.0,
+    strafeSpeed: 0,
+    turnDegPerSec: 64,
+    torsoTwistMaxDeg: 85,
+    torsoTwistRateDegPerSec: 98,
+    visionFovHalfDeg: 53,
+    hasJumpBoosterMount: true,
+    boosterModuleWeight: 4.0,
+    boosterSpecId: 'boost_std',
+    hasEcmMount: true,
+    ecmModuleWeight: 1.5,
+    jumpImpulse: 18.5,
+    structureHp: {
+      head: 60,
+      torso: 190,
+      rightShoulder: 130,
+      leftShoulder: 130,
+      rightArm: 95,
+      leftArm: 95,
+      rightLeg: 130,
+      leftLeg: 130,
+    },
+    maxTorsoArmorTotals: {
+      torso: 320,
+      rightShoulder: 200,
+      leftShoulder: 200,
+    },
+    maxArmor: {
+      head: 70,
+      torsoFront: 320,
+      torsoRear: 320,
+      rightShoulderFront: 200,
+      rightShoulderRear: 200,
+      leftShoulderFront: 200,
+      leftShoulderRear: 200,
+      rightArm: 130,
+      leftArm: 130,
+      rightLeg: 150,
+      leftLeg: 150,
+    },
+    description: '学習・基準モデル向けの55t汎用中量級フレーム。ジャンプジェットとECMの両方に対応（標準構成は余剰5.5tで両方追加可能）。',
+  },
 ];
 
 function findByIdOrFirst<T extends { id: string }>(list: readonly T[], id: string): T {
@@ -1789,7 +1851,7 @@ export function computeMechStats(blueprint: MechBlueprint): MechComputedStats {
     errors.push(`総重量超過 (${totalWeight.toFixed(1)}t > ${loadCapacity.toFixed(1)}t)`);
   }
   if (blueprint.boosterEnabled && !hasBoosterMount) {
-    errors.push(`この機体フレーム (${chassis.name}) にはブースト／ジャンプを後付けできません`);
+    errors.push(`この機体フレーム (${chassis.name}) にはジャンプスラスターを後付けできません`);
   }
   if ((blueprint.ecmEnabled || rShdWep.requiresEcmChassis || lShdWep.requiresEcmChassis) && !hasEcmMount) {
     errors.push(`この機体フレーム (${chassis.name}) には ECM 装備を搭載できません`);

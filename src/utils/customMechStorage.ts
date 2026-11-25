@@ -55,7 +55,7 @@ export function formatCustomMechName(baseName: string, tag: string): string {
  * Extracts a custom variant tag from either "CM-01/ABC 機体名" or legacy "[tag]" display names.
  */
 export function extractCustomTagFromName(name: string): string {
-  const slashMatch = /^[A-Z]+-\d+\/([A-Za-z0-9_-]{1,3})(?:\s|$)/.exec(name.trim());
+  const slashMatch = /^(?:[A-Z]+-\d+|[^/\s]+)\/([A-Za-z0-9_-]{1,3})(?:\s|$)/.exec(name.trim());
   if (slashMatch) return normalizeCustomTag(slashMatch[1]);
   const legacyMatch = /\s\[([^\]]+)\]$/.exec(name.trim());
   return legacyMatch ? normalizeCustomTag(legacyMatch[1]) : '';
@@ -142,6 +142,11 @@ export function saveCustomMech(
   clonedBp.name = formatCustomMechName(baseName, tag);
 
   const cleanPilotId = typeof pilotId === 'string' && pilotId.trim() ? pilotId.trim() : undefined;
+  if (cleanPilotId) {
+    clonedBp.defaultPilotId = cleanPilotId;
+  } else {
+    delete clonedBp.defaultPilotId;
+  }
   const entry: SavedCustomMech = {
     id,
     chassisId,

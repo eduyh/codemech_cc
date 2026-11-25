@@ -20,6 +20,8 @@ describe('customMechStorage', () => {
     const formatted = formatCustomMechName('CM-01 ヴァンガード', 'ABC');
     expect(formatted).toBe('CM-01/ABC ヴァンガード');
     expect(extractCustomTagFromName(formatted)).toBe('ABC');
+    expect(formatCustomMechName('ABC', 'T1')).toBe('ABC/T1');
+    expect(extractCustomTagFromName('ABC/T1')).toBe('T1');
     expect(extractCustomTagFromName('CM-01 ヴァンガード')).toBe('');
     expect(extractCustomTagFromName('CM-03 フォートレス [Z2]')).toBe('Z2');
   });
@@ -58,6 +60,7 @@ describe('customMechStorage', () => {
 
     const s1 = saveCustomMech([], PRESET_FORTRESS, 'A1', 1000, 'pilot_custom_alpha');
     expect(s1.saved.pilotId).toBe('pilot_custom_alpha');
+    expect(s1.saved.blueprint.defaultPilotId).toBe('pilot_custom_alpha');
     expect(isStarterMechId(s1.saved.id)).toBe(false);
 
     const s2 = saveCustomMech(s1.nextList, PRESET_VANGUARD, 'B2', 2000);

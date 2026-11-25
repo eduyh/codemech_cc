@@ -8,6 +8,11 @@ import {
   RomArchetype,
   buildArchetypeS2Cells,
   buildAttackS1Cells,
+  buildBasicS1FireCells,
+  buildBasicS2LrmCells,
+  buildBasicS3MoveCells,
+  buildBasicS4CoolCells,
+  buildBasicS5CloseCells,
   buildS3MoveCells,
   buildS4CoolCells,
   buildS5CloseCells,
@@ -93,6 +98,7 @@ export const PRESET_VANGUARD: MechBlueprint = {
   authorName: 'CodeMech Official',
   color: '#06b6d4',
   chassisId: 'chassis_vanguard',
+  defaultPilotId: 'pilot_balanced',
   romSlots: {
     S1: 'rom_std_s1_bal',
     S2: 'rom_std_s2_backup',
@@ -149,6 +155,7 @@ export const PRESET_STRIKER: MechBlueprint = {
   authorName: 'CodeMech Official',
   color: '#22c55e',
   chassisId: 'chassis_striker',
+  defaultPilotId: 'pilot_aggressive',
   romSlots: {
     S1: 'rom_std_s1_skirmish',
     S2: 'rom_std_s2_jump',
@@ -205,6 +212,7 @@ export const PRESET_FORTRESS: MechBlueprint = {
   authorName: 'CodeMech Official',
   color: '#f59e0b',
   chassisId: 'chassis_fortress',
+  defaultPilotId: 'pilot_torso_tank',
   romSlots: {
     S1: 'rom_std_s1_bal',
     S2: 'rom_std_s2_heavy',
@@ -265,6 +273,7 @@ export const PRESET_SNIPER: MechBlueprint = {
   authorName: 'CodeMech Official',
   color: '#a855f7',
   chassisId: 'chassis_hawkeye',
+  defaultPilotId: 'pilot_sniper',
   romSlots: {
     S1: 'rom_std_s1_sniper',
     S2: 'rom_std_s2_lrm',
@@ -314,11 +323,105 @@ export const PRESET_SNIPER: MechBlueprint = {
   subroutines: buildDefaultSubroutines('sniper', 240),
 };
 
+export const PRESET_ABC: MechBlueprint = {
+  version: 2,
+  id: 'preset_abc',
+  name: 'ABC',
+  authorName: 'CodeMech Official',
+  color: '#38bdf8',
+  chassisId: 'chassis_abc',
+  defaultPilotId: 'pilot_basic',
+  romSlots: {
+    S1: 'rom_basic_s1_fire',
+    S2: 'rom_basic_s2_lrm',
+    S3: 'rom_basic_s3_move',
+    S4: 'rom_basic_s4_cool',
+    S5: 'rom_basic_s5_close',
+    S6: null,
+  },
+  boosterEnabled: false,
+  ecmEnabled: false,
+  lrmFireMode: 'salvo',
+  extraHeatSinks: 1,
+  extraAmmo: {
+    leftShoulder: 1,
+  },
+  parts: {
+    head: 'head_std',
+    torso: 'torso_std',
+    rightShoulderMount: 'shd_std',
+    leftShoulderMount: 'shd_std',
+    rightArmWeapon: 'arm_none',
+    leftArmWeapon: 'arm_none',
+    rightShoulderWeapon: 'large_laser',
+    leftShoulderWeapon: 'lrm10',
+    legs: 'legs_biped_std',
+    booster: 'boost_none',
+  },
+  weaponGroups: {
+    G1: ['rightShoulder'],
+    G2: ['leftShoulder'],
+    G3: ['rightShoulder'],
+    G4: ['rightShoulder', 'leftShoulder'],
+  },
+  armor: {
+    head: 50,
+    torsoFront: 200,
+    torsoRear: 50,
+    rightShoulderFront: 110,
+    rightShoulderRear: 25,
+    leftShoulderFront: 110,
+    leftShoulderRear: 25,
+    rightArm: 65,
+    leftArm: 65,
+    rightLeg: 100,
+    leftLeg: 100,
+  },
+  subroutines: [
+    {
+      slotId: 'S1',
+      name: '基本攻撃 (4×4)',
+      category: 'attack',
+      gridSize: 4,
+      cells: buildBasicS1FireCells(),
+    },
+    {
+      slotId: 'S2',
+      name: '基本ミサイル (4×4)',
+      category: 'attack',
+      gridSize: 4,
+      cells: buildBasicS2LrmCells(),
+    },
+    {
+      slotId: 'S3',
+      name: '基本移動 (4×4)',
+      category: 'move',
+      gridSize: 4,
+      cells: buildBasicS3MoveCells(220),
+    },
+    {
+      slotId: 'S4',
+      name: '基本冷却 (4×4)',
+      category: 'control',
+      gridSize: 4,
+      cells: buildBasicS4CoolCells(),
+    },
+    {
+      slotId: 'S5',
+      name: '基本近接 (4×4)',
+      category: 'attack',
+      gridSize: 4,
+      cells: buildBasicS5CloseCells(),
+    },
+  ],
+};
+
 export const STARTER_MECHS: readonly MechBlueprint[] = [
   PRESET_VANGUARD,
   PRESET_STRIKER,
   PRESET_FORTRESS,
   PRESET_SNIPER,
+  PRESET_ABC,
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -424,9 +527,35 @@ export const PILOT_TORSO_TANK: PilotProfile = {
   },
 };
 
+export const PILOT_BASIC: PilotProfile = {
+  version: 2,
+  id: 'pilot_basic',
+  name: '基本パイロット (6×6)',
+  authorName: 'CodeMech Official',
+  grid: {
+    gridSize: 6,
+    cells: [
+      { row: 0, col: 0, op: 'start', dir: 'S' },
+      { row: 1, col: 0, op: 'if_heat_above', dir: 'E', elseDir: 'S', param: 80 },
+      { row: 1, col: 1, op: 'call_s4', dir: 'E', target: 'nearest', durationSec: 0.6 },
+      { row: 1, col: 2, op: 'if_heat_below', dir: 'E', elseDir: 'W', param: 45 },
+      { row: 2, col: 0, op: 'if_enemy_dist_lt', dir: 'E', elseDir: 'S', param: 120 },
+      { row: 2, col: 1, op: 'call_s5', dir: 'E', target: 'nearest', durationSec: 0.55 },
+      { row: 3, col: 0, op: 'if_enemy_in_sight', dir: 'E', elseDir: 'S' },
+      { row: 3, col: 1, op: 'call_s3', dir: 'E', target: 'main', param: 220, durationSec: 0.25 },
+      { row: 3, col: 2, op: 'call_s1', dir: 'E', target: 'main', durationSec: 0.6 },
+      { row: 4, col: 0, op: 'if_enemy_on_radar', dir: 'E', elseDir: 'S' },
+      { row: 4, col: 1, op: 'call_s3', dir: 'E', target: 'main', param: 220, durationSec: 0.25 },
+      { row: 4, col: 2, op: 'call_s2', dir: 'E', target: 'main', durationSec: 0.65 },
+      { row: 5, col: 0, op: 'call_s3', dir: 'E', target: 'nearest', param: 220, durationSec: 0.5 },
+    ],
+  },
+};
+
 export const STARTER_PILOTS: readonly PilotProfile[] = [
   DEFAULT_PILOT_PROFILE,
   PILOT_AGGRESSIVE,
   PILOT_SNIPER_TACTICIAN,
   PILOT_TORSO_TANK,
+  PILOT_BASIC,
 ];

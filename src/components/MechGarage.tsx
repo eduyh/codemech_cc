@@ -285,13 +285,16 @@ export function MechGarage({
       const presetId = effectiveSelectedId.slice('preset:'.length);
       const foundPreset = STARTER_MECHS.find((p) => p.id === presetId);
       if (!foundPreset) return;
-      onLoadBlueprint(foundPreset);
+      onLoadBlueprint(foundPreset, foundPreset.defaultPilotId);
       setCustomTag('');
       flashNotice(`標準「${foundPreset.name}」読込`);
       return;
     }
     if (selectedCustom) {
-      onLoadBlueprint(selectedCustom.blueprint, selectedCustom.pilotId);
+      onLoadBlueprint(
+        selectedCustom.blueprint,
+        selectedCustom.pilotId ?? selectedCustom.blueprint.defaultPilotId
+      );
       setCustomTag(selectedCustom.tag);
       const codeLabel = selectedCustom.blueprint.name.split(' ')[0] ?? selectedCustom.tag;
       flashNotice(`読込 ${codeLabel}`);
@@ -792,7 +795,7 @@ export function MechGarage({
           </div>
 
           <div className="cm-subhead" style={{ marginTop: '0.2rem' }}>
-            2. 中央胴追加パーツ（ブースト／ジャンプ）
+            2a. ジャンプスラスター（中央胴）
           </div>
           {chassis.hasJumpBoosterMount ? (
             <div className="cm-booster-box">
@@ -803,7 +806,7 @@ export function MechGarage({
                   onChange={handleToggleBooster}
                 />
                 <span>
-                  中央胴追加ブースト／ジャンプを<strong>{blueprint.boosterEnabled ? 'ON' : 'OFF'}</strong>
+                  中央胴追加ジャンプスラスターを<strong>{blueprint.boosterEnabled ? 'ON' : 'OFF'}</strong>
                   （+{chassis.boosterModuleWeight.toFixed(1)}t）
                 </span>
               </label>
@@ -815,7 +818,7 @@ export function MechGarage({
             </div>
           ) : (
             <div className="cm-booster-locked">
-              未装着（この機体フレームにはブースト／ジャンプを後付けできません）
+              未装着（この機体フレームにはジャンプスラスターを後付けできません）
             </div>
           )}
 
@@ -1002,7 +1005,7 @@ export function MechGarage({
         <div className={`cm-garage-card cm-garage-card--weapons ${mobileHiddenClass('weapons')}`}>
           <div className="cm-garage-weapons-head">
             <div className="cm-subhead" style={{ marginBottom: 0 }}>
-              3. 武装カスタマイズ（4枠）＋追加弾薬
+              3a. 武装カスタマイズ＋追加弾薬
             </div>
           </div>
           {(

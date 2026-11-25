@@ -11,11 +11,27 @@ export const MAX_CHASSIS_TONNAGE = 100;
 export type MechWeightClass = 'light' | 'medium' | 'heavy' | 'assault';
 
 export type CurriculumStepId =
+  | 'step0_robot_4x4'
+  | 'step0b_robot_6x6'
   | 'step1_pilot_routing'
   | 'step2_heat_hysteresis'
   | 'step3_subroutine_4x4'
   | 'step4_assemble_and_6x6'
   | 'step5_transfer_squad';
+
+export type MechControlTier = 'direct_4x4' | 'direct_6x6' | 'pilot_full';
+
+export interface MechControlTierSpec {
+  id: MechControlTier;
+  name: string;
+  shortLabel: string;
+  weight: number;
+  cost: number;
+  pilotEnabled: boolean;
+  enabledSlots: readonly MechSubroutineSlotId[];
+  slotGridSizes: Record<MechSubroutineSlotId, 4 | 6>;
+  description: string;
+}
 
 export type MechPartId =
   | 'head'
@@ -46,7 +62,8 @@ export type WeaponKind =
   | 'missile'
   | 'melee'
   | 'ams'
-  | 'bap';
+  | 'bap'
+  | 'ecm';
 export type LrmFireMode = 'salvo' | 'stream';
 export type LegStyle = 'biped' | 'reverse_joint' | 'quad' | 'hover';
 export type ArenaPresetId = 'plains_ridge' | 'twin_mesas' | 'urban_pillars' | 'valley_basin';
@@ -86,6 +103,12 @@ export interface WeaponPartSpec {
   homingTurnDegPerSec: number;
   streamIntervalTicks?: number;
   ammoPerTon?: number;
+  maxMountCount?: 1 | 2 | 3;
+  providesAms?: boolean;
+  amsIsLaser?: boolean;
+  providesBap?: boolean;
+  providesEcm?: boolean;
+  requiresEcmChassis?: boolean;
   partStructureHp: number; // arm structure contributed when mounted in arm slot
   maxPartArmor: number;
   description: string;
@@ -137,6 +160,11 @@ export interface MechChassisSpec {
   jumpImpulse: number;
   structureHp: Record<MechPartId, number>;
   maxArmor: MechArmorAllocation;
+  maxTorsoArmorTotals: {
+    torso: number;
+    rightShoulder: number;
+    leftShoulder: number;
+  };
   description: string;
 }
 
@@ -178,11 +206,11 @@ export type MechSubroutineSlotId = 'S1' | 'S2' | 'S3' | 'S4' | 'S5';
 
 export const MECH_SUBROUTINE_SLOT_SPECS: ReadonlyArray<{
   slotId: MechSubroutineSlotId;
-  gridSize: 6 | 4;
+  gridSize: 4;
   defaultName: string;
 }> = [
-  { slotId: 'S1', gridSize: 6, defaultName: '主交戦 (6×6)' },
-  { slotId: 'S2', gridSize: 6, defaultName: '応用戦術 (6×6)' },
+  { slotId: 'S1', gridSize: 4, defaultName: '主交戦 (4×4)' },
+  { slotId: 'S2', gridSize: 4, defaultName: '応用戦術 (4×4)' },
   { slotId: 'S3', gridSize: 4, defaultName: '索敵・移動 (4×4)' },
   { slotId: 'S4', gridSize: 4, defaultName: '冷却・防御 (4×4)' },
   { slotId: 'S5', gridSize: 4, defaultName: '近接・迎撃 (4×4)' },
@@ -253,14 +281,28 @@ export interface MechSubroutineCell {
   elseDir?: GridDir;
   durationSec?: number;
   param?: number;
+  useArg?: boolean;
   direction?: 'left' | 'right' | 'auto';
   weaponSlot?: WeaponSlotId;
 }
 
+export type RomCategory = 'attack' | 'move' | 'control';
+
 export interface MechSubroutine {
   slotId: MechSubroutineSlotId;
   name: string;
+  category?: RomCategory;
   gridSize: 6 | 4;
+  cells: MechSubroutineCell[];
+}
+
+export interface ProgramRomEntry {
+  id: string;
+  name: string;
+  category?: RomCategory;
+  gridSize: 4 | 6;
+  builtIn?: boolean;
+  savedAt?: number;
   cells: MechSubroutineCell[];
 }
 
@@ -271,11 +313,14 @@ export interface MechBlueprint {
   authorName?: string;
   color: string;
   chassisId: string;
+  controlTier?: MechControlTier;
+  romSlots?: Partial<Record<MechSubroutineSlotId, string | null>>;
   boosterEnabled: boolean;
   ecmEnabled?: boolean;
   lrmFireMode?: LrmFireMode;
   extraHeatSinks?: number;
   extraAmmo?: Partial<Record<WeaponSlotId, number>>;
+  weaponMountCounts?: Partial<Record<WeaponSlotId, 1 | 2 | 3>>;
   parts: MechPartsSelection;
   weaponGroups?: MechWeaponGroups;
   armor: MechArmorAllocation;
@@ -284,6 +329,9 @@ export interface MechBlueprint {
 
 export interface MechComputedStats {
   chassisId: string;
+  controlTier: MechControlTier;
+  controlComputerWeight: number;
+  romWeight: number;
   weightClass: MechWeightClass;
   sizeScale: number;
   totalWeight: number;

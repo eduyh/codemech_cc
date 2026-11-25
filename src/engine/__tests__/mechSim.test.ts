@@ -23,6 +23,9 @@ import {
   DEFAULT_MATCH_RULES,
   EMPTY_CONTROL_INPUT,
   getMechTorsoWorldYaw,
+  isMechAmsActive,
+  isMechBapActive,
+  isMechEcmActive,
   stepSimulation,
 } from '../mechSim';
 
@@ -236,7 +239,7 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('triggers EN overheat on depletion and recovers at 30% capacity', () => {
-    const hotLaserMech = CURRICULUM_MISSIONS[1].buildBrokenStarter().mech;
+    const hotLaserMech = CURRICULUM_MISSIONS.find((m) => m.id === 'step2_heat_hysteresis')!.buildBrokenStarter().mech;
     const sim = createSimulation({
       seed: 12,
       entries: [
@@ -292,7 +295,7 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(sWith.totalWeight).toBeCloseTo(sNo.totalWeight + 3, 2);
     expect(sWith.heatDissipationPerSec).toBeGreaterThan(sNo.heatDissipationPerSec);
 
-    const hotLaserMech = CURRICULUM_MISSIONS[1].buildBrokenStarter().mech;
+    const hotLaserMech = CURRICULUM_MISSIONS.find((m) => m.id === 'step2_heat_hysteresis')!.buildBrokenStarter().mech;
     const sim = createSimulation({
       seed: 99,
       rules: { arenaPreset: 'urban_pillars', maxSeconds: 60 },
@@ -612,7 +615,11 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('separates 800m optical FOV+LOS vision from target-RCS 360-deg radar, preserves allySpotted, and supports indirect LRM fire', () => {
-    const strikerNoEcm = { ...PRESET_STRIKER, ecmEnabled: false };
+    const strikerNoEcm = {
+      ...PRESET_STRIKER,
+      ecmEnabled: false,
+      parts: { ...PRESET_STRIKER.parts, leftShoulderWeapon: 'shd_none' },
+    };
     const sim = createSimulation({
       seed: 616,
       rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200, maxSeconds: 30 },
@@ -886,13 +893,15 @@ describe('deterministic 30 TPS mech simulator', () => {
     const salvoBp = structuredClone(PRESET_VANGUARD);
     salvoBp.lrmFireMode = 'salvo';
 
+    const noAmsFortress = structuredClone(PRESET_FORTRESS);
+    noAmsFortress.parts.leftShoulderWeapon = 'shd_none';
     const directSim = createSimulation({
       seed: 410,
       rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
       entries: [
         { id: 'stream', name: 'Stream', teamId: 'A', blueprint: streamBp },
         { id: 'salvo', name: 'Salvo', teamId: 'A', blueprint: salvoBp },
-        { id: 'tgt', name: 'Target', teamId: 'B', blueprint: PRESET_FORTRESS },
+        { id: 'tgt', name: 'Target', teamId: 'B', blueprint: noAmsFortress },
       ],
     });
     directSim.terrain.obstacles = [];
@@ -934,8 +943,17 @@ describe('deterministic 30 TPS mech simulator', () => {
       rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
       entries: [
         { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: salvoBp },
-        { id: 'spotter', name: 'Spotter', teamId: 'A', blueprint: { ...PRESET_STRIKER, ecmEnabled: false } },
-        { id: 'covered', name: 'Covered', teamId: 'B', blueprint: PRESET_FORTRESS },
+        {
+          id: 'spotter',
+          name: 'Spotter',
+          teamId: 'A',
+          blueprint: {
+            ...PRESET_STRIKER,
+            ecmEnabled: false,
+            parts: { ...PRESET_STRIKER.parts, leftShoulderWeapon: 'shd_none' },
+          },
+        },
+        { id: 'covered', name: 'Covered', teamId: 'B', blueprint: noAmsFortress },
       ],
     });
     indirectSim.terrain.obstacles = [
@@ -972,7 +990,16 @@ describe('deterministic 30 TPS mech simulator', () => {
       rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
       entries: [
         { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: salvoBp },
-        { id: 'runner', name: 'Runner', teamId: 'B', blueprint: { ...PRESET_STRIKER, ecmEnabled: false } },
+        {
+          id: 'runner',
+          name: 'Runner',
+          teamId: 'B',
+          blueprint: {
+            ...PRESET_STRIKER,
+            ecmEnabled: false,
+            parts: { ...PRESET_STRIKER.parts, leftShoulderWeapon: 'shd_none' },
+          },
+        },
       ],
     });
     moverSim.terrain.obstacles = [];
@@ -1036,11 +1063,13 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('burns laser damage over burnDurationSec, spreads across twisting target parts, and sweeps off when shooter twists away', () => {
-    // Vanguard leftArm = medium_laser (damage 40, range 280, maxRange 420, burnDurationSec 0.7 => 21 ticks)
+    // Single medium_laser (damage 40, range 280, maxRange 420, burnDurationSec 0.7 => 21 ticks)
+    const singleLaserVanguard = structuredClone(PRESET_VANGUARD);
+    singleLaserVanguard.weaponMountCounts = undefined;
     const sim = createSimulation({
       seed: 808,
       entries: [
-        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: PRESET_VANGUARD },
+        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: singleLaserVanguard },
         { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_FORTRESS },
       ],
     });
@@ -1078,7 +1107,7 @@ describe('deterministic 30 TPS mech simulator', () => {
     const sim2 = createSimulation({
       seed: 809,
       entries: [
-        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: PRESET_VANGUARD },
+        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: singleLaserVanguard },
         { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_FORTRESS },
       ],
     });
@@ -1103,11 +1132,13 @@ describe('deterministic 30 TPS mech simulator', () => {
 
   it('applies linear optimal-to-max range damage falloff for ballistics and lasers', () => {
     // 1. Laser falloff: medium_laser optimal=280, max=420 -> at 350m multiplier is 0.5 (~20 total dmg)
+    const singleLaserBp = structuredClone(PRESET_VANGUARD);
+    singleLaserBp.weaponMountCounts = undefined;
     const laserSim = createSimulation({
       seed: 901,
       rules: { arenaWidth: 1000, arenaDepth: 1000 },
       entries: [
-        { id: 's', name: 'S', teamId: 'A', blueprint: PRESET_VANGUARD },
+        { id: 's', name: 'S', teamId: 'A', blueprint: singleLaserBp },
         { id: 't', name: 'T', teamId: 'B', blueprint: PRESET_FORTRESS },
       ],
     });
@@ -1158,5 +1189,67 @@ describe('deterministic 30 TPS mech simulator', () => {
     }
     expect(gaussSim.mechs[1].damageTaken).toBeGreaterThan(75);
     expect(gaussSim.mechs[1].damageTaken).toBeLessThan(110);
+  });
+
+  it('supports multi-mount weapons (M-Laser x3 / AC5 x2), combined AMS+BAP pod, slot ECM destruction, and shared torso armor caps', () => {
+    // 1. Multi-mount weight, heat, ammo, beams, projectiles, and damage
+    const multiBp = structuredClone(PRESET_FORTRESS);
+    multiBp.parts.rightArmWeapon = 'ac5';
+    multiBp.parts.leftArmWeapon = 'medium_laser';
+    multiBp.weaponMountCounts = { rightArm: 2, leftArm: 3 };
+    const multiStats = computeMechStats(multiBp);
+    expect(multiStats.weaponsWeight).toBeCloseTo(5.5 * 2 + 2.0 * 3 + 9.5 + 3.0, 2);
+
+    const sim = createSimulation({
+      seed: 950,
+      rules: { arenaWidth: 1000, arenaDepth: 1000 },
+      entries: [
+        { id: 'multi', name: 'Multi', teamId: 'A', blueprint: multiBp },
+        { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_STRIKER },
+      ],
+    });
+    sim.terrain.obstacles = [];
+    sim.terrain.heightAmplitude = 0;
+    sim.mechs[0].pos = { x: 500, y: 500, z: 0 };
+    sim.mechs[0].yawDeg = 0;
+    sim.mechs[1].pos = { x: 500, y: 380, z: 0 }; // 120m North (inside close range & optimal)
+    sim.mechs[1].yawDeg = 180;
+
+    const ammoBefore = sim.mechs[0].weapons.rightArm.ammoRemaining;
+    stepSimulation(sim, {
+      multi: { ...EMPTY_CONTROL_INPUT, fireRightArm: true, fireLeftArm: true, lockTargetId: 'target' },
+    });
+    // AC/5 x2 spawns 2 projectiles & consumes 2 ammo; M-Laser x3 spawns 3 beams; total heat ~ 12 + 54 - diss
+    expect(sim.mechs[0].weapons.rightArm.ammoRemaining).toBe(ammoBefore - 2);
+    expect(sim.projectiles.filter((p) => p.ownerId === 'multi' && p.slot === 'rightArm')).toHaveLength(2);
+    expect(sim.activeBeams.filter((b) => b.ownerId === 'multi' && b.slot === 'leftArm')).toHaveLength(3);
+    expect(sim.mechs[0].heat).toBeGreaterThan(55);
+
+    // 2. ams_bap_pod provides both BAP (counters ECM) & AMS interception, and slot ECM stops when leftShoulder is destroyed
+    const ecmMech = sim.mechs[1];
+    expect(isMechEcmActive(ecmMech)).toBe(true);
+    expect(isMechBapActive(sim.mechs[0])).toBe(true);
+    expect(isMechAmsActive(sim.mechs[0])).toBe(true);
+
+    const lShdHit = testProjectileHitMech(
+      { x: 500 + 1.5, y: 390, z: 6.5 },
+      { x: 500 + 1.5, y: 370, z: 6.5 },
+      ecmMech.pos,
+      ecmMech.yawDeg,
+      getMechTorsoWorldYaw(ecmMech),
+      ecmMech.stats.sizeScale
+    );
+    expect(lShdHit?.partId).toBe('leftShoulder');
+    applyDamageToMechParts(ecmMech, lShdHit!, 400, DEFAULT_MATCH_RULES);
+    expect(ecmMech.parts.leftShoulder.destroyed).toBe(true);
+    expect(isMechEcmActive(ecmMech)).toBe(false);
+
+    // 3. Shared front+rear torso armor cap validation
+    const overTorso = structuredClone(PRESET_VANGUARD);
+    overTorso.armor.torsoFront = 280;
+    overTorso.armor.torsoRear = 80; // 360 > 320 cap
+    const overStats = computeMechStats(overTorso);
+    expect(overStats.valid).toBe(false);
+    expect(overStats.validationErrors.some((e) => e.includes('中央胴の前後装甲合計'))).toBe(true);
   });
 });

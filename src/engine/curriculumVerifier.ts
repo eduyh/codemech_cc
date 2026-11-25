@@ -1,5 +1,5 @@
 import { CURRICULUM_MISSIONS } from '../data/curriculum';
-import { computeMechStats } from '../data/parts';
+import { computeMechStats, getEffectiveSubroutineGridSize } from '../data/parts';
 import {
   DEFAULT_PILOT_PROFILE,
   PRESET_FORTRESS,
@@ -66,8 +66,9 @@ function makeBasicTrainingPilot(desiredRange = 200): PilotProfile {
       cells: [
         { row: 0, col: 0, op: 'start', dir: 'S' },
         { row: 1, col: 0, op: 'if_enemy_in_sight', dir: 'E', elseDir: 'S' },
-        { row: 1, col: 1, op: 'call_s1', dir: 'S', target: 'main', durationSec: desiredRange > 180 ? 0.65 : 0.55 },
-        { row: 2, col: 0, op: 'call_s3', dir: 'S', target: 'main', durationSec: 0.55 },
+        { row: 1, col: 1, op: 'call_s3', dir: 'E', target: 'main', param: desiredRange, durationSec: 0.3 },
+        { row: 1, col: 2, op: 'call_s1', dir: 'S', target: 'main', durationSec: desiredRange > 180 ? 0.65 : 0.55 },
+        { row: 2, col: 0, op: 'call_s3', dir: 'S', target: 'main', param: desiredRange, durationSec: 0.55 },
       ],
     },
   };
@@ -94,7 +95,45 @@ export function verifyCurriculumMission(
       .map((c) => c.op)
   );
 
-  if (missionId === 'step1_pilot_routing') {
+  if (missionId === 'step0_robot_4x4') {
+    const s1 = playerMech.subroutines.find((s) => s.slotId === 'S1');
+    const effSize = Math.min(4, getEffectiveSubroutineGridSize(playerMech, 'S1'));
+    const s1Active = (s1?.cells ?? []).filter(
+      (c) =>
+        c.row >= 0 &&
+        c.row < effSize &&
+        c.col >= 0 &&
+        c.col < effSize &&
+        c.op !== 'empty' &&
+        c.op !== 'start' &&
+        c.op !== 'wire'
+    );
+    const hasMove = s1Active.some((c) => c.op.startsWith('move_') && c.op !== 'move_stop');
+    const hasTorso = s1Active.some((c) => c.op.startsWith('torso_'));
+    const hasFire = s1Active.some((c) => c.op.startsWith('fire_'));
+    checklist.push({
+      label: 'ロボット S1 (4×4 枠内) に移動・腰照準・射撃を含む 3 マス以上の行動が組まれている',
+      ok: s1Active.length >= 3 && hasMove && hasTorso && hasFire,
+    });
+  } else if (missionId === 'step0b_robot_6x6') {
+    const s1 = playerMech.subroutines.find((s) => s.slotId === 'S1');
+    const effSize = getEffectiveSubroutineGridSize(playerMech, 'S1');
+    const s1Active = (s1?.cells ?? []).filter(
+      (c) =>
+        c.row >= 0 &&
+        c.row < effSize &&
+        c.col >= 0 &&
+        c.col < effSize &&
+        c.op !== 'empty' &&
+        c.op !== 'start' &&
+        c.op !== 'wire'
+    );
+    const hasBranch = s1Active.some((c) => c.op.startsWith('if_'));
+    checklist.push({
+      label: 'ロボット S1 (4×4 枠内) に条件分岐 (if) を含む 5 マス以上の戦術がある',
+      ok: effSize === 4 && s1Active.length >= 5 && hasBranch,
+    });
+  } else if (missionId === 'step1_pilot_routing') {
     checklist.push({
       label: 'パイロット 6×6 で 2 種類以上のサブルーチン (CALL S*) を呼び分けている',
       ok: distinctCalls.size >= 2,
@@ -109,7 +148,9 @@ export function verifyCurriculumMission(
       ok: hasHeatBranch && hasCooling,
     });
   } else if (missionId === 'step3_subroutine_4x4') {
-    const subs4 = playerMech.subroutines.filter((s) => s.gridSize === 4);
+    const subs4 = playerMech.subroutines.filter(
+      (s) => s.slotId === 'S3' || s.slotId === 'S4' || s.slotId === 'S5'
+    );
     const hasRich4x4 = subs4.some(
       (s) =>
         s.cells.filter((c) => c.op !== 'empty' && c.op !== 'start' && c.op !== 'wire').length >= 4
@@ -125,12 +166,19 @@ export function verifyCurriculumMission(
     });
     const s1 = playerMech.subroutines.find((s) => s.slotId === 'S1');
     const s1Active = (s1?.cells ?? []).filter(
-      (c) => c.op !== 'empty' && c.op !== 'start' && c.op !== 'wire'
+      (c) =>
+        c.row >= 0 &&
+        c.row < 4 &&
+        c.col >= 0 &&
+        c.col < 4 &&
+        c.op !== 'empty' &&
+        c.op !== 'start' &&
+        c.op !== 'wire'
     );
     const s1HasBranch = s1Active.some((c) => c.op.startsWith('if_'));
     checklist.push({
-      label: 'S1 (6×6) に分岐を含む 6 マス以上の主交戦アルゴリズムがある',
-      ok: s1Active.length >= 6 && s1HasBranch,
+      label: 'S1 (4×4) に分岐を含む 5 マス以上の主交戦アルゴリズムがある',
+      ok: s1Active.length >= 5 && s1HasBranch,
     });
   } else if (missionId === 'step5_transfer_squad') {
     checklist.push({
@@ -151,7 +199,23 @@ export function verifyCurriculumMission(
   ];
 
   const trainingPilot = makeBasicTrainingPilot();
-  if (missionId === 'step1_pilot_routing') {
+  if (missionId === 'step0_robot_4x4') {
+    entries.push({
+      id: 'enemy_1',
+      name: '基礎訓練標的',
+      teamId: 'T_ENEMY',
+      blueprint: makeTrainingTargetMech(PRESET_STRIKER, 0.35, '基礎訓練標的'),
+      pilot: trainingPilot,
+    });
+  } else if (missionId === 'step0b_robot_6x6') {
+    entries.push({
+      id: 'enemy_1',
+      name: '応用訓練スカウト',
+      teamId: 'T_ENEMY',
+      blueprint: makeTrainingTargetMech(PRESET_STRIKER, 0.5, '応用訓練スカウト'),
+      pilot: trainingPilot,
+    });
+  } else if (missionId === 'step1_pilot_routing') {
     entries.push({
       id: 'enemy_1',
       name: '訓練用スカウト',
@@ -273,7 +337,7 @@ export function verifyCurriculumMission(
     });
   } else if (missionId === 'step4_assemble_and_6x6') {
     checklist.push({
-      label: '模擬戦で S1 (6×6) 主交戦ルーチンが実行された',
+      label: '模擬戦で S1 (4×4) 主交戦ルーチンが実行された',
       ok: s1Triggered > 0,
     });
   } else if (missionId === 'step2_heat_hysteresis') {

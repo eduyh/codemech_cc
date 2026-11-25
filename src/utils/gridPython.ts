@@ -1,3 +1,4 @@
+import { getControlTierSpec } from '../data/parts';
 import {
   GridDir,
   MechBlueprint,
@@ -69,8 +70,13 @@ function pilotStmt(cell: PilotGridCell): string {
     case 'call_s2':
     case 'call_s3':
     case 'call_s4':
-    case 'call_s5':
-      return `sub_${cell.op.slice(-2)}(target="${tgt}", max_sec=${dur})`;
+    case 'call_s5': {
+      const argPart =
+        cell.param !== undefined && Number.isFinite(cell.param)
+          ? `, arg=${Math.round(cell.param)}`
+          : '';
+      return `sub_${cell.op.slice(-2)}(target="${tgt}"${argPart}, max_sec=${dur})`;
+    }
     case 'emergency_cool':
       return `emergency_cool(${dur})`;
     case 'override_on':
@@ -88,6 +94,11 @@ function pilotStmt(cell: PilotGridCell): string {
     default:
       return `${cell.op}()`;
   }
+}
+
+function subParamExpr(cell: MechSubroutineCell, fallback: number): string {
+  const def = Math.round(cell.param ?? fallback);
+  return cell.useArg ? `(arg or ${def})` : `${def}`;
 }
 
 function subCondExpr(cell: MechSubroutineCell): string {
@@ -111,13 +122,13 @@ function subCondExpr(cell: MechSubroutineCell): string {
     case 'if_enemy_in_sight':
       return 'vision.has_enemy()';
     case 'if_enemy_dist_lt':
-      return `target.distance < ${Math.round(cell.param ?? 150)}`;
+      return `target.distance < ${subParamExpr(cell, 150)}`;
     case 'if_enemy_dist_gt':
-      return `target.distance > ${Math.round(cell.param ?? 180)}`;
+      return `target.distance > ${subParamExpr(cell, 180)}`;
     case 'if_heat_above':
-      return `mech.heat_pct > ${Math.round(cell.param ?? 80)}`;
+      return `mech.heat_pct > ${subParamExpr(cell, 80)}`;
     case 'if_heat_below':
-      return `mech.heat_pct < ${Math.round(cell.param ?? 50)}`;
+      return `mech.heat_pct < ${subParamExpr(cell, 50)}`;
     case 'if_right_armor_weaker':
       return 'mech.right_armor < mech.left_armor';
     case 'if_ammo_empty':
@@ -147,11 +158,11 @@ function subStmt(cell: MechSubroutineCell): string {
     case 'move_approach':
       return 'legs.approach(target)';
     case 'move_maintain':
-      return `legs.maintain_range(${Math.round(cell.param ?? 165)})`;
+      return `legs.maintain_range(${subParamExpr(cell, 165)})`;
     case 'move_circle':
-      return `legs.circle_orbit(${Math.round(cell.param ?? 135)}, dir="${cell.direction ?? 'auto'}")`;
+      return `legs.circle_orbit(${subParamExpr(cell, 135)}, dir="${cell.direction === 'left' ? 'left' : 'right'}")`;
     case 'move_evade':
-      return `legs.evasive_weave(dir="${cell.direction ?? 'auto'}")`;
+      return `legs.evasive_weave(dir="${cell.direction === 'left' ? 'left' : 'right'}")`;
     case 'move_retreat':
       return 'legs.reverse_retreat()';
     case 'move_high_ground':
@@ -165,13 +176,16 @@ function subStmt(cell: MechSubroutineCell): string {
     case 'torso_twist_auto':
       return 'torso.defend_healthy_side()';
     case 'torso_twist_angle': {
-      const deg = Math.round(cell.param ?? 60);
-      return `torso.twist(${deg >= 0 ? `+${deg}` : deg})`;
+      if (cell.useArg) {
+        return `torso.twist(arg or ${Math.round(cell.param ?? 55)}, ref="enemy")`;
+      }
+      const deg = Math.round(cell.param ?? 55);
+      return `torso.twist(${deg >= 0 ? `+${deg}` : deg}, ref="enemy")`;
     }
     case 'torso_twist_r':
-      return 'torso.twist(+60)';
+      return `torso.twist_right(${subParamExpr(cell, 55)}, ref="enemy")`;
     case 'torso_twist_l':
-      return 'torso.twist(-60)';
+      return `torso.twist_left(${subParamExpr(cell, 55)}, ref="enemy")`;
     case 'torso_center':
       return 'torso.center()';
     case 'fire_group_1':
@@ -282,11 +296,19 @@ export function pilotGridToPython(profile: PilotProfile): string {
   return lines.join('\n');
 }
 
-export function subroutineToPython(sub: MechSubroutine): string {
-  const lines: string[] = [
-    `# ${sub.slotId} (${sub.gridSize}x${sub.gridSize}): ${sub.name}`,
-    `def sub_${sub.slotId.toLowerCase()}(target):`,
-  ];
+export function subroutineToPython(
+  sub: MechSubroutine,
+  effectiveGridSize?: 4 | 6,
+  directLoop = false
+): string {
+  const gridSize = effectiveGridSize ?? sub.gridSize;
+  const usesArg = sub.cells.some((c) => c.useArg && c.row < gridSize && c.col < gridSize);
+  const sigArgs = usesArg ? 'target, arg=None' : 'target';
+  const header = directLoop
+    ? `# Robot Direct (${gridSize}x${gridSize}): ${sub.name}\ndef robot_main(target):`
+    : `# ${sub.slotId} (${gridSize}x${gridSize}): ${sub.name}\ndef sub_${sub.slotId.toLowerCase()}(${sigArgs}):`;
+  const lines: string[] = [header];
+  const exitStmt = directLoop ? '# ↺ 先頭へ戻る' : 'return';
 
   const emitNode = (
     row: number,
@@ -294,8 +316,8 @@ export function subroutineToPython(sub: MechSubroutine): string {
     indent: string,
     visited: Set<string>
   ): void => {
-    if (row < 0 || row >= sub.gridSize || col < 0 || col >= sub.gridSize) {
-      lines.push(`${indent}return`);
+    if (row < 0 || row >= gridSize || col < 0 || col >= gridSize) {
+      lines.push(`${indent}${exitStmt}`);
       return;
     }
     const key = `${row},${col}`;
@@ -305,7 +327,7 @@ export function subroutineToPython(sub: MechSubroutine): string {
     }
     const cell = sub.cells.find((c) => c.row === row && c.col === col);
     if (!cell || cell.op === 'empty') {
-      lines.push(`${indent}return`);
+      lines.push(`${indent}${exitStmt}`);
       return;
     }
 
@@ -338,23 +360,32 @@ export function subroutineToPython(sub: MechSubroutine): string {
     emitNode(n.row, n.col, indent, nextVisited);
   };
 
-  const start = sub.cells.find((c) => c.op === 'start') ?? {
+  const start = sub.cells.find((c) => c.op === 'start' && c.row < gridSize && c.col < gridSize) ?? {
     row: 0,
     col: 0,
     op: 'start' as const,
     dir: 'E' as const,
   };
   emitNode(start.row, start.col, '    ', new Set());
-  if (lines.length === 2) {
-    lines.push('    return');
+  if (lines.length === 1) {
+    lines.push(`    ${exitStmt}`);
   }
   return lines.join('\n');
 }
 
 export function fullProgramToPython(profile: PilotProfile, mech: MechBlueprint): string {
+  const tierSpec = getControlTierSpec(mech.controlTier);
+  if (!tierSpec.pilotEnabled) {
+    const s1 = mech.subroutines.find((s) => s.slotId === 'S1') ?? mech.subroutines[0];
+    const s1Size = tierSpec.slotGridSizes.S1;
+    return [
+      `# Robot Direct Mode (${s1Size}x${s1Size}): パイロット層なし・S1 直接ループ実行`,
+      s1 ? subroutineToPython(s1, s1Size, true) : '# S1 未設定',
+    ].join('\n\n');
+  }
   const parts = [pilotGridToPython(profile)];
   for (const sub of mech.subroutines) {
-    parts.push(subroutineToPython(sub));
+    parts.push(subroutineToPython(sub, tierSpec.slotGridSizes[sub.slotId]));
   }
   return parts.join('\n\n');
 }

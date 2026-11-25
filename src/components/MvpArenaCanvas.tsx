@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { buildMechSensorState, getMechTorsoWorldYaw } from '../engine/mechSim';
+import { buildMechSensorState, getMechTorsoWorldYaw, isMechAmsActive } from '../engine/mechSim';
 import { getGroundHeight } from '../engine/terrain';
 import { SimCombatEvent, SimState } from '../types/mech';
 
@@ -279,7 +279,7 @@ export function MvpArenaCanvas({
         ctx.arc(fx, fy, (130 / simState.terrain.width) * 600, 0, Math.PI * 2);
         ctx.stroke();
       }
-      if (focusedMech.stats.hasAms) {
+      if (isMechAmsActive(focusedMech)) {
         ctx.strokeStyle = 'rgba(74, 222, 128, 0.5)';
         ctx.beginPath();
         ctx.arc(fx, fy, (80 / simState.terrain.width) * 600, 0, Math.PI * 2);

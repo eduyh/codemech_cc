@@ -5,55 +5,70 @@
   "authorName": "CodeMech Official",
   "color": "#f59e0b",
   "chassisId": "chassis_fortress",
+  "romSlots": {
+    "S1": "rom_std_s1_bal",
+    "S2": "rom_std_s2_heavy",
+    "S3": "rom_std_s3_advance",
+    "S4": "rom_std_s4_cool",
+    "S5": "rom_std_s5_close"
+  },
   "boosterEnabled": false,
+  "ecmEnabled": false,
+  "lrmFireMode": "salvo",
   "extraHeatSinks": 2,
+  "extraAmmo": {
+    "rightArm": 1,
+    "rightShoulder": 1
+  },
+  "weaponMountCounts": {
+    "leftArm": 3
+  },
   "parts": {
     "head": "head_armored",
     "torso": "torso_heavy",
     "rightShoulderMount": "shd_heavy",
     "leftShoulderMount": "shd_heavy",
-    "rightArmWeapon": "ac10",
+    "rightArmWeapon": "ac20",
     "leftArmWeapon": "medium_laser",
-    "rightShoulderWeapon": "lrm10",
-    "leftShoulderWeapon": "large_laser",
-    "legs": "legs_heavy_quad",
+    "rightShoulderWeapon": "lrm15",
+    "leftShoulderWeapon": "ams_bap_pod",
+    "legs": "legs_biped_std",
     "booster": "boost_none"
   },
   "weaponGroups": {
     "G1": [
       "rightArm",
-      "leftShoulder"
+      "leftArm"
     ],
     "G2": [
       "rightShoulder"
     ],
     "G3": [
-      "rightArm",
-      "leftArm"
+      "rightArm"
     ],
     "G4": [
-      "leftArm",
-      "leftShoulder"
+      "leftArm"
     ]
   },
   "armor": {
-    "head": 110,
-    "torsoFront": 500,
-    "torsoRear": 190,
-    "rightShoulderFront": 230,
-    "rightShoulderRear": 100,
-    "leftShoulderFront": 230,
-    "leftShoulderRear": 100,
-    "rightArm": 190,
-    "leftArm": 290,
-    "rightLeg": 330,
-    "leftLeg": 330
+    "head": 70,
+    "torsoFront": 375,
+    "torsoRear": 95,
+    "rightShoulderFront": 205,
+    "rightShoulderRear": 55,
+    "leftShoulderFront": 205,
+    "leftShoulderRear": 55,
+    "rightArm": 160,
+    "leftArm": 160,
+    "rightLeg": 160,
+    "leftLeg": 160
   },
   "subroutines": [
     {
       "slotId": "S1",
-      "name": "主交戦・ツイスト防御",
-      "gridSize": 6,
+      "name": "主攻撃標準 (4×4)",
+      "category": "attack",
+      "gridSize": 4,
       "cells": [
         {
           "row": 0,
@@ -64,105 +79,81 @@
         {
           "row": 0,
           "col": 1,
-          "op": "move_maintain",
-          "dir": "E",
-          "param": 190
+          "op": "torso_track",
+          "dir": "E"
         },
         {
           "row": 0,
-          "col": 2,
-          "op": "torso_track",
-          "dir": "S"
-        },
-        {
-          "row": 1,
           "col": 2,
           "op": "if_group_1_ready",
           "dir": "E",
           "elseDir": "S"
         },
         {
-          "row": 1,
+          "row": 0,
           "col": 3,
           "op": "fire_group_1",
-          "dir": "E",
+          "dir": "S",
           "durationSec": 0.45
         },
         {
           "row": 1,
-          "col": 4,
+          "col": 3,
           "op": "if_heat_below",
-          "dir": "E",
-          "elseDir": "S",
-          "param": 76
+          "dir": "S",
+          "elseDir": "E",
+          "param": 76,
+          "useArg": true
         },
         {
-          "row": 1,
-          "col": 5,
+          "row": 2,
+          "col": 3,
           "op": "fire_group_4",
           "dir": "S",
           "durationSec": 0.35
         },
         {
-          "row": 2,
-          "col": 5,
-          "op": "wait",
-          "dir": "S",
-          "durationSec": 0.15
-        },
-        {
-          "row": 2,
-          "col": 4,
-          "op": "return",
-          "dir": "S"
-        },
-        {
-          "row": 2,
+          "row": 1,
           "col": 2,
           "op": "if_group_2_ready",
-          "dir": "E",
+          "dir": "W",
           "elseDir": "S"
         },
         {
-          "row": 2,
-          "col": 3,
+          "row": 1,
+          "col": 1,
           "op": "fire_group_2",
-          "dir": "S",
+          "dir": "W",
           "durationSec": 0.45
         },
         {
-          "row": 3,
+          "row": 2,
           "col": 2,
-          "op": "if_incoming_fire",
-          "dir": "E",
+          "op": "if_group_3_ready",
+          "dir": "W",
           "elseDir": "S"
         },
         {
-          "row": 3,
-          "col": 3,
-          "op": "torso_twist_auto",
-          "dir": "E"
+          "row": 2,
+          "col": 1,
+          "op": "fire_group_3",
+          "dir": "W",
+          "durationSec": 0.4
         },
         {
           "row": 3,
-          "col": 4,
-          "op": "wait",
-          "dir": "S",
-          "durationSec": 0.35
-        },
-        {
-          "row": 4,
           "col": 2,
           "op": "wait",
           "dir": "S",
-          "durationSec": 0.2
+          "durationSec": 0.15
         }
       ]
     },
     {
       "slotId": "S2",
-      "name": "重装ツイスト斉射 (6×6)",
-      "gridSize": 6,
+      "name": "重装反撃戦 (4×4)",
+      "category": "attack",
+      "gridSize": 4,
       "cells": [
         {
           "row": 0,
@@ -173,8 +164,154 @@
         {
           "row": 0,
           "col": 1,
+          "op": "torso_track",
+          "dir": "E"
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "op": "fire_group_4",
+          "dir": "E",
+          "durationSec": 0.4
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "op": "fire_group_2",
+          "dir": "S",
+          "durationSec": 0.4
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "op": "if_right_armor_weaker",
+          "dir": "S",
+          "elseDir": "W"
+        },
+        {
+          "row": 2,
+          "col": 3,
+          "op": "torso_twist_r",
+          "dir": "S",
+          "param": 55,
+          "useArg": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "op": "wait",
+          "dir": "S",
+          "durationSec": 0.35
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "op": "torso_twist_l",
+          "dir": "S",
+          "param": 55,
+          "useArg": true
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "op": "wait",
+          "dir": "S",
+          "durationSec": 0.35
+        }
+      ]
+    },
+    {
+      "slotId": "S3",
+      "name": "重装進軍 (4×4)",
+      "category": "move",
+      "gridSize": 4,
+      "cells": [
+        {
+          "row": 0,
+          "col": 0,
+          "op": "start",
+          "dir": "E"
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "op": "if_enemy_in_sight",
+          "dir": "S",
+          "elseDir": "E"
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "op": "move_high_ground",
+          "dir": "E"
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "op": "return",
+          "dir": "S"
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "op": "if_enemy_dist_lt",
+          "dir": "E",
+          "elseDir": "S",
+          "param": 155,
+          "useArg": true
+        },
+        {
+          "row": 1,
+          "col": 2,
           "op": "move_stop",
           "dir": "E"
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "op": "return",
+          "dir": "S"
+        },
+        {
+          "row": 2,
+          "col": 1,
+          "op": "move_approach",
+          "dir": "E"
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "op": "return",
+          "dir": "S"
+        }
+      ]
+    },
+    {
+      "slotId": "S4",
+      "name": "盾防御冷却 (4×4)",
+      "category": "control",
+      "gridSize": 4,
+      "cells": [
+        {
+          "row": 0,
+          "col": 0,
+          "op": "start",
+          "dir": "E"
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "op": "if_heat_above",
+          "dir": "S",
+          "elseDir": "E",
+          "param": 75
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "op": "emergency_cool",
+          "dir": "S",
+          "durationSec": 0.55
         },
         {
           "row": 0,
@@ -186,9 +323,18 @@
         {
           "row": 0,
           "col": 3,
-          "op": "torso_twist_angle",
+          "op": "torso_twist_r",
           "dir": "S",
-          "param": 55
+          "param": 55,
+          "useArg": true
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "op": "torso_twist_l",
+          "dir": "E",
+          "param": 55,
+          "useArg": true
         },
         {
           "row": 1,
@@ -196,139 +342,13 @@
           "op": "wait",
           "dir": "S",
           "durationSec": 0.35
-        },
-        {
-          "row": 1,
-          "col": 2,
-          "op": "torso_twist_angle",
-          "dir": "S",
-          "param": -55
-        },
-        {
-          "row": 2,
-          "col": 2,
-          "op": "wait",
-          "dir": "E",
-          "durationSec": 0.3
-        },
-        {
-          "row": 2,
-          "col": 3,
-          "op": "torso_track",
-          "dir": "E"
-        },
-        {
-          "row": 2,
-          "col": 4,
-          "op": "fire_group_4",
-          "dir": "E",
-          "durationSec": 0.4
-        },
-        {
-          "row": 2,
-          "col": 5,
-          "op": "fire_group_2",
-          "dir": "S",
-          "durationSec": 0.4
-        }
-      ]
-    },
-    {
-      "slotId": "S3",
-      "name": "索敵・高台曲射 (4×4)",
-      "gridSize": 4,
-      "cells": [
-        {
-          "row": 0,
-          "col": 0,
-          "op": "start",
-          "dir": "E"
-        },
-        {
-          "row": 0,
-          "col": 1,
-          "op": "move_high_ground",
-          "dir": "E"
-        },
-        {
-          "row": 0,
-          "col": 2,
-          "op": "torso_track",
-          "dir": "S"
-        },
-        {
-          "row": 1,
-          "col": 2,
-          "op": "if_group_2_ready",
-          "dir": "E",
-          "elseDir": "S"
-        },
-        {
-          "row": 1,
-          "col": 3,
-          "op": "fire_group_2",
-          "dir": "S",
-          "durationSec": 0.4
-        },
-        {
-          "row": 2,
-          "col": 2,
-          "op": "wait",
-          "dir": "S",
-          "durationSec": 0.4
-        }
-      ]
-    },
-    {
-      "slotId": "S4",
-      "name": "冷却・回避防御 (4×4)",
-      "gridSize": 4,
-      "cells": [
-        {
-          "row": 0,
-          "col": 0,
-          "op": "start",
-          "dir": "E"
-        },
-        {
-          "row": 0,
-          "col": 1,
-          "op": "if_incoming_fire",
-          "dir": "E",
-          "elseDir": "S"
-        },
-        {
-          "row": 0,
-          "col": 2,
-          "op": "move_evade",
-          "dir": "E",
-          "direction": "auto"
-        },
-        {
-          "row": 0,
-          "col": 3,
-          "op": "torso_twist_auto",
-          "dir": "S"
-        },
-        {
-          "row": 1,
-          "col": 3,
-          "op": "wait",
-          "dir": "S",
-          "durationSec": 0.45
-        },
-        {
-          "row": 1,
-          "col": 1,
-          "op": "emergency_cool",
-          "dir": "S",
-          "durationSec": 0.55
         }
       ]
     },
     {
       "slotId": "S5",
-      "name": "近接・側面迎撃 (4×4)",
+      "name": "近接迎撃戦 (4×4)",
+      "category": "attack",
       "gridSize": 4,
       "cells": [
         {

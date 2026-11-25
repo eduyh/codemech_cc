@@ -307,7 +307,7 @@ export function BattlefieldApp() {
           <div>
             <h1 className="cm-title">CodeMech.py - BATTLEFIELD</h1>
             <p className="cm-subtitle">
-              ver0.0.3 — 大会・閉域共有・3D 観戦アリーナ（最大 12 機 / 固定 30 TPS）
+              ver0.1.0 — 大会・閉域共有・3D 観戦アリーナ（最大 12 機 / 固定 30 TPS）
             </p>
           </div>
         </div>

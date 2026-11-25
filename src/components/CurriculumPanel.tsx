@@ -10,6 +10,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { CURRICULUM_MISSIONS } from '../data/curriculum';
+import { getControlTierSpec } from '../data/parts';
 import { CurriculumVerifyResult, verifyCurriculumMission } from '../engine/curriculumVerifier';
 import {
   ArenaPresetId,
@@ -59,7 +60,7 @@ export function CurriculumPanel({
   onPlayMissionReplay,
   onLoadBrokenStarter,
 }: CurriculumPanelProps) {
-  const [selectedId, setSelectedId] = useState<CurriculumStepId>('step1_pilot_routing');
+  const [selectedId, setSelectedId] = useState<CurriculumStepId>('step0_robot_4x4');
   const [clearedSteps, setClearedSteps] = useState<CurriculumStepId[]>(() => loadClearedSteps());
   const [lastResult, setLastResult] = useState<CurriculumVerifyResult | null>(null);
 
@@ -119,9 +120,11 @@ export function CurriculumPanel({
     <section className="cm-panel">
       <div className="cm-panel-head">
         <div>
-          <h2 className="cm-panel-title">段階的デバッグ学習カリキュラム（全5ステップ）</h2>
+          <h2 className="cm-panel-title">
+            段階的デバッグ学習カリキュラム（全{CURRICULUM_MISSIONS.length}ステップ）
+          </h2>
           <p className="cm-panel-sub">
-            バグ入りAIを読み込む → 模擬戦で原因を観察 → パイロット6×6 / 機体5枠を修正して突破
+            ロボット 4×4 単体 → 4×4 分岐＆防御 → パイロット 6×6 ＋ 4×4 ROM 最大5枠の順で段階的に学びます
           </p>
         </div>
         <span className="cm-pill">
@@ -152,7 +155,12 @@ export function CurriculumPanel({
       </div>
 
       <div className="cm-curr-card">
-        <h3>{activeMission.title}</h3>
+        <div className="cm-curr-card-head">
+          <h3>{activeMission.title}</h3>
+          <span className="cm-tier-badge">
+            {getControlTierSpec(activeMission.controlTier).shortLabel}
+          </span>
+        </div>
         <p className="cm-curr-sub">
           {activeMission.subtitle} （学習テーマ: <strong>{activeMission.csConcept}</strong>）
         </p>

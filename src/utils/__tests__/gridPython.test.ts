@@ -14,14 +14,17 @@ describe('gridPython read-only translator (def main + def sub_s1..s5)', () => {
       expect(mech.subroutines).toHaveLength(5);
       for (const sub of mech.subroutines) {
         const py = subroutineToPython(sub);
-        expect(py).toContain(`def sub_${sub.slotId.toLowerCase()}(target):`);
+        expect(py).toContain(`def sub_${sub.slotId.toLowerCase()}(target`);
       }
     }
 
     const full = fullProgramToPython(STARTER_PILOTS[0], STARTER_MECHS[0]);
     expect(full).toContain('def main(mech, vision, radar):');
-    expect(full).toContain('def sub_s1(target):');
-    expect(full).toContain('def sub_s5(target):');
+    expect(full).toContain('def sub_s1(target, arg=None):');
+    expect(full).toContain('def sub_s3(target, arg=None):');
     expect(full).toContain('flag_a = True');
+
+    const sniperPy = pilotGridToPython(STARTER_PILOTS[2]);
+    expect(sniperPy).toContain('arg=250');
   });
 });

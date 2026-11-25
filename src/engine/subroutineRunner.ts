@@ -1,4 +1,9 @@
-import { getResolvedWeaponGroups, getWeaponMaxRange, getWeaponSpec } from '../data/parts';
+import {
+  getResolvedWeaponGroups,
+  getWeaponMaxRange,
+  getWeaponSpec,
+  isPassiveModuleSpec,
+} from '../data/parts';
 import {
   GridDir,
   MechControlInput,
@@ -84,6 +89,7 @@ export interface SubroutineExecState {
   latchedLeg: LatchedLegMode;
   latchedTorso: LatchedTorsoMode;
   overrideLatched: boolean;
+  callArg?: number;
   emergencyCoolTicks: number;
   firingWait: FiringWaitState | null;
 }
@@ -99,6 +105,7 @@ export function createEmptySubroutineExecState(): SubroutineExecState {
     latchedLeg: null,
     latchedTorso: null,
     overrideLatched: false,
+    callArg: undefined,
     emergencyCoolTicks: 0,
     firingWait: null,
   };
@@ -106,9 +113,18 @@ export function createEmptySubroutineExecState(): SubroutineExecState {
 
 export function startSubroutineExec(
   sub: MechSubroutine,
-  inheritedOverride = false
+  inheritedOverride = false,
+  effectiveGridSize?: 4 | 6,
+  inheritedLatches?: {
+    latchedLeg?: LatchedLegMode;
+    latchedTorso?: LatchedTorsoMode;
+    callArg?: number;
+  }
 ): SubroutineExecState {
-  const startCell = sub.cells.find((c) => c.op === 'start');
+  const gridSize = effectiveGridSize ?? sub.gridSize;
+  const startCell = sub.cells.find(
+    (c) => c.op === 'start' && isInsideGrid(c.row, c.col, gridSize)
+  );
   return {
     slotId: sub.slotId,
     row: startCell?.row ?? 0,
@@ -116,12 +132,23 @@ export function startSubroutineExec(
     stepTicksRemaining: 0,
     stepsExecuted: 0,
     completed: false,
-    latchedLeg: null,
-    latchedTorso: null,
+    latchedLeg: inheritedLatches?.latchedLeg ?? null,
+    latchedTorso: inheritedLatches?.latchedTorso ?? null,
     overrideLatched: inheritedOverride,
+    callArg: inheritedLatches?.callArg,
     emergencyCoolTicks: 0,
     firingWait: null,
   };
+}
+
+function resolveCellParam(
+  cell: MechSubroutineCell,
+  callArg: number | undefined
+): number | undefined {
+  if (cell.useArg && callArg !== undefined && Number.isFinite(callArg)) {
+    return callArg;
+  }
+  return cell.param;
 }
 
 export function advanceGridCoords(
@@ -253,7 +280,7 @@ export function getWeaponReadyStatuses(
   for (const slot of slots) {
     const slotRt = mech.weapons[slot];
     const spec = getWeaponSpec(slotRt.weaponId);
-    if (spec.kind === 'ams' || spec.kind === 'bap' || spec.burstCount <= 0 || spec.damage <= 0) {
+    if (isPassiveModuleSpec(spec) || spec.burstCount <= 0 || spec.damage <= 0) {
       result[slot] = 'none';
       continue;
     }
@@ -315,7 +342,7 @@ function isWeaponSlotReadyForBranch(
   if (mech.parts[slot].destroyed) return false;
   const w = mech.weapons[slot];
   const spec = getWeaponSpec(w.weaponId);
-  if (spec.kind === 'ams' || spec.kind === 'bap') return false;
+  if (isPassiveModuleSpec(spec)) return false;
   if (spec.burstCount <= 0 || spec.damage <= 0) return false;
   if (w.ammoRemaining === 0) return false;
   if (mech.thermalShutdown && !overrideLatched) return false;
@@ -372,7 +399,8 @@ function evaluateSubroutineBranch(
   mech: MechRuntimeState,
   state: SimState,
   target: VisibleEnemyInfo | null,
-  overrideLatched: boolean
+  overrideLatched: boolean,
+  callArg?: number
 ): boolean {
   const ref = target ?? sensor.nearestEnemy ?? sensor.nearestRadarEnemy;
   const gid = groupIdFromSubOp(cell.op);
@@ -380,6 +408,7 @@ function evaluateSubroutineBranch(
     const slots = getResolvedWeaponGroups(mech.blueprint)[gid];
     return slots.some((s) => isWeaponSlotReadyForBranch(state, mech, s, ref, overrideLatched));
   }
+  const param = resolveCellParam(cell, callArg);
   switch (cell.op) {
     case 'if_right_arm_ready':
       return isWeaponSlotReadyForBranch(state, mech, 'rightArm', ref, overrideLatched);
@@ -392,13 +421,13 @@ function evaluateSubroutineBranch(
     case 'if_enemy_in_sight':
       return sensor.visibleEnemies.length > 0;
     case 'if_enemy_dist_lt':
-      return ref !== null && ref.distance < (cell.param ?? 150);
+      return ref !== null && ref.distance < (param ?? 150);
     case 'if_enemy_dist_gt':
-      return ref !== null && ref.distance > (cell.param ?? 180);
+      return ref !== null && ref.distance > (param ?? 180);
     case 'if_heat_above':
-      return sensor.heatRatio * 100 > (cell.param ?? 80);
+      return sensor.heatRatio * 100 > (param ?? 80);
     case 'if_heat_below':
-      return sensor.heatRatio * 100 < (cell.param ?? 50);
+      return sensor.heatRatio * 100 < (param ?? 50);
     case 'if_right_armor_weaker': {
       const rightSide =
         (mech.parts.rightShoulder.destroyed
@@ -477,7 +506,7 @@ function applyLatchedLegToControl(
   mech: MechRuntimeState,
   state: SimState,
   target: VisibleEnemyInfo | null,
-  evadeSign: 1 | -1
+  _evadeSign: 1 | -1
 ): void {
   if (!leg) return;
   control.moveStrafe = 0;
@@ -538,14 +567,7 @@ function applyLatchedLegToControl(
 
     case 'move_circle': {
       const desired = leg.param ?? 135;
-      const orbitDir =
-        leg.direction === 'left'
-          ? -1
-          : leg.direction === 'right'
-            ? 1
-            : mech.slotIndex % 2 === 0
-              ? 1
-              : -1;
+      const orbitDir = leg.direction === 'left' ? -1 : 1;
       if (target) {
         const angleOffset =
           target.distance > desired + 25 ? 48 : target.distance < desired - 25 ? 100 : 72;
@@ -562,8 +584,7 @@ function applyLatchedLegToControl(
     }
 
     case 'move_evade': {
-      const sign =
-        leg.direction === 'left' ? -1 : leg.direction === 'right' ? 1 : evadeSign;
+      const sign = leg.direction === 'left' ? -1 : 1;
       const baseBearing = target ? target.bearingDeg : mech.yawDeg;
       control.moveForward = 0.88;
       control.boost = false;
@@ -614,6 +635,18 @@ function applyLatchedLegToControl(
   }
 }
 
+function resolveThreatBearing(
+  target: VisibleEnemyInfo | null,
+  sensor: MechSensorState,
+  mech: MechRuntimeState
+): number | null {
+  if (target) return target.bearingDeg;
+  if (sensor.incomingFireRelBearingDeg !== null) {
+    return normalizeAngle360(mech.yawDeg + sensor.incomingFireRelBearingDeg);
+  }
+  return sensor.nearestRadarEnemy?.bearingDeg ?? null;
+}
+
 function applyLatchedTorsoToControl(
   torso: LatchedTorsoMode,
   control: MechControlInput,
@@ -637,37 +670,32 @@ function applyLatchedTorsoToControl(
       control.torsoTwistOffsetDeg = 0;
       break;
 
-    case 'torso_twist_angle': {
-      control.torsoTargetYaw = undefined;
+    case 'torso_twist_angle':
+    case 'torso_twist_r':
+    case 'torso_twist_l': {
       const maxDeg = mech.stats.torsoTwistMaxDeg;
-      control.torsoTwistOffsetDeg = clamp(torso.param ?? 60, -maxDeg, maxDeg);
+      const offset =
+        torso.op === 'torso_twist_r'
+          ? clamp(Math.abs(torso.param ?? 55), 0, maxDeg)
+          : torso.op === 'torso_twist_l'
+            ? -clamp(Math.abs(torso.param ?? 55), 0, maxDeg)
+            : clamp(torso.param ?? 55, -maxDeg, maxDeg);
+      const threatBearing = resolveThreatBearing(target, sensor, mech);
+      if (threatBearing !== null) {
+        control.torsoTargetYaw = normalizeAngle360(threatBearing + offset);
+        control.torsoTwistOffsetDeg = undefined;
+        if (control.targetYaw === undefined && control.turnYaw === 0) {
+          control.targetYaw = threatBearing;
+        }
+      } else {
+        control.torsoTargetYaw = undefined;
+        control.torsoTwistOffsetDeg = offset;
+      }
       break;
     }
 
-    case 'torso_twist_r':
-      control.torsoTargetYaw = undefined;
-      control.torsoTwistOffsetDeg = clamp(
-        Math.abs(torso.param ?? 60),
-        0,
-        mech.stats.torsoTwistMaxDeg
-      );
-      break;
-
-    case 'torso_twist_l':
-      control.torsoTargetYaw = undefined;
-      control.torsoTwistOffsetDeg = -clamp(
-        Math.abs(torso.param ?? 60),
-        0,
-        mech.stats.torsoTwistMaxDeg
-      );
-      break;
-
     case 'torso_twist_auto': {
-      const threatBearing = target
-        ? target.bearingDeg
-        : sensor.incomingFireRelBearingDeg !== null
-          ? normalizeAngle360(mech.yawDeg + sensor.incomingFireRelBearingDeg)
-          : sensor.nearestRadarEnemy?.bearingDeg ?? null;
+      const threatBearing = resolveThreatBearing(target, sensor, mech);
       const rightSideHealth =
         (mech.parts.rightShoulder.destroyed
           ? 0
@@ -722,7 +750,8 @@ export function stepSubroutineExecution(
   mech: MechRuntimeState,
   state: SimState,
   target: VisibleEnemyInfo | null,
-  evadeSign: 1 | -1
+  evadeSign: 1 | -1,
+  effectiveGridSize?: 4 | 6
 ): {
   completed: boolean;
   activeCell: { row: number; col: number } | null;
@@ -731,6 +760,8 @@ export function stepSubroutineExecution(
   if (exec.completed) {
     return { completed: true, activeCell: null, lastBranch: null };
   }
+
+  const gridSize = effectiveGridSize ?? sub.gridSize;
 
   if (target && !control.lockTargetId) {
     control.lockTargetId = target.id;
@@ -744,7 +775,7 @@ export function stepSubroutineExecution(
   const advanceOrFinish = (nextRow: number, nextCol: number): boolean => {
     exec.row = nextRow;
     exec.col = nextCol;
-    const nextCell = isInsideGrid(nextRow, nextCol, sub.gridSize)
+    const nextCell = isInsideGrid(nextRow, nextCol, gridSize)
       ? findCell(nextRow, nextCol)
       : undefined;
     if (!nextCell || nextCell.op === 'empty') {
@@ -828,7 +859,7 @@ export function stepSubroutineExecution(
 
   // 3. Advance through 0-tick flow / latch / branch chips until hitting a timed or firing chip
   for (let hop = 0; hop < 24; hop++) {
-    if (!isInsideGrid(exec.row, exec.col, sub.gridSize) || exec.stepsExecuted >= 48) {
+    if (!isInsideGrid(exec.row, exec.col, gridSize) || exec.stepsExecuted >= 48) {
       exec.completed = true;
       return { completed: true, activeCell: null, lastBranch };
     }
@@ -863,7 +894,15 @@ export function stepSubroutineExecution(
     }
 
     if (isBranchOp(cell.op)) {
-      const cond = evaluateSubroutineBranch(cell, sensor, mech, state, target, exec.overrideLatched);
+      const cond = evaluateSubroutineBranch(
+        cell,
+        sensor,
+        mech,
+        state,
+        target,
+        exec.overrideLatched,
+        exec.callArg
+      );
       lastBranch = {
         board: sub.slotId,
         label: cell.op,
@@ -881,10 +920,18 @@ export function stepSubroutineExecution(
     }
 
     if (isLegLatchOp(cell.op)) {
+      const dir =
+        cell.op === 'move_circle' || cell.op === 'move_evade'
+          ? cell.direction === 'left'
+            ? 'left'
+            : cell.direction === 'auto'
+              ? 'auto'
+              : 'right'
+          : cell.direction;
       exec.latchedLeg = {
         op: cell.op,
-        param: cell.param,
-        direction: cell.direction,
+        param: resolveCellParam(cell, exec.callArg),
+        direction: dir,
       };
       const next = advanceGridCoords(curRow, curCol, cell.dir);
       if (advanceOrFinish(next.row, next.col)) {
@@ -897,7 +944,7 @@ export function stepSubroutineExecution(
     }
 
     if (isTorsoLatchOp(cell.op)) {
-      exec.latchedTorso = { op: cell.op, param: cell.param };
+      exec.latchedTorso = { op: cell.op, param: resolveCellParam(cell, exec.callArg) };
       const next = advanceGridCoords(curRow, curCol, cell.dir);
       if (advanceOrFinish(next.row, next.col)) {
         applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);

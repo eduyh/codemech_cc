@@ -1,12 +1,15 @@
 import {
   ARM_WEAPONS,
   MAX_EXTRA_AMMO_TONS,
+  MAX_EXTRA_HEAT_SINKS,
   SHOULDER_WEAPONS,
   buildDefaultWeaponGroups,
+  clampArmorAllocationToChassis,
   getArmWeaponSpec,
   getChassisSpec,
   getResolvedWeaponGroups,
   getShoulderWeaponSpec,
+  getWeaponMaxMountCount,
   inferChassisIdFromParts,
   resolveLegacyWeaponId,
 } from '../data/parts';
@@ -18,6 +21,7 @@ import {
   MatchRules,
   MechBlueprint,
   MechSubroutine,
+  MechSubroutineSlotId,
   PilotProfile,
   WeaponSlotId,
 } from '../types/mech';
@@ -182,6 +186,29 @@ export function validateAndRepairMechBlueprint(raw: MechBlueprint): MechBlueprin
   const ecmEnabled = chassis.hasEcmMount ? Boolean(raw?.ecmEnabled) : false;
   const lrmFireMode = raw?.lrmFireMode === 'stream' ? 'stream' : 'salvo';
 
+  let rightShoulderWeapon = pickId(
+    SHOULDER_WEAPONS,
+    typeof raw?.parts?.rightShoulderWeapon === 'string'
+      ? resolveLegacyWeaponId(raw.parts.rightShoulderWeapon)
+      : undefined,
+    def.parts.rightShoulderWeapon
+  );
+  let leftShoulderWeapon = pickId(
+    SHOULDER_WEAPONS,
+    typeof raw?.parts?.leftShoulderWeapon === 'string'
+      ? resolveLegacyWeaponId(raw.parts.leftShoulderWeapon)
+      : undefined,
+    def.parts.leftShoulderWeapon
+  );
+  if (!chassis.hasEcmMount) {
+    if (getShoulderWeaponSpec(rightShoulderWeapon).requiresEcmChassis) {
+      rightShoulderWeapon = 'shd_none';
+    }
+    if (getShoulderWeaponSpec(leftShoulderWeapon).requiresEcmChassis) {
+      leftShoulderWeapon = 'shd_none';
+    }
+  }
+
   const parts = {
     head: chassis.headPartId,
     torso: chassis.torsoPartId,
@@ -201,20 +228,8 @@ export function validateAndRepairMechBlueprint(raw: MechBlueprint): MechBlueprin
         : undefined,
       def.parts.leftArmWeapon
     ),
-    rightShoulderWeapon: pickId(
-      SHOULDER_WEAPONS,
-      typeof raw?.parts?.rightShoulderWeapon === 'string'
-        ? resolveLegacyWeaponId(raw.parts.rightShoulderWeapon)
-        : undefined,
-      def.parts.rightShoulderWeapon
-    ),
-    leftShoulderWeapon: pickId(
-      SHOULDER_WEAPONS,
-      typeof raw?.parts?.leftShoulderWeapon === 'string'
-        ? resolveLegacyWeaponId(raw.parts.leftShoulderWeapon)
-        : undefined,
-      def.parts.leftShoulderWeapon
-    ),
+    rightShoulderWeapon,
+    leftShoulderWeapon,
     legs: chassis.legPartId,
     booster:
       chassis.hasJumpBoosterMount && boosterEnabled && chassis.boosterSpecId
@@ -222,38 +237,66 @@ export function validateAndRepairMechBlueprint(raw: MechBlueprint): MechBlueprin
         : 'boost_none',
   };
 
-  const maxA = chassis.maxArmor;
   const a = raw?.armor ?? def.armor;
   const num = (v: unknown, fb: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fb);
   const extraHeatSinks =
     typeof raw?.extraHeatSinks === 'number' && Number.isFinite(raw.extraHeatSinks)
-      ? clamp(Math.round(raw.extraHeatSinks), 0, 8)
+      ? clamp(Math.round(raw.extraHeatSinks), 0, MAX_EXTRA_HEAT_SINKS)
       : 0;
 
   const extraAmmo: Partial<Record<WeaponSlotId, number>> = {};
-  const slotWeapons: Record<WeaponSlotId, { maxAmmo: number }> = {
+  const slotWeapons = {
     rightArm: getArmWeaponSpec(parts.rightArmWeapon),
     leftArm: getArmWeaponSpec(parts.leftArmWeapon),
     rightShoulder: getShoulderWeaponSpec(parts.rightShoulderWeapon),
     leftShoulder: getShoulderWeaponSpec(parts.leftShoulderWeapon),
   };
   const slotList: WeaponSlotId[] = ['rightArm', 'leftArm', 'rightShoulder', 'leftShoulder'];
+  const weaponMountCounts: Partial<Record<WeaponSlotId, 1 | 2 | 3>> = {};
   for (const slot of slotList) {
     const val = raw?.extraAmmo?.[slot];
     if (slotWeapons[slot].maxAmmo > 0 && typeof val === 'number' && Number.isFinite(val)) {
       const clamped = clamp(Math.round(val), 0, MAX_EXTRA_AMMO_TONS);
       if (clamped > 0) extraAmmo[slot] = clamped;
     }
+    const maxMount = getWeaponMaxMountCount(slotWeapons[slot]);
+    const rawMount = raw?.weaponMountCounts?.[slot];
+    if (maxMount > 1 && typeof rawMount === 'number' && Number.isFinite(rawMount)) {
+      const mc = clamp(Math.round(rawMount), 1, maxMount) as 1 | 2 | 3;
+      if (mc > 1) weaponMountCounts[slot] = mc;
+    }
   }
+
+  const rawRomSlots = (raw as { romSlots?: Record<string, unknown> })?.romSlots;
+  const romSlots: Partial<Record<MechSubroutineSlotId, string | null>> = {};
+  if (rawRomSlots && typeof rawRomSlots === 'object') {
+    for (const spec of MECH_SUBROUTINE_SLOT_SPECS) {
+      const v = rawRomSlots[spec.slotId];
+      if (v === null) {
+        romSlots[spec.slotId] = null;
+      } else if (typeof v === 'string' && v.trim()) {
+        romSlots[spec.slotId] = v.trim().slice(0, 64);
+      }
+    }
+  }
+  const hasRomSlots = Object.keys(romSlots).length > 0;
 
   const fallbackSubroutines = structuredClone(def.subroutines);
   const rawSubs = Array.isArray((raw as { subroutines?: unknown })?.subroutines)
     ? (raw as { subroutines: MechSubroutine[] }).subroutines
     : [];
-  const subroutines: MechSubroutine[] = MECH_SUBROUTINE_SLOT_SPECS.map((spec, idx) => {
+  const subroutines: MechSubroutine[] = [];
+  for (let idx = 0; idx < MECH_SUBROUTINE_SLOT_SPECS.length; idx++) {
+    const spec = MECH_SUBROUTINE_SLOT_SPECS[idx];
+    if (romSlots[spec.slotId] === null) continue;
     const found = rawSubs.find((s) => s?.slotId === spec.slotId);
     const fb = fallbackSubroutines[idx];
-    if (!found || !Array.isArray(found.cells)) return fb;
+    if (!found || !Array.isArray(found.cells)) {
+      if (hasRomSlots && typeof romSlots[spec.slotId] === 'string') continue;
+      if (fb) subroutines.push(fb);
+      continue;
+    }
+    const subGridSize: 4 = 4;
     const validCells = found.cells
       .filter(
         (c) =>
@@ -261,23 +304,35 @@ export function validateAndRepairMechBlueprint(raw: MechBlueprint): MechBlueprin
           typeof c.row === 'number' &&
           typeof c.col === 'number' &&
           c.row >= 0 &&
-          c.row < spec.gridSize &&
+          c.row < subGridSize &&
           c.col >= 0 &&
-          c.col < spec.gridSize &&
+          c.col < subGridSize &&
           typeof c.op === 'string' &&
           c.op !== 'empty'
       )
-      .slice(0, spec.gridSize * spec.gridSize);
-    return {
+      .slice(0, subGridSize * subGridSize);
+    const category =
+      found.category === 'attack' || found.category === 'move' || found.category === 'control'
+        ? found.category
+        : undefined;
+    subroutines.push({
       slotId: spec.slotId,
       name:
         typeof found.name === 'string' && found.name.trim()
           ? found.name.trim().slice(0, 32)
           : fb?.name ?? spec.defaultName,
-      gridSize: spec.gridSize,
+      ...(category ? { category } : {}),
+      gridSize: subGridSize,
       cells: validCells.length > 0 ? validCells : fb?.cells ?? [{ row: 0, col: 0, op: 'start', dir: 'E' }],
-    };
-  });
+    });
+  }
+
+  const controlTier =
+    raw?.controlTier === 'direct_4x4' || raw?.controlTier === 'direct_6x6'
+      ? ('direct_4x4' as const)
+      : raw?.controlTier === 'pilot_full'
+        ? ('pilot_full' as const)
+        : undefined;
 
   return {
     version: 2,
@@ -286,28 +341,31 @@ export function validateAndRepairMechBlueprint(raw: MechBlueprint): MechBlueprin
     authorName: typeof raw?.authorName === 'string' ? raw.authorName.trim().slice(0, 40) : undefined,
     color: typeof raw?.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(raw.color) ? raw.color : def.color,
     chassisId: chassis.id,
+    ...(controlTier && controlTier !== 'pilot_full' ? { controlTier } : {}),
+    ...(hasRomSlots ? { romSlots } : {}),
     boosterEnabled,
     ecmEnabled,
     lrmFireMode,
     extraHeatSinks,
     ...(Object.keys(extraAmmo).length > 0 ? { extraAmmo } : {}),
+    ...(Object.keys(weaponMountCounts).length > 0 ? { weaponMountCounts } : {}),
     parts,
     weaponGroups: raw?.weaponGroups
       ? getResolvedWeaponGroups({ parts, weaponGroups: raw.weaponGroups })
       : buildDefaultWeaponGroups(parts),
-    armor: {
-      head: clamp(num(a.head, def.armor.head), 0, maxA.head),
-      torsoFront: clamp(num(a.torsoFront, def.armor.torsoFront), 0, maxA.torsoFront),
-      torsoRear: clamp(num(a.torsoRear, def.armor.torsoRear), 0, maxA.torsoRear),
-      rightShoulderFront: clamp(num(a.rightShoulderFront, def.armor.rightShoulderFront), 0, maxA.rightShoulderFront),
-      rightShoulderRear: clamp(num(a.rightShoulderRear, def.armor.rightShoulderRear), 0, maxA.rightShoulderRear),
-      leftShoulderFront: clamp(num(a.leftShoulderFront, def.armor.leftShoulderFront), 0, maxA.leftShoulderFront),
-      leftShoulderRear: clamp(num(a.leftShoulderRear, def.armor.leftShoulderRear), 0, maxA.leftShoulderRear),
-      rightArm: clamp(num(a.rightArm, def.armor.rightArm), 0, maxA.rightArm),
-      leftArm: clamp(num(a.leftArm, def.armor.leftArm), 0, maxA.leftArm),
-      rightLeg: clamp(num(a.rightLeg, def.armor.rightLeg), 0, maxA.rightLeg),
-      leftLeg: clamp(num(a.leftLeg, def.armor.leftLeg), 0, maxA.leftLeg),
-    },
+    armor: clampArmorAllocationToChassis(chassis, {
+      head: num(a.head, def.armor.head),
+      torsoFront: num(a.torsoFront, def.armor.torsoFront),
+      torsoRear: num(a.torsoRear, def.armor.torsoRear),
+      rightShoulderFront: num(a.rightShoulderFront, def.armor.rightShoulderFront),
+      rightShoulderRear: num(a.rightShoulderRear, def.armor.rightShoulderRear),
+      leftShoulderFront: num(a.leftShoulderFront, def.armor.leftShoulderFront),
+      leftShoulderRear: num(a.leftShoulderRear, def.armor.leftShoulderRear),
+      rightArm: num(a.rightArm, def.armor.rightArm),
+      leftArm: num(a.leftArm, def.armor.leftArm),
+      rightLeg: num(a.rightLeg, def.armor.rightLeg),
+      leftLeg: num(a.leftLeg, def.armor.leftLeg),
+    }),
     subroutines,
   };
 }

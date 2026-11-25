@@ -204,5 +204,18 @@ describe('shareMech closed-network packages & codec', () => {
     const repaired = decodeMechCode(legacyCode);
     expect(repaired.mech.weaponGroups).toBeDefined();
     expect(repaired.mech.weaponGroups?.G1.length).toBeGreaterThan(0);
+    expect(repaired.mech.controlTier).toBeUndefined();
+
+    const directMech = {
+      ...structuredClone(STARTER_MECHS[0]),
+      controlTier: 'direct_4x4' as const,
+      weaponMountCounts: { leftArm: 3 as const },
+    };
+    directMech.parts.leftShoulderWeapon = 'ams_bap_pod';
+    const directCode = encodeMechCode({ mech: directMech, pilot: DEFAULT_PILOT_PROFILE });
+    const decodedDirect = decodeMechCode(directCode);
+    expect(decodedDirect.mech.controlTier).toBe('direct_4x4');
+    expect(decodedDirect.mech.weaponMountCounts).toEqual({ leftArm: 3 });
+    expect(decodedDirect.mech.parts.leftShoulderWeapon).toBe('ams_bap_pod');
   });
 });

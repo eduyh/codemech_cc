@@ -1,4 +1,5 @@
 import {
+  clampArmorAllocationToChassis,
   computeMechStats,
   computeRangeFalloffMultiplier,
   getArmWeaponSpec,
@@ -7,7 +8,9 @@ import {
   getShoulderWeaponSpec,
   getWeaponMaxRange,
   getWeaponSlotMaxAmmo,
+  getWeaponSlotMountCount,
   getWeaponSpec,
+  isPassiveModuleSpec,
 } from '../data/parts';
 import {
   ActiveBeamState,
@@ -101,77 +104,76 @@ export const EMPTY_CONTROL_INPUT: MechControlInput = {
 
 function createInitialPartsState(bp: MechBlueprint): MechPartsRuntimeState {
   const chassis = getChassisSpec(bp.chassisId);
-  const a = bp.armor;
-  const maxA = chassis.maxArmor;
+  const a = clampArmorAllocationToChassis(chassis, bp.armor);
   const s = chassis.structureHp;
 
   return {
     head: {
       kind: 'single',
-      armor: clamp(a.head, 0, maxA.head),
-      maxArmor: clamp(a.head, 0, maxA.head),
+      armor: a.head,
+      maxArmor: a.head,
       structure: s.head,
       maxStructure: s.head,
       destroyed: false,
     },
     torso: {
       kind: 'dual',
-      frontArmor: clamp(a.torsoFront, 0, maxA.torsoFront),
-      maxFrontArmor: clamp(a.torsoFront, 0, maxA.torsoFront),
-      rearArmor: clamp(a.torsoRear, 0, maxA.torsoRear),
-      maxRearArmor: clamp(a.torsoRear, 0, maxA.torsoRear),
+      frontArmor: a.torsoFront,
+      maxFrontArmor: a.torsoFront,
+      rearArmor: a.torsoRear,
+      maxRearArmor: a.torsoRear,
       structure: s.torso,
       maxStructure: s.torso,
       destroyed: false,
     },
     rightShoulder: {
       kind: 'dual',
-      frontArmor: clamp(a.rightShoulderFront, 0, maxA.rightShoulderFront),
-      maxFrontArmor: clamp(a.rightShoulderFront, 0, maxA.rightShoulderFront),
-      rearArmor: clamp(a.rightShoulderRear, 0, maxA.rightShoulderRear),
-      maxRearArmor: clamp(a.rightShoulderRear, 0, maxA.rightShoulderRear),
+      frontArmor: a.rightShoulderFront,
+      maxFrontArmor: a.rightShoulderFront,
+      rearArmor: a.rightShoulderRear,
+      maxRearArmor: a.rightShoulderRear,
       structure: s.rightShoulder,
       maxStructure: s.rightShoulder,
       destroyed: false,
     },
     leftShoulder: {
       kind: 'dual',
-      frontArmor: clamp(a.leftShoulderFront, 0, maxA.leftShoulderFront),
-      maxFrontArmor: clamp(a.leftShoulderFront, 0, maxA.leftShoulderFront),
-      rearArmor: clamp(a.leftShoulderRear, 0, maxA.leftShoulderRear),
-      maxRearArmor: clamp(a.leftShoulderRear, 0, maxA.leftShoulderRear),
+      frontArmor: a.leftShoulderFront,
+      maxFrontArmor: a.leftShoulderFront,
+      rearArmor: a.leftShoulderRear,
+      maxRearArmor: a.leftShoulderRear,
       structure: s.leftShoulder,
       maxStructure: s.leftShoulder,
       destroyed: false,
     },
     rightArm: {
       kind: 'single',
-      armor: clamp(a.rightArm, 0, maxA.rightArm),
-      maxArmor: clamp(a.rightArm, 0, maxA.rightArm),
+      armor: a.rightArm,
+      maxArmor: a.rightArm,
       structure: s.rightArm,
       maxStructure: s.rightArm,
       destroyed: false,
     },
     leftArm: {
       kind: 'single',
-      armor: clamp(a.leftArm, 0, maxA.leftArm),
-      maxArmor: clamp(a.leftArm, 0, maxA.leftArm),
+      armor: a.leftArm,
+      maxArmor: a.leftArm,
       structure: s.leftArm,
       maxStructure: s.leftArm,
       destroyed: false,
     },
     rightLeg: {
       kind: 'single',
-      armor: clamp(a.rightLeg, 0, maxA.rightLeg),
-      maxArmor: clamp(a.rightLeg, 0, maxA.rightLeg),
+      armor: a.rightLeg,
+      maxArmor: a.rightLeg,
       structure: s.rightLeg,
       maxStructure: s.rightLeg,
       destroyed: false,
     },
     leftLeg: {
       kind: 'single',
-      armor: clamp(a.leftLeg, 0, maxA.leftLeg),
-      maxArmor: clamp(a.leftLeg, 0, maxA.leftLeg),
+      armor: a.leftLeg,
+      maxArmor: a.leftLeg,
       structure: s.leftLeg,
       maxStructure: s.leftLeg,
       destroyed: false,
@@ -333,20 +335,40 @@ export function getMechTorsoWorldYaw(
   return normalizeAngle360(mech.yawDeg + mech.torsoYawOffsetDeg);
 }
 
+function hasIntactEcmModule(mech: MechRuntimeState): boolean {
+  const ecmSlots = (['rightShoulder', 'leftShoulder'] as WeaponSlotId[]).filter((s) =>
+    Boolean(getWeaponSpec(mech.weapons[s].weaponId).providesEcm)
+  );
+  if (ecmSlots.length > 0) {
+    return mech.stats.hasEcmMount && ecmSlots.some((s) => !mech.parts[s].destroyed);
+  }
+  return mech.stats.ecmActive;
+}
+
 export function isMechEcmActive(mech: MechRuntimeState): boolean {
   return (
     mech.alive &&
-    mech.stats.ecmActive &&
     !mech.thermalShutdown &&
-    mech.ecmDisruptedTicks <= 0
+    mech.ecmDisruptedTicks <= 0 &&
+    hasIntactEcmModule(mech)
   );
 }
 
 export function isMechBapActive(mech: MechRuntimeState): boolean {
   if (!mech.alive || mech.thermalShutdown) return false;
   return (['rightShoulder', 'leftShoulder'] as WeaponSlotId[]).some(
-    (s) => !mech.parts[s].destroyed && getWeaponSpec(mech.weapons[s].weaponId).kind === 'bap'
+    (s) => !mech.parts[s].destroyed && Boolean(getWeaponSpec(mech.weapons[s].weaponId).providesBap)
   );
+}
+
+export function isMechAmsActive(mech: MechRuntimeState): boolean {
+  if (!mech.alive || mech.thermalShutdown) return false;
+  return (['rightShoulder', 'leftShoulder'] as WeaponSlotId[]).some((s) => {
+    if (mech.parts[s].destroyed) return false;
+    const w = mech.weapons[s];
+    const spec = getWeaponSpec(w.weaponId);
+    return Boolean(spec.providesAms) && w.ammoRemaining !== 0;
+  });
 }
 
 export function isTargetEcmProtectedFor(
@@ -961,9 +983,16 @@ function tryFireWeaponSlot(
   if (slotRuntime.cooldownRemaining > 0) return;
 
   const spec = getWeaponSpec(slotRuntime.weaponId);
-  if (spec.kind === 'ams' || spec.kind === 'bap') return;
+  if (isPassiveModuleSpec(spec)) return;
   if (spec.burstCount <= 0 || spec.damage <= 0) return;
   if (slotRuntime.ammoRemaining === 0) return;
+
+  const mountCount = getWeaponSlotMountCount(mech.blueprint, slot);
+  const actualCount =
+    slotRuntime.ammoRemaining > 0
+      ? Math.min(mountCount, slotRuntime.ammoRemaining)
+      : mountCount;
+  if (actualCount <= 0) return;
 
   const override = Boolean(control.overrideShutdown);
   if (mech.thermalShutdown && !override) return;
@@ -1060,10 +1089,11 @@ function tryFireWeaponSlot(
   // Consume cooldown, ammo, and accumulate BattleTech Heat
   slotRuntime.cooldownRemaining = spec.cooldownSec;
   if (slotRuntime.ammoRemaining > 0) {
-    slotRuntime.ammoRemaining = Math.max(0, slotRuntime.ammoRemaining - 1);
+    slotRuntime.ammoRemaining = Math.max(0, slotRuntime.ammoRemaining - actualCount);
   }
-  if (spec.heatCost > 0) {
-    mech.heat = Math.min(mech.maxHeat * 1.35, mech.heat + spec.heatCost);
+  const totalHeatCost = spec.heatCost * actualCount;
+  if (totalHeatCost > 0) {
+    mech.heat = Math.min(mech.maxHeat * 1.35, mech.heat + totalHeatCost);
     if (mech.heat >= mech.maxHeat) {
       if (override) {
         mech.overrideShutdownActive = true;
@@ -1087,12 +1117,10 @@ function tryFireWeaponSlot(
     }
   }
 
-  // Continuous burn beam weapon (Laser): spawns an ActiveBeamState stepped per tick
+  // Continuous burn beam weapon (Laser): spawns ActiveBeamState(s) stepped per tick
   if (spec.kind === 'laser') {
     const headPenaltySpread = mech.parts.head.destroyed ? 3.5 : 0;
     const totalSpread = spec.spreadDeg + headPenaltySpread;
-    const spreadYawOffset = (nextMechRand(mech) - 0.5) * 2 * totalSpread;
-    const spreadPitchOffset = (nextMechRand(mech) - 0.5) * 2 * totalSpread;
     const burnTicks = Math.max(1, Math.round((spec.burnDurationSec ?? 0.6) * SIM_TPS));
     const maxRange = getWeaponMaxRange(spec);
     const beamColor =
@@ -1104,24 +1132,30 @@ function tryFireWeaponSlot(
             ? '#38bdf8'
             : '#22d3ee';
 
-    state.activeBeams.push({
-      id: state.nextBeamId++,
-      ownerId: mech.id,
-      teamId: mech.teamId,
-      slot,
-      weaponId: spec.id,
-      targetId: target?.id ?? null,
-      originPos: { ...muzzlePos },
-      endPos: { ...muzzlePos },
-      damagePerTick: spec.damage / burnTicks,
-      optimalRange: spec.range,
-      maxRange,
-      ticksRemaining: burnTicks,
-      totalTicks: burnTicks,
-      spreadYawOffset,
-      spreadPitchOffset,
-      color: beamColor,
-    });
+    for (let m = 0; m < actualCount; m++) {
+      const mountYawOffset = actualCount > 1 ? (m - (actualCount - 1) * 0.5) * 0.28 : 0;
+      const spreadYawOffset = (nextMechRand(mech) - 0.5) * 2 * totalSpread + mountYawOffset;
+      const spreadPitchOffset = (nextMechRand(mech) - 0.5) * 2 * totalSpread;
+
+      state.activeBeams.push({
+        id: state.nextBeamId++,
+        ownerId: mech.id,
+        teamId: mech.teamId,
+        slot,
+        weaponId: spec.id,
+        targetId: target?.id ?? null,
+        originPos: { ...muzzlePos },
+        endPos: { ...muzzlePos },
+        damagePerTick: spec.damage / burnTicks,
+        optimalRange: spec.range,
+        maxRange,
+        ticksRemaining: burnTicks,
+        totalTicks: burnTicks,
+        spreadYawOffset,
+        spreadPitchOffset,
+        color: beamColor,
+      });
+    }
     return;
   }
 
@@ -1157,7 +1191,7 @@ function tryFireWeaponSlot(
         other.stats.sizeScale
       );
       if (hit) {
-        resolveHitOnMech(state, mech, other, hit, spec.damage, false, 89, tickEvents);
+        resolveHitOnMech(state, mech, other, hit, spec.damage * actualCount, false, 89, tickEvents);
         break;
       }
     }
@@ -1176,8 +1210,9 @@ function tryFireWeaponSlot(
     const guided = Boolean(target && mech.lockComplete && mech.lockTargetId === target.id);
     const isIndirect = Boolean(target && !hasDirectLos);
     const loft = computeLrmLoftParams(rawHoriz, isIndirect, guided);
-    const isStream = mech.blueprint.lrmFireMode === 'stream' && spec.burstCount > 1;
-    const initialCount = isStream ? 1 : spec.burstCount;
+    const totalBurst = spec.burstCount * actualCount;
+    const isStream = mech.blueprint.lrmFireMode === 'stream' && totalBurst > 1;
+    const initialCount = isStream ? Math.min(actualCount, totalBurst) : totalBurst;
     const lrmSpread = isStream ? totalSpread * 0.75 : totalSpread;
 
     for (let b = 0; b < initialCount; b++) {
@@ -1198,11 +1233,11 @@ function tryFireWeaponSlot(
       });
     }
 
-    if (isStream) {
+    if (isStream && totalBurst > initialCount) {
       mech.salvoQueue.push({
         slot,
         weaponId: spec.id,
-        remainingShots: spec.burstCount - 1,
+        remainingShots: totalBurst - initialCount,
         ticksUntilNext: spec.streamIntervalTicks ?? 2,
         targetId: target?.id ?? null,
         isIndirect,
@@ -1218,22 +1253,34 @@ function tryFireWeaponSlot(
       ? spec.homingTurnDegPerSec
       : 0;
 
-  for (let b = 0; b < spec.burstCount; b++) {
-    spawnSingleProjectile({
-      state,
-      mech,
-      slot,
-      spec,
-      muzzlePos,
-      aimYaw,
-      aimPitch,
-      totalSpread,
-      effectiveDamage,
-      targetId: target?.id ?? null,
-      homingTurnDegPerSec: srmHoming,
-      hp: missileHp,
-      loftTicksRemaining: 0,
-    });
+  const torsoRight = angleToVector2D(normalizeAngle360(torsoWorldYaw + 90));
+  for (let m = 0; m < actualCount; m++) {
+    const latOff = actualCount > 1 ? (m - (actualCount - 1) * 0.5) * 0.35 * mech.stats.sizeScale : 0;
+    const barrelPos: Vec3 =
+      latOff !== 0
+        ? {
+            x: muzzlePos.x + torsoRight.dx * latOff,
+            y: muzzlePos.y + torsoRight.dy * latOff,
+            z: muzzlePos.z,
+          }
+        : muzzlePos;
+    for (let b = 0; b < spec.burstCount; b++) {
+      spawnSingleProjectile({
+        state,
+        mech,
+        slot,
+        spec,
+        muzzlePos: barrelPos,
+        aimYaw,
+        aimPitch,
+        totalSpread,
+        effectiveDamage,
+        targetId: target?.id ?? null,
+        homingTurnDegPerSec: srmHoming,
+        hp: missileHp,
+        loftTicksRemaining: 0,
+      });
+    }
   }
 }
 
@@ -1779,7 +1826,7 @@ export function stepSimulation(
       if (mech.parts[slot].destroyed) continue;
       const slotRt = mech.weapons[slot];
       const spec = getWeaponSpec(slotRt.weaponId);
-      if (spec.kind !== 'ams') continue;
+      if (!spec.providesAms) continue;
       if (slotRt.cooldownRemaining > 0 || slotRt.ammoRemaining === 0) continue;
 
       let bestProj: ProjectileState | null = null;
@@ -1831,7 +1878,7 @@ export function stepSimulation(
           targetId: bestProj.ownerId,
           pos: muzzlePos,
           endPos: { ...bestProj.pos },
-          detail: spec.id,
+          detail: spec.amsIsLaser ? 'ams_laser' : 'ams_ballistic',
         });
       }
     }
@@ -2000,7 +2047,7 @@ export function stepSimulation(
           landed &&
           proj.weaponId === 'ppc' &&
           earliestMechHit.mech.alive &&
-          earliestMechHit.mech.stats.ecmActive
+          hasIntactEcmModule(earliestMechHit.mech)
         ) {
           earliestMechHit.mech.ecmDisruptedTicks = PPC_ECM_DISRUPT_TICKS;
           recordEvent(state, tickEvents, {

@@ -4,172 +4,75 @@ import {
   MechSubroutine,
   PilotProfile,
 } from '../types/mech';
-
-type SubArchetype = 'balanced' | 'skirmish' | 'fortress' | 'sniper' | 'berserker';
-
-function buildCleanS1(desiredRange: number, withCircle = false): MechSubroutine {
-  return {
-    slotId: 'S1',
-    name: withCircle ? '周回交戦・ツイスト' : '主交戦・ツイスト防御',
-    gridSize: 6,
-    cells: [
-      { row: 0, col: 0, op: 'start', dir: 'E' },
-      {
-        row: 0,
-        col: 1,
-        op: withCircle ? 'move_circle' : 'move_maintain',
-        dir: 'E',
-        param: desiredRange,
-      },
-      { row: 0, col: 2, op: 'torso_track', dir: 'S' },
-      { row: 1, col: 2, op: 'if_group_1_ready', dir: 'E', elseDir: 'S' },
-      { row: 1, col: 3, op: 'fire_group_1', dir: 'E', durationSec: 0.45 },
-      { row: 1, col: 4, op: 'if_heat_below', dir: 'E', elseDir: 'S', param: 76 },
-      { row: 1, col: 5, op: 'fire_group_4', dir: 'S', durationSec: 0.35 },
-      { row: 2, col: 5, op: 'wait', dir: 'S', durationSec: 0.15 },
-      { row: 2, col: 4, op: 'return', dir: 'S' },
-      { row: 2, col: 2, op: 'if_group_2_ready', dir: 'E', elseDir: 'S' },
-      { row: 2, col: 3, op: 'fire_group_2', dir: 'S', durationSec: 0.45 },
-      { row: 3, col: 2, op: 'if_incoming_fire', dir: 'E', elseDir: 'S' },
-      { row: 3, col: 3, op: 'torso_twist_auto', dir: 'E' },
-      { row: 3, col: 4, op: 'wait', dir: 'S', durationSec: 0.35 },
-      { row: 4, col: 2, op: 'wait', dir: 'S', durationSec: 0.2 },
-    ],
-  };
-}
-
-function buildArchetypeS2(archetype: SubArchetype): MechSubroutine {
-  if (archetype === 'sniper') {
-    return {
-      slotId: 'S2',
-      name: '曲射・高台狙撃 (6×6)',
-      gridSize: 6,
-      cells: [
-        { row: 0, col: 0, op: 'start', dir: 'E' },
-        { row: 0, col: 1, op: 'move_high_ground', dir: 'E' },
-        { row: 0, col: 2, op: 'torso_track', dir: 'S' },
-        { row: 1, col: 2, op: 'if_enemy_dist_lt', dir: 'E', elseDir: 'S', param: 115 },
-        { row: 1, col: 3, op: 'move_retreat', dir: 'E' },
-        { row: 1, col: 4, op: 'fire_group_3', dir: 'S', durationSec: 0.4 },
-        { row: 2, col: 2, op: 'if_group_2_ready', dir: 'E', elseDir: 'S' },
-        { row: 2, col: 3, op: 'fire_group_2', dir: 'S', durationSec: 0.45 },
-        { row: 3, col: 2, op: 'if_group_1_ready', dir: 'E', elseDir: 'S' },
-        { row: 3, col: 3, op: 'fire_group_1', dir: 'S', durationSec: 0.45 },
-        { row: 4, col: 2, op: 'wait', dir: 'S', durationSec: 0.25 },
-      ],
-    };
-  }
-
-  if (archetype === 'skirmish' || archetype === 'berserker') {
-    return {
-      slotId: 'S2',
-      name: '跳躍一斉強襲 (6×6)',
-      gridSize: 6,
-      cells: [
-        { row: 0, col: 0, op: 'start', dir: 'E' },
-        { row: 0, col: 1, op: 'if_airborne', dir: 'S', elseDir: 'E' },
-        { row: 0, col: 2, op: 'move_jump', dir: 'S' },
-        { row: 1, col: 2, op: 'torso_track', dir: 'W' },
-        { row: 1, col: 1, op: 'move_approach', dir: 'S' },
-        { row: 2, col: 1, op: 'fire_alpha', dir: 'E', durationSec: 0.45 },
-        { row: 2, col: 2, op: 'torso_twist_auto', dir: 'E' },
-        { row: 2, col: 3, op: 'wait', dir: 'S', durationSec: 0.35 },
-      ],
-    };
-  }
-
-  if (archetype === 'fortress') {
-    return {
-      slotId: 'S2',
-      name: '重装ツイスト斉射 (6×6)',
-      gridSize: 6,
-      cells: [
-        { row: 0, col: 0, op: 'start', dir: 'E' },
-        { row: 0, col: 1, op: 'move_stop', dir: 'E' },
-        { row: 0, col: 2, op: 'if_right_armor_weaker', dir: 'E', elseDir: 'S' },
-        { row: 0, col: 3, op: 'torso_twist_angle', dir: 'S', param: 55 },
-        { row: 1, col: 3, op: 'wait', dir: 'S', durationSec: 0.35 },
-        { row: 1, col: 2, op: 'torso_twist_angle', dir: 'S', param: -55 },
-        { row: 2, col: 2, op: 'wait', dir: 'E', durationSec: 0.3 },
-        { row: 2, col: 3, op: 'torso_track', dir: 'E' },
-        { row: 2, col: 4, op: 'fire_group_4', dir: 'E', durationSec: 0.4 },
-        { row: 2, col: 5, op: 'fire_group_2', dir: 'S', durationSec: 0.4 },
-      ],
-    };
-  }
-
-  // balanced
-  return {
-    slotId: 'S2',
-    name: '予備兵装・ツイスト反撃 (6×6)',
-    gridSize: 6,
-    cells: [
-      { row: 0, col: 0, op: 'start', dir: 'E' },
-      { row: 0, col: 1, op: 'move_maintain', dir: 'E', param: 150 },
-      { row: 0, col: 2, op: 'torso_track', dir: 'S' },
-      { row: 1, col: 2, op: 'if_group_4_ready', dir: 'E', elseDir: 'S' },
-      { row: 1, col: 3, op: 'fire_group_4', dir: 'S', durationSec: 0.45 },
-      { row: 2, col: 2, op: 'if_group_2_ready', dir: 'E', elseDir: 'S' },
-      { row: 2, col: 3, op: 'fire_group_2', dir: 'S', durationSec: 0.45 },
-      { row: 3, col: 2, op: 'if_group_3_ready', dir: 'E', elseDir: 'S' },
-      { row: 3, col: 3, op: 'fire_group_3', dir: 'S', durationSec: 0.45 },
-      { row: 4, col: 2, op: 'torso_twist_auto', dir: 'E' },
-      { row: 4, col: 3, op: 'wait', dir: 'S', durationSec: 0.35 },
-    ],
-  };
-}
+import {
+  RomArchetype,
+  buildArchetypeS2Cells,
+  buildAttackS1Cells,
+  buildS3MoveCells,
+  buildS4CoolCells,
+  buildS5CloseCells,
+} from './romTemplates';
 
 function buildDefaultSubroutines(
-  archetype: SubArchetype,
+  archetype: RomArchetype,
   desiredRange: number
 ): MechSubroutine[] {
-  const withCircle = archetype === 'skirmish' || archetype === 'berserker';
+  const isSkirmish = archetype === 'skirmish' || archetype === 'berserker';
   return [
-    buildCleanS1(desiredRange, withCircle),
-    buildArchetypeS2(archetype),
+    {
+      slotId: 'S1',
+      name: isSkirmish
+        ? '強襲連射戦 (4×4)'
+        : archetype === 'sniper'
+          ? '狙撃射撃戦 (4×4)'
+          : '主攻撃標準 (4×4)',
+      category: 'attack',
+      gridSize: 4,
+      cells: buildAttackS1Cells({
+        heatLimit: isSkirmish ? 78 : 76,
+        altFireOp: archetype === 'sniper' ? 'fire_group_3' : 'fire_group_4',
+      }),
+    },
+    {
+      slotId: 'S2',
+      name:
+        archetype === 'sniper'
+          ? '高台曲射戦 (4×4)'
+          : isSkirmish
+            ? '跳躍強襲戦 (4×4)'
+            : archetype === 'fortress'
+              ? '重装反撃戦 (4×4)'
+              : '予備兵装戦 (4×4)',
+      category: 'attack',
+      gridSize: 4,
+      cells: buildArchetypeS2Cells(archetype),
+    },
     {
       slotId: 'S3',
-      name: '索敵・高台曲射 (4×4)',
+      name: isSkirmish
+        ? '盾側周回 (4×4)'
+        : archetype === 'fortress'
+          ? '重装進軍 (4×4)'
+          : archetype === 'sniper'
+            ? '狙撃間合 (4×4)'
+            : '間合い制御 (4×4)',
+      category: 'move',
       gridSize: 4,
-      cells: [
-        { row: 0, col: 0, op: 'start', dir: 'E' },
-        { row: 0, col: 1, op: 'move_high_ground', dir: 'E' },
-        { row: 0, col: 2, op: 'torso_track', dir: 'S' },
-        { row: 1, col: 2, op: 'if_group_2_ready', dir: 'E', elseDir: 'S' },
-        { row: 1, col: 3, op: 'fire_group_2', dir: 'S', durationSec: 0.4 },
-        { row: 2, col: 2, op: 'wait', dir: 'S', durationSec: 0.4 },
-      ],
+      cells: buildS3MoveCells(archetype, desiredRange),
     },
     {
       slotId: 'S4',
-      name: '冷却・回避防御 (4×4)',
+      name: '盾防御冷却 (4×4)',
+      category: 'control',
       gridSize: 4,
-      cells: [
-        { row: 0, col: 0, op: 'start', dir: 'E' },
-        { row: 0, col: 1, op: 'if_incoming_fire', dir: 'E', elseDir: 'S' },
-        { row: 0, col: 2, op: 'move_evade', dir: 'E', direction: 'auto' },
-        { row: 0, col: 3, op: 'torso_twist_auto', dir: 'S' },
-        { row: 1, col: 3, op: 'wait', dir: 'S', durationSec: 0.45 },
-        { row: 1, col: 1, op: 'emergency_cool', dir: 'S', durationSec: 0.55 },
-      ],
+      cells: buildS4CoolCells(),
     },
     {
       slotId: 'S5',
-      name: '近接・側面迎撃 (4×4)',
+      name: archetype === 'sniper' ? '後退迎撃戦 (4×4)' : '近接迎撃戦 (4×4)',
+      category: 'attack',
       gridSize: 4,
-      cells: [
-        { row: 0, col: 0, op: 'start', dir: 'E' },
-        {
-          row: 0,
-          col: 1,
-          op: archetype === 'sniper' ? 'move_retreat' : 'move_approach',
-          dir: 'E',
-        },
-        { row: 0, col: 2, op: 'torso_track', dir: 'S' },
-        { row: 1, col: 2, op: 'if_group_4_ready', dir: 'E', elseDir: 'S' },
-        { row: 1, col: 3, op: 'fire_group_4', dir: 'S', durationSec: 0.4 },
-        { row: 2, col: 2, op: 'fire_group_3', dir: 'S', durationSec: 0.4 },
-      ],
+      cells: buildS5CloseCells(archetype === 'sniper'),
     },
   ];
 }
@@ -190,10 +93,20 @@ export const PRESET_VANGUARD: MechBlueprint = {
   authorName: 'CodeMech Official',
   color: '#06b6d4',
   chassisId: 'chassis_vanguard',
+  romSlots: {
+    S1: 'rom_std_s1_bal',
+    S2: 'rom_std_s2_backup',
+    S3: 'rom_std_s3_range',
+    S4: 'rom_std_s4_cool',
+    S5: 'rom_std_s5_close',
+  },
   boosterEnabled: true,
   ecmEnabled: false,
   lrmFireMode: 'stream',
   extraHeatSinks: 1,
+  weaponMountCounts: {
+    leftArm: 2,
+  },
   parts: {
     head: 'head_std',
     torso: 'torso_std',
@@ -202,7 +115,7 @@ export const PRESET_VANGUARD: MechBlueprint = {
     rightArmWeapon: 'ac5',
     leftArmWeapon: 'medium_laser',
     rightShoulderWeapon: 'lrm5',
-    leftShoulderWeapon: 'shd_none',
+    leftShoulderWeapon: 'ams_ballistic',
     legs: 'legs_biped_std',
     booster: 'boost_std',
   },
@@ -213,19 +126,19 @@ export const PRESET_VANGUARD: MechBlueprint = {
     G4: ['leftArm'],
   },
   armor: {
-    head: 60,
-    torsoFront: 250,
-    torsoRear: 110,
-    rightShoulderFront: 130,
-    rightShoulderRear: 60,
-    leftShoulderFront: 130,
-    leftShoulderRear: 60,
-    rightArm: 110,
-    leftArm: 110,
-    rightLeg: 130,
-    leftLeg: 130,
+    head: 45,
+    torsoFront: 185,
+    torsoRear: 50,
+    rightShoulderFront: 90,
+    rightShoulderRear: 25,
+    leftShoulderFront: 90,
+    leftShoulderRear: 25,
+    rightArm: 65,
+    leftArm: 65,
+    rightLeg: 80,
+    leftLeg: 80,
   },
-  subroutines: buildDefaultSubroutines('balanced', 170),
+  subroutines: buildDefaultSubroutines('balanced', 150),
 };
 
 export const PRESET_STRIKER: MechBlueprint = {
@@ -235,20 +148,30 @@ export const PRESET_STRIKER: MechBlueprint = {
   authorName: 'CodeMech Official',
   color: '#22c55e',
   chassisId: 'chassis_striker',
+  romSlots: {
+    S1: 'rom_std_s1_skirmish',
+    S2: 'rom_std_s2_jump',
+    S3: 'rom_std_s3_orbit',
+    S4: 'rom_std_s4_cool',
+    S5: 'rom_std_s5_close',
+  },
   boosterEnabled: true,
-  ecmEnabled: true,
+  ecmEnabled: false,
   lrmFireMode: 'salvo',
   extraHeatSinks: 0,
+  weaponMountCounts: {
+    rightArm: 2,
+  },
   parts: {
     head: 'head_std',
     torso: 'torso_light',
     rightShoulderMount: 'shd_light',
     leftShoulderMount: 'shd_light',
-    rightArmWeapon: 'mg_light',
+    rightArmWeapon: 'medium_laser',
     leftArmWeapon: 'small_laser',
     rightShoulderWeapon: 'srm_rocket',
-    leftShoulderWeapon: 'shd_none',
-    legs: 'legs_reverse_agile',
+    leftShoulderWeapon: 'ecm_suite',
+    legs: 'legs_biped_std',
     booster: 'boost_high_thrust',
   },
   weaponGroups: {
@@ -258,17 +181,17 @@ export const PRESET_STRIKER: MechBlueprint = {
     G4: ['leftArm', 'rightShoulder'],
   },
   armor: {
-    head: 45,
-    torsoFront: 160,
-    torsoRear: 65,
-    rightShoulderFront: 80,
-    rightShoulderRear: 40,
-    leftShoulderFront: 80,
-    leftShoulderRear: 40,
-    rightArm: 70,
-    leftArm: 70,
-    rightLeg: 70,
-    leftLeg: 70,
+    head: 25,
+    torsoFront: 110,
+    torsoRear: 25,
+    rightShoulderFront: 60,
+    rightShoulderRear: 15,
+    leftShoulderFront: 60,
+    leftShoulderRear: 15,
+    rightArm: 45,
+    leftArm: 45,
+    rightLeg: 50,
+    leftLeg: 50,
   },
   subroutines: buildDefaultSubroutines('skirmish', 105),
 };
@@ -280,42 +203,56 @@ export const PRESET_FORTRESS: MechBlueprint = {
   authorName: 'CodeMech Official',
   color: '#f59e0b',
   chassisId: 'chassis_fortress',
+  romSlots: {
+    S1: 'rom_std_s1_bal',
+    S2: 'rom_std_s2_heavy',
+    S3: 'rom_std_s3_advance',
+    S4: 'rom_std_s4_cool',
+    S5: 'rom_std_s5_close',
+  },
   boosterEnabled: false,
   ecmEnabled: false,
   lrmFireMode: 'salvo',
   extraHeatSinks: 2,
+  extraAmmo: {
+    rightArm: 1,
+    rightShoulder: 1,
+  },
+  weaponMountCounts: {
+    leftArm: 3,
+  },
   parts: {
     head: 'head_armored',
     torso: 'torso_heavy',
     rightShoulderMount: 'shd_heavy',
     leftShoulderMount: 'shd_heavy',
-    rightArmWeapon: 'ac10',
+    rightArmWeapon: 'ac20',
     leftArmWeapon: 'medium_laser',
-    rightShoulderWeapon: 'lrm10',
-    leftShoulderWeapon: 'large_laser',
-    legs: 'legs_heavy_quad',
+    rightShoulderWeapon: 'lrm15',
+    leftShoulderWeapon: 'ams_bap_pod',
+    legs: 'legs_biped_std',
     booster: 'boost_none',
   },
   weaponGroups: {
-    G1: ['rightArm', 'leftShoulder'],
+    G1: ['rightArm', 'leftArm'],
     G2: ['rightShoulder'],
-    G3: ['rightArm', 'leftArm'],
-    G4: ['leftArm', 'leftShoulder'],
+    G3: ['rightArm'],
+    G4: ['leftArm'],
   },
   armor: {
-    head: 110,
-    torsoFront: 500,
-    torsoRear: 190,
-    rightShoulderFront: 230,
-    rightShoulderRear: 100,
-    leftShoulderFront: 230,
-    leftShoulderRear: 100,
-    rightArm: 190,
-    leftArm: 290,
-    rightLeg: 330,
-    leftLeg: 330,
+    head: 70,
+    torsoFront: 375,
+    torsoRear: 95,
+    rightShoulderFront: 205,
+    rightShoulderRear: 55,
+    leftShoulderFront: 205,
+    leftShoulderRear: 55,
+    rightArm: 160,
+    leftArm: 160,
+    rightLeg: 160,
+    leftLeg: 160,
   },
-  subroutines: buildDefaultSubroutines('fortress', 190),
+  subroutines: buildDefaultSubroutines('fortress', 155),
 };
 
 export const PRESET_SNIPER: MechBlueprint = {
@@ -325,10 +262,20 @@ export const PRESET_SNIPER: MechBlueprint = {
   authorName: 'CodeMech Official',
   color: '#a855f7',
   chassisId: 'chassis_hawkeye',
+  romSlots: {
+    S1: 'rom_std_s1_sniper',
+    S2: 'rom_std_s2_lrm',
+    S3: 'rom_std_s3_sniper',
+    S4: 'rom_std_s4_cool',
+    S5: 'rom_std_s5_retreat',
+  },
   boosterEnabled: false,
   ecmEnabled: false,
   lrmFireMode: 'salvo',
-  extraHeatSinks: 1,
+  extraHeatSinks: 0,
+  weaponMountCounts: {
+    leftArm: 2,
+  },
   parts: {
     head: 'head_recon',
     torso: 'torso_light',
@@ -337,8 +284,8 @@ export const PRESET_SNIPER: MechBlueprint = {
     rightArmWeapon: 'gauss_rifle',
     leftArmWeapon: 'medium_laser',
     rightShoulderWeapon: 'lrm5',
-    leftShoulderWeapon: 'bap_probe',
-    legs: 'legs_hover',
+    leftShoulderWeapon: 'ams_bap_pod',
+    legs: 'legs_biped_std',
     booster: 'boost_none',
   },
   weaponGroups: {
@@ -348,19 +295,19 @@ export const PRESET_SNIPER: MechBlueprint = {
     G4: ['rightArm', 'leftArm'],
   },
   armor: {
-    head: 60,
-    torsoFront: 260,
-    torsoRear: 100,
-    rightShoulderFront: 130,
-    rightShoulderRear: 70,
-    leftShoulderFront: 120,
-    leftShoulderRear: 70,
-    rightArm: 120,
-    leftArm: 120,
-    rightLeg: 150,
-    leftLeg: 150,
+    head: 55,
+    torsoFront: 190,
+    torsoRear: 50,
+    rightShoulderFront: 110,
+    rightShoulderRear: 30,
+    leftShoulderFront: 110,
+    leftShoulderRear: 30,
+    rightArm: 70,
+    leftArm: 70,
+    rightLeg: 75,
+    leftLeg: 75,
   },
-  subroutines: buildDefaultSubroutines('sniper', 260),
+  subroutines: buildDefaultSubroutines('sniper', 240),
 };
 
 export const STARTER_MECHS: readonly MechBlueprint[] = [
@@ -389,14 +336,16 @@ export const DEFAULT_PILOT_PROFILE: PilotProfile = {
       { row: 1, col: 3, op: 'if_heat_below', dir: 'E', elseDir: 'W', param: 45 },
       { row: 1, col: 4, op: 'flag_a_off', dir: 'S' },
       { row: 2, col: 0, op: 'if_enemy_flank', dir: 'E', elseDir: 'S', param: 150 },
-      { row: 2, col: 1, op: 'call_s5', dir: 'S', target: 'flank', durationSec: 0.6 },
+      { row: 2, col: 1, op: 'call_s5', dir: 'E', target: 'flank', durationSec: 0.6 },
       { row: 3, col: 0, op: 'if_enemy_in_sight', dir: 'E', elseDir: 'S' },
-      { row: 3, col: 1, op: 'if_ammo_empty', dir: 'E', elseDir: 'S', weaponSlot: 'rightArm' },
-      { row: 3, col: 2, op: 'call_s2', dir: 'S', target: 'main', durationSec: 0.65 },
-      { row: 4, col: 1, op: 'call_s1', dir: 'S', target: 'main', durationSec: 0.7 },
-      { row: 4, col: 0, op: 'if_enemy_on_radar', dir: 'E', elseDir: 'S' },
-      { row: 4, col: 2, op: 'wire', dir: 'S' },
-      { row: 5, col: 0, op: 'call_s3', dir: 'E', target: 'nearest', durationSec: 0.65 },
+      { row: 3, col: 1, op: 'call_s3', dir: 'E', target: 'main', durationSec: 0.3 },
+      { row: 3, col: 2, op: 'if_ammo_empty', dir: 'E', elseDir: 'S', weaponSlot: 'rightArm' },
+      { row: 3, col: 3, op: 'call_s2', dir: 'S', target: 'main', durationSec: 0.65 },
+      { row: 4, col: 3, op: 'if_incoming_fire', dir: 'S', elseDir: 'E' },
+      { row: 4, col: 2, op: 'call_s1', dir: 'S', target: 'main', durationSec: 0.65 },
+      { row: 5, col: 2, op: 'if_incoming_fire', dir: 'E', elseDir: 'S' },
+      { row: 5, col: 3, op: 'call_s4', dir: 'S', target: 'attacker', param: 55, durationSec: 0.4 },
+      { row: 4, col: 0, op: 'call_s3', dir: 'S', target: 'nearest', durationSec: 0.5 },
     ],
   },
 };
@@ -412,13 +361,13 @@ export const PILOT_AGGRESSIVE: PilotProfile = {
       { row: 0, col: 0, op: 'start', dir: 'S' },
       { row: 1, col: 0, op: 'if_heat_above', dir: 'E', elseDir: 'S', param: 92 },
       { row: 1, col: 1, op: 'override_on', dir: 'E' },
-      { row: 1, col: 2, op: 'call_s5', dir: 'S', target: 'nearest', durationSec: 0.65 },
+      { row: 1, col: 2, op: 'call_s5', dir: 'E', target: 'nearest', durationSec: 0.65 },
       { row: 2, col: 0, op: 'override_off', dir: 'S' },
-      { row: 3, col: 0, op: 'if_enemy_dist_lt', dir: 'E', elseDir: 'S', param: 135 },
-      { row: 3, col: 1, op: 'call_s2', dir: 'S', target: 'nearest', durationSec: 0.65 },
-      { row: 4, col: 0, op: 'if_enemy_in_sight', dir: 'E', elseDir: 'S' },
-      { row: 4, col: 1, op: 'call_s1', dir: 'S', target: 'nearest', durationSec: 0.65 },
-      { row: 5, col: 0, op: 'call_s3', dir: 'E', target: 'nearest', durationSec: 0.6 },
+      { row: 3, col: 0, op: 'call_s3', dir: 'S', target: 'nearest', param: 95, durationSec: 0.3 },
+      { row: 4, col: 0, op: 'if_enemy_dist_lt', dir: 'E', elseDir: 'S', param: 135 },
+      { row: 4, col: 1, op: 'call_s2', dir: 'E', target: 'nearest', durationSec: 0.65 },
+      { row: 5, col: 0, op: 'if_enemy_in_sight', dir: 'E', elseDir: 'S' },
+      { row: 5, col: 1, op: 'call_s1', dir: 'E', target: 'nearest', param: 85, durationSec: 0.65 },
     ],
   },
 };
@@ -436,12 +385,14 @@ export const PILOT_SNIPER_TACTICIAN: PilotProfile = {
       { row: 1, col: 1, op: 'call_s4', dir: 'E', target: 'nearest', durationSec: 0.65 },
       { row: 1, col: 2, op: 'if_heat_below', dir: 'S', elseDir: 'W', param: 45 },
       { row: 2, col: 0, op: 'if_enemy_dist_lt', dir: 'E', elseDir: 'S', param: 115 },
-      { row: 2, col: 1, op: 'call_s5', dir: 'S', target: 'nearest', durationSec: 0.6 },
+      { row: 2, col: 1, op: 'call_s5', dir: 'E', target: 'nearest', durationSec: 0.6 },
       { row: 3, col: 0, op: 'if_enemy_in_sight', dir: 'E', elseDir: 'S' },
-      { row: 3, col: 1, op: 'call_s1', dir: 'S', target: 'weakest', durationSec: 0.7 },
+      { row: 3, col: 1, op: 'call_s3', dir: 'E', target: 'weakest', param: 250, durationSec: 0.3 },
+      { row: 3, col: 2, op: 'call_s1', dir: 'E', target: 'weakest', durationSec: 0.7 },
       { row: 4, col: 0, op: 'if_enemy_on_radar', dir: 'E', elseDir: 'S' },
-      { row: 4, col: 1, op: 'call_s2', dir: 'S', target: 'weakest', durationSec: 0.7 },
-      { row: 5, col: 0, op: 'call_s3', dir: 'E', target: 'main', durationSec: 0.6 },
+      { row: 4, col: 1, op: 'call_s3', dir: 'E', target: 'weakest', param: 250, durationSec: 0.3 },
+      { row: 4, col: 2, op: 'call_s2', dir: 'E', target: 'weakest', durationSec: 0.7 },
+      { row: 5, col: 0, op: 'call_s3', dir: 'E', target: 'main', param: 250, durationSec: 0.5 },
     ],
   },
 };
@@ -457,12 +408,14 @@ export const PILOT_TORSO_TANK: PilotProfile = {
       { row: 0, col: 0, op: 'start', dir: 'S' },
       { row: 1, col: 0, op: 'if_heat_above', dir: 'E', elseDir: 'S', param: 85 },
       { row: 1, col: 1, op: 'call_s4', dir: 'E', target: 'nearest', durationSec: 0.65 },
-      { row: 1, col: 2, op: 'if_heat_below', dir: 'S', elseDir: 'W', param: 45 },
-      { row: 2, col: 0, op: 'if_incoming_fire', dir: 'E', elseDir: 'S' },
-      { row: 2, col: 1, op: 'call_s2', dir: 'S', target: 'attacker', durationSec: 0.65 },
-      { row: 3, col: 0, op: 'if_enemy_in_sight', dir: 'E', elseDir: 'S' },
-      { row: 3, col: 1, op: 'call_s1', dir: 'S', target: 'main', durationSec: 0.7 },
-      { row: 4, col: 0, op: 'call_s3', dir: 'S', target: 'nearest', durationSec: 0.6 },
+      { row: 1, col: 2, op: 'if_heat_below', dir: 'E', elseDir: 'W', param: 45 },
+      { row: 2, col: 0, op: 'if_enemy_in_sight', dir: 'E', elseDir: 'S' },
+      { row: 2, col: 1, op: 'call_s3', dir: 'E', target: 'main', param: 155, durationSec: 0.3 },
+      { row: 2, col: 2, op: 'call_s1', dir: 'S', target: 'main', durationSec: 0.65 },
+      { row: 3, col: 2, op: 'if_incoming_fire', dir: 'E', elseDir: 'S' },
+      { row: 3, col: 3, op: 'call_s4', dir: 'S', target: 'attacker', param: 60, durationSec: 0.45 },
+      { row: 4, col: 3, op: 'call_s2', dir: 'S', target: 'attacker', durationSec: 0.6 },
+      { row: 3, col: 0, op: 'call_s3', dir: 'S', target: 'nearest', param: 155, durationSec: 0.5 },
     ],
   },
 };

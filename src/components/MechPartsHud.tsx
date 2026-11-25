@@ -1,10 +1,12 @@
-import { getWeaponSpec } from '../data/parts';
+import { getWeaponSlotMountCount, getWeaponSpec } from '../data/parts';
+import { isMechAmsActive, isMechBapActive, isMechEcmActive } from '../engine/mechSim';
 import {
   DualArmorPartRuntimeState,
   MechRuntimeState,
   SingleArmorPartRuntimeState,
   WeaponSlotId,
 } from '../types/mech';
+import { MechPaperdoll } from './MechPaperdoll';
 
 interface MechPartsHudProps {
   mech: MechRuntimeState | undefined;
@@ -15,37 +17,23 @@ function pct(cur: number, max: number): number {
   return Math.max(0, Math.min(100, Math.round((cur / max) * 100)));
 }
 
-function partColor(destroyed: boolean, ratio: number): string {
-  if (destroyed) return '#334155';
-  if (ratio > 0.7) return '#22c55e';
-  if (ratio > 0.35) return '#f59e0b';
-  return '#ef4444';
-}
-
-function dualRatio(p: DualArmorPartRuntimeState): number {
-  const cur = p.frontArmor + p.rearArmor + p.structure;
-  const max = p.maxFrontArmor + p.maxRearArmor + p.maxStructure;
-  return max > 0 ? cur / max : 0;
-}
-
-function singleRatio(p: SingleArmorPartRuntimeState): number {
-  const cur = p.armor + p.structure;
-  const max = p.maxArmor + p.maxStructure;
-  return max > 0 ? cur / max : 0;
-}
-
 function DualPartCard({
   title,
   part,
+  areaClass,
 }: {
   title: string;
   part: DualArmorPartRuntimeState;
+  areaClass?: string;
 }) {
   return (
-    <div className={`cm-part-box ${part.destroyed ? 'is-broken' : ''}`}>
+    <div
+      className={`cm-part-box ${part.destroyed ? 'is-broken' : ''} ${areaClass ?? ''}`}
+      title={`構造HP ${Math.round(part.structure)}/${part.maxStructure}`}
+    >
       <div className="cm-part-name">
         <span>{title}</span>
-        <span>{part.destroyed ? '破壊' : `${Math.round(part.structure)}/${part.maxStructure}`}</span>
+        <span>{part.destroyed ? '破壊' : `内${Math.round(part.structure)}`}</span>
       </div>
       <div className="cm-bar-row">
         <span>前</span>
@@ -69,16 +57,21 @@ function SinglePartCard({
   title,
   part,
   critical,
+  areaClass,
 }: {
   title: string;
   part: SingleArmorPartRuntimeState;
   critical?: boolean;
+  areaClass?: string;
 }) {
   return (
-    <div className={`cm-part-box ${part.destroyed ? 'is-broken' : ''}`}>
+    <div
+      className={`cm-part-box ${part.destroyed ? 'is-broken' : ''} ${areaClass ?? ''}`}
+      title={`構造HP ${Math.round(part.structure)}/${part.maxStructure}`}
+    >
       <div className="cm-part-name">
         <span>{title}{critical ? '★' : ''}</span>
-        <span>{part.destroyed ? '破壊' : `${Math.round(part.structure)}/${part.maxStructure}`}</span>
+        <span>{part.destroyed ? '破壊' : `内${Math.round(part.structure)}`}</span>
       </div>
       <div className="cm-bar-row">
         <span>甲</span>
@@ -103,79 +96,54 @@ export function MechPartsHud({ mech }: MechPartsHudProps) {
   const heatPct = Math.min(100, pct(mech.heat, mech.maxHeat));
   const p = mech.parts;
 
-  const headFill = partColor(p.head.destroyed, singleRatio(p.head));
-  const torsoFrontFill = partColor(
-    p.torso.destroyed,
-    p.torso.maxFrontArmor > 0 ? p.torso.frontArmor / p.torso.maxFrontArmor : p.torso.structure / p.torso.maxStructure
-  );
-  const torsoRearFill = partColor(
-    p.torso.destroyed,
-    p.torso.maxRearArmor > 0 ? p.torso.rearArmor / p.torso.maxRearArmor : p.torso.structure / p.torso.maxStructure
-  );
-  const rTorsoFrontFill = partColor(
-    p.rightShoulder.destroyed,
-    p.rightShoulder.maxFrontArmor > 0
-      ? p.rightShoulder.frontArmor / p.rightShoulder.maxFrontArmor
-      : dualRatio(p.rightShoulder)
-  );
-  const rTorsoRearFill = partColor(
-    p.rightShoulder.destroyed,
-    p.rightShoulder.maxRearArmor > 0
-      ? p.rightShoulder.rearArmor / p.rightShoulder.maxRearArmor
-      : dualRatio(p.rightShoulder)
-  );
-  const lTorsoFrontFill = partColor(
-    p.leftShoulder.destroyed,
-    p.leftShoulder.maxFrontArmor > 0
-      ? p.leftShoulder.frontArmor / p.leftShoulder.maxFrontArmor
-      : dualRatio(p.leftShoulder)
-  );
-  const lTorsoRearFill = partColor(
-    p.leftShoulder.destroyed,
-    p.leftShoulder.maxRearArmor > 0
-      ? p.leftShoulder.rearArmor / p.leftShoulder.maxRearArmor
-      : dualRatio(p.leftShoulder)
-  );
-  const rArmFill = partColor(p.rightArm.destroyed, singleRatio(p.rightArm));
-  const lArmFill = partColor(p.leftArm.destroyed, singleRatio(p.leftArm));
-  const rLegFill = partColor(p.rightLeg.destroyed, singleRatio(p.rightLeg));
-  const lLegFill = partColor(p.leftLeg.destroyed, singleRatio(p.leftLeg));
+  const torsoYaw =
+    mech.torsoYawOffsetDeg >= 0
+      ? `+${Math.round(mech.torsoYawOffsetDeg)}°`
+      : `${Math.round(mech.torsoYawOffsetDeg)}°`;
+  const visionDeg = Math.round(mech.stats.visionFovHalfDeg * (p.head.destroyed ? 0.55 : 1)) * 2;
+  const radarM = Math.round(mech.stats.radarRange * (p.head.destroyed ? 0.4 : 1));
+  const lockPct =
+    mech.lockTargetId && mech.lockRequiredSec > 0
+      ? Math.round(Math.min(100, (mech.lockProgressSec / mech.lockRequiredSec) * 100))
+      : null;
 
   return (
     <div className="cm-parts-hud">
       <div className="cm-hud-top">
-        <div>
-          <strong>{mech.name}</strong> ({mech.teamId} / {mech.stats.loadCapacity}t) —{' '}
-          {mech.alive ? `高度 ${mech.pos.z.toFixed(1)}m` : `撃破 (${mech.destroyedReason})`}{' '}
-          <span style={{ color: '#94a3b8', fontSize: '0.72rem' }}>
-            [
-            {!mech.stats.hasBoosterMount
-              ? 'ブースト非搭載'
-              : mech.stats.boosterActive
-                ? 'ブーストON'
-                : 'ブーストOFF'}
-            {' / '}
-            腰 {mech.torsoYawOffsetDeg >= 0 ? `+${Math.round(mech.torsoYawOffsetDeg)}` : Math.round(mech.torsoYawOffsetDeg)}°
-            {' / '}
-            視野 {Math.round(mech.stats.visionFovHalfDeg * (mech.parts.head.destroyed ? 0.55 : 1)) * 2}° ({Math.round(mech.stats.radarRange * (mech.parts.head.destroyed ? 0.4 : 1))}m)
-            {' / '}
-            全周RCS {mech.stats.radarSignatureRange}m
-            {mech.stats.ecmActive &&
-              (mech.ecmDisruptedTicks > 0 ? ' / ECM:EMP停止' : ' / ECM稼働')}
-            {mech.stats.hasBap && ' / BAP'}
-            {mech.stats.hasAms && ' / AMS'}
-            {mech.lockTargetId &&
-              ` / LOCK ${Math.round(
-                mech.lockRequiredSec > 0
-                  ? Math.min(100, (mech.lockProgressSec / mech.lockRequiredSec) * 100)
-                  : 0
-              )}%`}
-            ]
+        <div className="cm-hud-title-group">
+          <strong>{mech.name}</strong>
+          <span className="cm-hud-meta-badge">
+            {mech.teamId} · {mech.stats.loadCapacity}t
           </span>
+          {!mech.alive && (
+            <span className="cm-hud-dead-badge">撃破 ({mech.destroyedReason})</span>
+          )}
         </div>
         <div className="cm-hud-stats">
-          与ダメ {Math.round(mech.damageDealt)} / 被ダメ {Math.round(mech.damageTaken)} / 撃破 {mech.kills}
+          与 {Math.round(mech.damageDealt)} / 被 {Math.round(mech.damageTaken)} / 撃破 {mech.kills}
         </div>
+      </div>
+
+      <div className="cm-hud-telemetry">
+        <span>高度 {mech.pos.z.toFixed(1)}m</span>
+        <span>腰 {torsoYaw}</span>
+        <span>視野 {visionDeg}° / {radarM}m</span>
+        <span>RCS {mech.stats.radarSignatureRange}m</span>
+        {mech.stats.hasBoosterMount && (
+          <span>{mech.stats.boosterActive ? 'ブーストON' : 'ブーストOFF'}</span>
+        )}
+        {(mech.stats.ecmActive || isMechEcmActive(mech)) && (
+          <span>
+            {mech.ecmDisruptedTicks > 0
+              ? 'ECM:EMP停止'
+              : isMechEcmActive(mech)
+                ? 'ECM稼働'
+                : 'ECM停止'}
+          </span>
+        )}
+        {mech.stats.hasBap && <span>{isMechBapActive(mech) ? 'BAP稼働' : 'BAP停止'}</span>}
+        {mech.stats.hasAms && <span>{isMechAmsActive(mech) ? 'AMS稼働' : 'AMS停止'}</span>}
+        {lockPct !== null && <span>LOCK {lockPct}%</span>}
       </div>
 
       <div className="cm-en-row">
@@ -203,47 +171,17 @@ export function MechPartsHud({ mech }: MechPartsHudProps) {
       </div>
 
       <div className="cm-hud-body">
-        <svg
-          className="cm-silhouette-svg"
-          viewBox="0 0 120 132"
-          aria-label="機体8部位 BattleMech シルエット"
-        >
-          {/* Recessed Cockpit Head */}
-          <rect x="49" y="6" width="22" height="14" rx="4" fill={headFill} stroke="#0f172a" strokeWidth="1.5" />
-          <text x="60" y="15.5" textAnchor="middle" fontSize="7" fill="#020617" fontWeight="800">頭</text>
-          {/* Right Torso (viewer-left) front & rear */}
-          <rect x="24" y="23" width="21" height="24" rx="3" fill={rTorsoFrontFill} stroke="#0f172a" strokeWidth="1.5" />
-          <rect x="24" y="48" width="21" height="14" rx="2" fill={rTorsoRearFill} stroke="#0f172a" strokeWidth="1.5" />
-          {/* Center Torso front & rear */}
-          <rect x="47" y="21" width="26" height="26" rx="3" fill={torsoFrontFill} stroke="#0f172a" strokeWidth="1.5" />
-          <rect x="47" y="48" width="26" height="15" rx="2" fill={torsoRearFill} stroke="#0f172a" strokeWidth="1.5" />
-          {/* Left Torso (viewer-right) front & rear */}
-          <rect x="75" y="23" width="21" height="24" rx="3" fill={lTorsoFrontFill} stroke="#0f172a" strokeWidth="1.5" />
-          <rect x="75" y="48" width="21" height="14" rx="2" fill={lTorsoRearFill} stroke="#0f172a" strokeWidth="1.5" />
-          {/* Outboard Arms */}
-          <rect x="7" y="29" width="14" height="39" rx="3" fill={rArmFill} stroke="#0f172a" strokeWidth="1.5" />
-          <rect x="99" y="29" width="14" height="39" rx="3" fill={lArmFill} stroke="#0f172a" strokeWidth="1.5" />
-          {/* Pelvis & Legs */}
-          <rect x="40" y="64" width="40" height="7" rx="2" fill="#334155" stroke="#0f172a" strokeWidth="1.2" />
-          <rect x="37" y="72" width="17" height="53" rx="3" fill={rLegFill} stroke="#0f172a" strokeWidth="1.5" />
-          <rect x="66" y="72" width="17" height="53" rx="3" fill={lLegFill} stroke="#0f172a" strokeWidth="1.5" />
-          <text x="34.5" y="37" textAnchor="middle" fontSize="6.8" fill="#020617" fontWeight="700">右胴</text>
-          <text x="60" y="36" textAnchor="middle" fontSize="7" fill="#020617" fontWeight="800">中胴</text>
-          <text x="85.5" y="37" textAnchor="middle" fontSize="6.8" fill="#020617" fontWeight="700">左胴</text>
-          <text x="60" y="58" textAnchor="middle" fontSize="7" fill="#020617" fontWeight="700">後</text>
-          <text x="14" y="51" textAnchor="middle" fontSize="6.8" fill="#020617" fontWeight="700">右</text>
-          <text x="106" y="51" textAnchor="middle" fontSize="6.8" fill="#020617" fontWeight="700">左</text>
-        </svg>
+        <MechPaperdoll mode="battle" parts={p} className="cm-silhouette-svg" />
 
-        <div className="cm-parts-grid">
-          <SinglePartCard title="頭" part={p.head} critical />
-          <DualPartCard title="中央胴" part={p.torso} />
-          <DualPartCard title="右胴" part={p.rightShoulder} />
-          <DualPartCard title="左胴" part={p.leftShoulder} />
-          <SinglePartCard title="右腕" part={p.rightArm} />
-          <SinglePartCard title="左腕" part={p.leftArm} />
-          <SinglePartCard title="右脚" part={p.rightLeg} />
-          <SinglePartCard title="左脚" part={p.leftLeg} />
+        <div className="cm-parts-grid is-anatomical">
+          <SinglePartCard title="頭" part={p.head} critical areaClass="cm-area-head" />
+          <DualPartCard title="右胴" part={p.rightShoulder} areaClass="cm-area-rtorso" />
+          <DualPartCard title="中央胴" part={p.torso} areaClass="cm-area-ctorso" />
+          <DualPartCard title="左胴" part={p.leftShoulder} areaClass="cm-area-ltorso" />
+          <SinglePartCard title="右腕" part={p.rightArm} areaClass="cm-area-rarm" />
+          <SinglePartCard title="左腕" part={p.leftArm} areaClass="cm-area-larm" />
+          <SinglePartCard title="右脚" part={p.rightLeg} areaClass="cm-area-rleg" />
+          <SinglePartCard title="左脚" part={p.leftLeg} areaClass="cm-area-lleg" />
         </div>
       </div>
 
@@ -252,6 +190,7 @@ export function MechPartsHud({ mech }: MechPartsHudProps) {
           const wState = mech.weapons[slot];
           if (wState.weaponId === 'shd_none' || wState.weaponId === 'arm_none') return null;
           const spec = getWeaponSpec(wState.weaponId);
+          const mountCount = getWeaponSlotMountCount(mech.blueprint, slot);
           const partBroken = mech.parts[slot].destroyed;
           const outOfAmmo = spec.maxAmmo > 0 && wState.ammoRemaining <= 0;
           return (
@@ -265,14 +204,17 @@ export function MechPartsHud({ mech }: MechPartsHudProps) {
                     : ''
               }`}
             >
-              {SLOT_LABELS[slot]}:{spec.name.split(' ')[0] ?? spec.name}{' '}
+              {SLOT_LABELS[slot]}:{spec.name.split(' ')[0] ?? spec.name}
+              {mountCount > 1 ? `×${mountCount}` : ''}{' '}
               {partBroken
                 ? '破壊'
                 : outOfAmmo
                   ? '弾切れ'
                   : wState.ammoRemaining > 0
                     ? `残${wState.ammoRemaining}`
-                    : '∞'}
+                    : spec.maxAmmo < 0
+                      ? '∞'
+                      : '稼働'}
             </span>
           );
         })}

@@ -1,3 +1,4 @@
+import { getControlTierSpec, getEffectiveSubroutineGridSize } from '../data/parts';
 import {
   GridDir,
   MechRuntimeState,
@@ -15,6 +16,8 @@ import {
 import { clamp } from './math';
 import { EMPTY_CONTROL_INPUT } from './mechSim';
 import {
+  LatchedLegMode,
+  LatchedTorsoMode,
   SubroutineExecState,
   advanceGridCoords,
   getWeaponReadyStatuses,
@@ -39,6 +42,8 @@ export interface PilotRuntimeState {
   flagA: boolean;
   flagB: boolean;
   overrideLatched: boolean;
+  latchedLeg: LatchedLegMode;
+  latchedTorso: LatchedTorsoMode;
   pilotTimedTicksRemaining: number;
   pilotTimedRow: number;
   pilotTimedCol: number;
@@ -69,6 +74,8 @@ export function createPilotRuntimeState(profile: PilotProfile): PilotRuntimeStat
     flagA: false,
     flagB: false,
     overrideLatched: false,
+    latchedLeg: null,
+    latchedTorso: null,
     pilotTimedTicksRemaining: 0,
     pilotTimedRow: start.row,
     pilotTimedCol: start.col,
@@ -263,12 +270,64 @@ export function evaluatePilotTick(
     },
   });
 
+  // 0. Robot Direct Mode (4x4 / 6x6): bypass Pilot 6x6 layer and loop S1 directly
+  const tierSpec = getControlTierSpec(mech.blueprint.controlTier);
+  if (!tierSpec.pilotEnabled) {
+    const s1 =
+      mech.blueprint.romSlots?.S1 === null
+        ? undefined
+        : mech.blueprint.subroutines.find((s) => s.slotId === 'S1');
+    const target = selectTarget('main', sensor, mech);
+    if (!s1) {
+      return buildResult(null, null, null, target);
+    }
+
+    const effectiveSize = tierSpec.slotGridSizes.S1;
+    if (!runtime.activeCall || runtime.activeCall.slotId !== 'S1') {
+      runtime.activeCall = {
+        slotId: 'S1',
+        targetMode: 'main',
+        maxTicksRemaining: Number.MAX_SAFE_INTEGER,
+        subExec: startSubroutineExec(s1, runtime.overrideLatched, effectiveSize, {
+          latchedLeg: runtime.latchedLeg,
+          latchedTorso: runtime.latchedTorso,
+        }),
+        callCellRow: 0,
+        callCellCol: 0,
+        callDir: 'E',
+      };
+    }
+
+    const res = stepSubroutineExecution(
+      s1,
+      runtime.activeCall.subExec,
+      control,
+      sensor,
+      mech,
+      state,
+      target,
+      runtime.evadeSideSign,
+      effectiveSize
+    );
+    if (res.lastBranch) {
+      runtime.lastBranch = res.lastBranch;
+    }
+    runtime.overrideLatched = runtime.activeCall.subExec.overrideLatched;
+    runtime.latchedLeg = runtime.activeCall.subExec.latchedLeg;
+    runtime.latchedTorso = runtime.activeCall.subExec.latchedTorso;
+    if (res.completed) {
+      runtime.activeCall = null;
+    }
+    return buildResult(null, 'S1', res.activeCell, target);
+  }
+
   // 1. Continue running an active subroutine CALL if present
   if (runtime.activeCall) {
     const call = runtime.activeCall;
     const sub =
-      mech.blueprint.subroutines.find((s) => s.slotId === call.slotId) ??
-      mech.blueprint.subroutines[0];
+      mech.blueprint.romSlots?.[call.slotId] === null
+        ? undefined
+        : mech.blueprint.subroutines.find((s) => s.slotId === call.slotId);
     const target = selectTarget(call.targetMode, sensor, mech);
 
     if (!sub) {
@@ -279,6 +338,7 @@ export function evaluatePilotTick(
       return buildResult({ row: call.callCellRow, col: call.callCellCol }, null, null, target);
     }
 
+    const effectiveSize = getEffectiveSubroutineGridSize(mech.blueprint, sub.slotId);
     const res = stepSubroutineExecution(
       sub,
       call.subExec,
@@ -287,12 +347,15 @@ export function evaluatePilotTick(
       mech,
       state,
       target,
-      runtime.evadeSideSign
+      runtime.evadeSideSign,
+      effectiveSize
     );
     if (res.lastBranch) {
       runtime.lastBranch = res.lastBranch;
     }
     runtime.overrideLatched = call.subExec.overrideLatched;
+    runtime.latchedLeg = call.subExec.latchedLeg;
+    runtime.latchedTorso = call.subExec.latchedTorso;
     call.maxTicksRemaining -= 1;
 
     const callCell = { row: call.callCellRow, col: call.callCellCol };
@@ -430,8 +493,9 @@ export function evaluatePilotTick(
     const slotId = callOpToSlotId(cell.op);
     if (slotId) {
       const sub =
-        mech.blueprint.subroutines.find((s) => s.slotId === slotId) ??
-        mech.blueprint.subroutines[0];
+        mech.blueprint.romSlots?.[slotId] === null
+          ? undefined
+          : mech.blueprint.subroutines.find((s) => s.slotId === slotId);
       const targetMode = cell.target ?? 'main';
       const target = selectTarget(targetMode, sensor, mech);
 
@@ -442,7 +506,12 @@ export function evaluatePilotTick(
         return buildResult({ row: r, col: c }, null, null, target);
       }
 
-      const subExec = startSubroutineExec(sub, runtime.overrideLatched);
+      const effectiveSize = getEffectiveSubroutineGridSize(mech.blueprint, sub.slotId);
+      const subExec = startSubroutineExec(sub, runtime.overrideLatched, effectiveSize, {
+        latchedLeg: runtime.latchedLeg,
+        latchedTorso: runtime.latchedTorso,
+        callArg: cell.param,
+      });
       const maxTicks = clamp(Math.round((cell.durationSec ?? 0.65) * SIM_TPS), 2, 120);
       const res = stepSubroutineExecution(
         sub,
@@ -452,12 +521,15 @@ export function evaluatePilotTick(
         mech,
         state,
         target,
-        runtime.evadeSideSign
+        runtime.evadeSideSign,
+        effectiveSize
       );
       if (res.lastBranch) {
         runtime.lastBranch = res.lastBranch;
       }
       runtime.overrideLatched = subExec.overrideLatched;
+      runtime.latchedLeg = subExec.latchedLeg;
+      runtime.latchedTorso = subExec.latchedTorso;
 
       if (!res.completed && maxTicks - 1 > 0) {
         runtime.activeCall = {

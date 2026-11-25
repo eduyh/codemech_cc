@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { getMechTorsoWorldYaw, getMechTotalIntegrity } from '../engine/mechSim';
+import {
+  getMechTorsoWorldYaw,
+  getMechTotalIntegrity,
+  isMechAmsActive,
+  isMechBapActive,
+  isMechEcmActive,
+} from '../engine/mechSim';
 import { clamp, degToRad } from '../engine/math';
 import {
   disposeObject3D,
@@ -179,7 +185,10 @@ export function MechCanvas3D({
 
     for (const mech of state.mechs) {
       const teamHex = getTeamColorHex(teamOrder, mech.teamId);
-      const sig = `${mech.blueprint.id}|${mech.blueprint.chassisId}|${mech.blueprint.boosterEnabled ? 1 : 0}|${mech.blueprint.color}|${Object.values(mech.blueprint.parts).join(',')}`;
+      const mountsSig = Object.entries(mech.blueprint.weaponMountCounts ?? {})
+        .map(([k, v]) => `${k}:${v}`)
+        .join(',');
+      const sig = `${mech.blueprint.id}|${mech.blueprint.chassisId}|${mech.blueprint.boosterEnabled ? 1 : 0}|${mech.blueprint.color}|${Object.values(mech.blueprint.parts).join(',')}|${mountsSig}`;
       let rig = rigsRef.current.get(mech.id);
       if (!rig || rig.blueprintSignature !== sig || rig.teamColorHex !== teamHex) {
         if (rig) {
@@ -309,9 +318,9 @@ export function MechCanvas3D({
         const effectiveFovHalf =
           focusedMech.stats.visionFovHalfDeg * (focusedMech.parts.head.destroyed ? 0.55 : 1.0);
         const aimY = 6.8 * focusedMech.stats.sizeScale;
-        const ecmUp = focusedMech.stats.ecmActive && focusedMech.ecmDisruptedTicks <= 0;
-        const amsUp = focusedMech.stats.hasAms;
-        const bapUp = focusedMech.stats.hasBap;
+        const ecmUp = isMechEcmActive(focusedMech);
+        const amsUp = isMechAmsActive(focusedMech);
+        const bapUp = isMechBapActive(focusedMech);
         const specKey = `${Math.round(effectiveRadar)}_${Math.round(effectiveFovHalf)}_${headRadarMult}_${focusedMech.stats.sizeScale}_${ecmUp ? 1 : 0}_${amsUp ? 1 : 0}_${bapUp ? 1 : 0}`;
         if (tacGroup.children.length === 0 || tacticalSpecKeyRef.current !== specKey) {
           while (tacGroup.children.length > 0) {

@@ -1,5 +1,10 @@
 import * as THREE from 'three';
-import { getArmWeaponSpec, getChassisSpec, getShoulderWeaponSpec } from '../data/parts';
+import {
+  getArmWeaponSpec,
+  getChassisSpec,
+  getShoulderWeaponSpec,
+  getWeaponSlotMountCount,
+} from '../data/parts';
 import { getSurfaceHeight } from '../engine/terrain';
 import { MechPartId, MechRuntimeState, TerrainConfig } from '../types/mech';
 import { simToThreePos, simYawToThreeRotY } from './coords';
@@ -30,7 +35,7 @@ function tagClickable(obj: THREE.Object3D, mechId: string): void {
   });
 }
 
-function buildWeaponBarrel(
+function buildWeaponBarrelSingle(
   weaponId: string,
   gunMat: THREE.Material,
   glowMat: THREE.Material,
@@ -83,22 +88,50 @@ function buildWeaponBarrel(
     tip.position.set(0, -0.1, -1.65);
     g.add(pod, tip);
   } else {
-    // ac5 / ac10 / default ballistic cannon
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.44, 1.45), gunMat);
+    // ac5 / ac10 / ac20 / default ballistic cannon
+    const isHeavy = weaponId === 'ac20';
+    const isMed = weaponId === 'ac10';
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(isHeavy ? 0.56 : 0.42, isHeavy ? 0.56 : 0.44, isHeavy ? 1.6 : 1.45),
+      gunMat
+    );
     body.position.set(0, -0.1, -1.05);
     const barrel = new THREE.Mesh(
-      new THREE.CylinderGeometry(weaponId === 'ac10' ? 0.13 : 0.09, 0.11, 1.35, 8),
+      new THREE.CylinderGeometry(isHeavy ? 0.19 : isMed ? 0.13 : 0.09, isHeavy ? 0.21 : 0.11, isHeavy ? 1.15 : 1.35, 8),
       gunMat
     );
     barrel.rotation.x = Math.PI / 2;
-    barrel.position.set(0, -0.06, -2.1);
+    barrel.position.set(0, -0.06, isHeavy ? -1.95 : -2.1);
     g.add(body, barrel);
   }
 
   return g;
 }
 
-function buildSideTorsoWeapon(
+function buildWeaponBarrel(
+  weaponId: string,
+  mountCount: 1 | 2 | 3,
+  gunMat: THREE.Material,
+  glowMat: THREE.Material,
+  bladeMat: THREE.Material,
+  shieldMat: THREE.Material
+): THREE.Group {
+  const wrap = new THREE.Group();
+  if (weaponId === 'arm_none') return wrap;
+  for (let i = 0; i < mountCount; i++) {
+    const unit = buildWeaponBarrelSingle(weaponId, gunMat, glowMat, bladeMat, shieldMat);
+    if (mountCount > 1) {
+      const off = (i - (mountCount - 1) * 0.5) * 0.24;
+      unit.position.x = off;
+      unit.position.y = (i % 2) * 0.12;
+      unit.scale.set(0.84, 0.84, 0.94);
+    }
+    wrap.add(unit);
+  }
+  return wrap;
+}
+
+function buildSideTorsoWeaponSingle(
   weaponId: string,
   gunMat: THREE.Material,
   accentMat: THREE.Material
@@ -112,10 +145,11 @@ function buildSideTorsoWeapon(
     const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.28, 3.0), accentMat);
     barrel.position.set(0, 0.98, -1.65);
     g.add(housing, barrel);
-  } else if (weaponId === 'flak_pod' || weaponId === 'lbx_shotgun' || weaponId === 'ac5') {
-    const bay = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.72, 0.9), gunMat);
+  } else if (weaponId === 'flak_pod' || weaponId === 'lbx_shotgun' || weaponId === 'ac5' || weaponId === 'ac20') {
+    const rad = weaponId === 'ac20' ? 0.25 : 0.17;
+    const bay = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.74, 0.95), gunMat);
     bay.position.set(0, 0.38, -0.92);
-    const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.95, 8), gunMat);
+    const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad + 0.02, 0.95, 8), gunMat);
     muzzle.rotation.x = Math.PI / 2;
     muzzle.position.set(0, 0.38, -1.45);
     g.add(bay, muzzle);
@@ -132,15 +166,31 @@ function buildSideTorsoWeapon(
     barrel.rotation.x = Math.PI / 2;
     barrel.position.set(0, 1.48, -0.45);
     g.add(turret, barrel);
-  } else if (weaponId === 'bap_probe') {
-    const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.22, 0.42, 8), gunMat);
+  } else if (weaponId === 'bap_probe' || weaponId === 'ecm_suite') {
+    const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.24, 0.42, 8), gunMat);
     dish.position.set(0, 1.38, -0.05);
-    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.95, 6), accentMat);
-    mast.position.set(0, 1.95, -0.05);
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.0, 6), accentMat);
+    mast.position.set(0, 1.98, -0.05);
     g.add(dish, mast);
+  } else if (weaponId === 'ams_bap_pod' || weaponId === 'lams_bap_pod' || weaponId === 'ecm_ams_pod') {
+    const pod = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.48, 0.72), gunMat);
+    pod.position.set(0, 1.36, -0.05);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.7, 6), accentMat);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(-0.15, 1.5, -0.42);
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.95, 6), accentMat);
+    mast.position.set(0.16, 1.9, -0.05);
+    g.add(pod, barrel, mast);
   } else {
-    // lrm5 / lrm10 / lrm15 / srm_rocket / streak_srm: integrated torso missile pod
-    const w = weaponId === 'lrm15' ? 1.12 : weaponId === 'lrm10' ? 0.96 : 0.78;
+    // lrm5 / lrm10 / lrm15 / lrm20 / srm_rocket / streak_srm: integrated torso missile pod
+    const w =
+      weaponId === 'lrm20'
+        ? 1.24
+        : weaponId === 'lrm15'
+          ? 1.12
+          : weaponId === 'lrm10'
+            ? 0.96
+            : 0.78;
     const pod = new THREE.Mesh(new THREE.BoxGeometry(w, 0.76, 1.35), gunMat);
     pod.position.set(0, 1.12, -0.22);
     const cap = new THREE.Mesh(new THREE.BoxGeometry(w * 0.84, 0.58, 0.14), accentMat);
@@ -149,6 +199,27 @@ function buildSideTorsoWeapon(
   }
 
   return g;
+}
+
+function buildSideTorsoWeapon(
+  weaponId: string,
+  mountCount: 1 | 2 | 3,
+  gunMat: THREE.Material,
+  accentMat: THREE.Material
+): THREE.Group {
+  const wrap = new THREE.Group();
+  if (weaponId === 'shd_none') return wrap;
+  for (let i = 0; i < mountCount; i++) {
+    const unit = buildSideTorsoWeaponSingle(weaponId, gunMat, accentMat);
+    if (mountCount > 1) {
+      const off = (i - (mountCount - 1) * 0.5) * 0.28;
+      unit.position.x = off;
+      unit.position.y = (i % 2) * 0.2;
+      unit.scale.set(0.84, 0.84, 0.94);
+    }
+    wrap.add(unit);
+  }
+  return wrap;
 }
 
 function buildLegAssembly(
@@ -316,6 +387,7 @@ export function buildProceduralMechRig(
     rStRear,
     buildSideTorsoWeapon(
       getShoulderWeaponSpec(mech.blueprint.parts.rightShoulderWeapon).id,
+      getWeaponSlotMountCount(mech.blueprint, 'rightShoulder'),
       gunMat,
       visorMat
     )
@@ -336,6 +408,7 @@ export function buildProceduralMechRig(
     lStRear,
     buildSideTorsoWeapon(
       getShoulderWeaponSpec(mech.blueprint.parts.leftShoulderWeapon).id,
+      getWeaponSlotMountCount(mech.blueprint, 'leftShoulder'),
       gunMat,
       visorMat
     )
@@ -355,6 +428,7 @@ export function buildProceduralMechRig(
   rFore.position.set(0.05, -1.62, -0.45);
   const rWep = buildWeaponBarrel(
     getArmWeaponSpec(mech.blueprint.parts.rightArmWeapon).id,
+    getWeaponSlotMountCount(mech.blueprint, 'rightArm'),
     gunMat,
     glowMat,
     bladeMat,
@@ -377,6 +451,7 @@ export function buildProceduralMechRig(
   lFore.position.set(-0.05, -1.62, -0.45);
   const lWep = buildWeaponBarrel(
     getArmWeaponSpec(mech.blueprint.parts.leftArmWeapon).id,
+    getWeaponSlotMountCount(mech.blueprint, 'leftArm'),
     gunMat,
     glowMat,
     bladeMat,
@@ -536,7 +611,7 @@ export function updateMechRigAnimation(
   rig.bodyGroup.rotation.z = 0;
 
   const horizSpeed = Math.hypot(mech.vel.x, mech.vel.y);
-  const isHover = mech.blueprint.parts.legs === 'legs_hover';
+  const isHover = getChassisSpec(mech.blueprint.chassisId).legStyle === 'hover';
 
   if (!mech.grounded) {
     rig.rightLegPivot.rotation.x = 0.35;

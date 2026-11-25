@@ -100,9 +100,19 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
     );
     expect(outFlank.activeSubroutineSlot).toBe('S5');
 
-    // 2. Remove flanker, frontEnemy visible with ammo -> dispatches S1
+    // 2. Remove flanker, frontEnemy visible with ammo -> dispatches S3 (movement update) then S1 (attack)
     sim.mechs[2].pos.x = 550;
     const rt2 = createPilotRuntimeState(DEFAULT_PILOT_PROFILE);
+    const outMove = evaluatePilotTick(
+      DEFAULT_PILOT_PROFILE,
+      rt2,
+      buildMechSensorState(sim, player.id),
+      player,
+      sim
+    );
+    expect(outMove.activeSubroutineSlot).toBe('S3');
+    expect(rt2.latchedLeg?.op).toBe('move_approach');
+    sim.tick += 1;
     const outMain = evaluatePilotTick(
       DEFAULT_PILOT_PROFILE,
       rt2,
@@ -112,9 +122,18 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
     );
     expect(outMain.activeSubroutineSlot).toBe('S1');
 
-    // 3. Deplete rightArm ammo -> dispatches S2 backup weapons
+    // 3. Deplete rightArm ammo -> dispatches S3 then S2 backup weapons
     player.weapons.rightArm.ammoRemaining = 0;
     const rt3 = createPilotRuntimeState(DEFAULT_PILOT_PROFILE);
+    const outMove3 = evaluatePilotTick(
+      DEFAULT_PILOT_PROFILE,
+      rt3,
+      buildMechSensorState(sim, player.id),
+      player,
+      sim
+    );
+    expect(outMove3.activeSubroutineSlot).toBe('S3');
+    sim.tick += 1;
     const outBackup = evaluatePilotTick(
       DEFAULT_PILOT_PROFILE,
       rt3,
@@ -202,5 +221,154 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
         expect(Number.isFinite(m0.pos.x)).toBe(true);
       }
     }
+  });
+
+  it('bypasses Pilot 6x6 and loops S1 directly in direct_4x4 (ignoring >=4 out-of-bounds cells) and direct_6x6', () => {
+    // 1. direct_4x4: empty pilot + out-of-bounds cell at (0,4) must be ignored
+    const bp4 = structuredClone(STARTER_MECHS[0]);
+    bp4.controlTier = 'direct_4x4';
+    bp4.subroutines = bp4.subroutines.map((s) =>
+      s.slotId === 'S1'
+        ? {
+            slotId: 'S1',
+            name: 'Direct 4x4',
+            gridSize: 6,
+            cells: [
+              { row: 0, col: 0, op: 'start', dir: 'E' },
+              { row: 0, col: 1, op: 'move_approach', dir: 'E' },
+              { row: 0, col: 2, op: 'torso_track', dir: 'E' },
+              { row: 0, col: 3, op: 'fire_group_1', dir: 'E', durationSec: 0.45 },
+              // Out of 4x4 bounds -> must NOT be executed
+              { row: 0, col: 4, op: 'emergency_cool', dir: 'S', durationSec: 0.8 },
+            ],
+          }
+        : s
+    );
+    const emptyPilot = {
+      version: 2,
+      id: 'empty_pilot',
+      name: 'Empty Pilot',
+      grid: { gridSize: 6 as const, cells: [{ row: 0, col: 0, op: 'start' as const, dir: 'E' as const }] },
+    };
+
+    const sim4 = createThreeMechSim(123);
+    sim4.mechs[0].blueprint = bp4;
+    const rt4 = createPilotRuntimeState(emptyPilot);
+    let sawFire = false;
+    let sawCool = false;
+    let sawPilotCell = false;
+    for (let t = 0; t < 40; t++) {
+      sim4.tick += 1;
+      const out = evaluatePilotTick(
+        emptyPilot,
+        rt4,
+        buildMechSensorState(sim4, sim4.mechs[0].id),
+        sim4.mechs[0],
+        sim4
+      );
+      if (out.activePilotCell !== null) sawPilotCell = true;
+      if (out.activeSubroutineSlot === 'S1' && out.control.fireRightArm) sawFire = true;
+      if (out.control.emergencyCool) sawCool = true;
+      expect(out.activeSubroutineCell?.col ?? 0).toBeLessThan(4);
+    }
+    expect(sawPilotCell).toBe(false);
+    expect(sawFire).toBe(true);
+    expect(sawCool).toBe(false);
+
+    // 2. Legacy direct_6x6 maps cleanly to direct_4x4 without breaking
+    const bp6 = structuredClone(STARTER_MECHS[0]);
+    bp6.controlTier = 'direct_6x6';
+    const sim6 = createThreeMechSim(124);
+    sim6.mechs[0].blueprint = bp6;
+    const rt6 = createPilotRuntimeState(emptyPilot);
+    const out6 = evaluatePilotTick(
+      emptyPilot,
+      rt6,
+      buildMechSensorState(sim6, sim6.mechs[0].id),
+      sim6.mechs[0],
+      sim6
+    );
+    expect(out6.activePilotCell).toBeNull();
+    expect(out6.activeSubroutineSlot).toBe('S1');
+  });
+
+  it('persists latchedLeg/latchedTorso across CALLs and passes ARG into useArg cells', () => {
+    const bp = structuredClone(STARTER_MECHS[0]);
+    bp.subroutines = [
+      {
+        slotId: 'S1',
+        name: '攻撃のみ',
+        gridSize: 4,
+        cells: [
+          { row: 0, col: 0, op: 'start', dir: 'E' },
+          { row: 0, col: 1, op: 'fire_group_1', dir: 'S', durationSec: 0.25 },
+        ],
+      },
+      ...bp.subroutines.filter((s) => s.slotId !== 'S1' && s.slotId !== 'S3' && s.slotId !== 'S4'),
+      {
+        slotId: 'S3',
+        name: '間合い制御',
+        gridSize: 4,
+        cells: [
+          { row: 0, col: 0, op: 'start', dir: 'E' },
+          { row: 0, col: 1, op: 'move_circle', dir: 'E', param: 150, useArg: true, direction: 'left' },
+          { row: 0, col: 2, op: 'return', dir: 'S' },
+        ],
+      },
+      {
+        slotId: 'S4',
+        name: '盾ひねり',
+        gridSize: 4,
+        cells: [
+          { row: 0, col: 0, op: 'start', dir: 'E' },
+          { row: 0, col: 1, op: 'torso_twist_r', dir: 'E', param: 50, useArg: true },
+          { row: 0, col: 2, op: 'wait', dir: 'S', durationSec: 0.15 },
+        ],
+      },
+    ];
+
+    const modularPilot = {
+      version: 2 as const,
+      id: 'pilot_modular',
+      name: 'Modular Pilot',
+      grid: {
+        gridSize: 6 as const,
+        cells: [
+          { row: 0, col: 0, op: 'start' as const, dir: 'E' as const },
+          { row: 0, col: 1, op: 'call_s3' as const, dir: 'E' as const, param: 110, durationSec: 0.3 },
+          { row: 0, col: 2, op: 'call_s4' as const, dir: 'E' as const, param: 60, durationSec: 0.2 },
+          { row: 0, col: 3, op: 'call_s1' as const, dir: 'S' as const, durationSec: 0.25 },
+        ],
+      },
+    };
+
+    const sim = createThreeMechSim(200);
+    const me = sim.mechs[0];
+    me.blueprint = bp;
+    const rt = createPilotRuntimeState(modularPilot);
+
+    // Tick 0: CALL S3(arg=110) updates latchedLeg and returns
+    const tick0 = evaluatePilotTick(modularPilot, rt, buildMechSensorState(sim, me.id), me, sim);
+    expect(tick0.activeSubroutineSlot).toBe('S3');
+    expect(rt.latchedLeg).toEqual({ op: 'move_circle', param: 110, direction: 'left' });
+
+    // Next tick: CALL S4(arg=60) has NO move_* chip, yet keeps move_circle(110, left) while twisting!
+    const tick1 = evaluatePilotTick(modularPilot, rt, buildMechSensorState(sim, me.id), me, sim);
+    expect(tick1.activeSubroutineSlot).toBe('S4');
+    expect(rt.latchedLeg).toEqual({ op: 'move_circle', param: 110, direction: 'left' });
+    expect(rt.latchedTorso).toEqual({ op: 'torso_twist_r', param: 60 });
+    expect(tick1.control.moveForward).toBeGreaterThan(0);
+
+    // Wait for S4 to finish, then verify CALL S1 inherits both move_circle and torso_twist_r
+    let sawS1WithMove = false;
+    for (let t = 0; t < 15; t++) {
+      sim.tick += 1;
+      const out = evaluatePilotTick(modularPilot, rt, buildMechSensorState(sim, me.id), me, sim);
+      if (out.activeSubroutineSlot === 'S1' && out.control.moveForward > 0) {
+        sawS1WithMove = true;
+        break;
+      }
+    }
+    expect(sawS1WithMove).toBe(true);
   });
 });

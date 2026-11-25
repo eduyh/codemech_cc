@@ -5,7 +5,7 @@ import { buildMechSensorState, createSimulation, EMPTY_CONTROL_INPUT, stepSimula
 import { startSubroutineExec, stepSubroutineExecution } from '../subroutineRunner';
 
 describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
-  it('executes 6x6 latched leg/torso movement and auto-returns on empty cell', () => {
+  it('executes modular 4x4 S3 movement latch + S1 attack routine and auto-returns cleanly', () => {
     const sim = createSimulation({
       seed: 10,
       entries: [
@@ -19,11 +19,22 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
     me.yawDeg = 180;
     sim.mechs[1].pos = { x: 300, y: 350, z: 0 };
 
+    const s3 = PRESET_VANGUARD.subroutines.find((s) => s.slotId === 'S3')!;
     const s1 = PRESET_VANGUARD.subroutines.find((s) => s.slotId === 'S1')!;
-    expect(s1.gridSize).toBe(6);
+    expect(s3.gridSize).toBe(4);
+    expect(s1.gridSize).toBe(4);
 
-    const exec = startSubroutineExec(s1);
     const sensor = buildMechSensorState(sim, me.id);
+    const exec3 = startSubroutineExec(s3, false, 4, { callArg: 120 });
+    const ctrlMove = { ...EMPTY_CONTROL_INPUT };
+    const res3 = stepSubroutineExecution(s3, exec3, ctrlMove, sensor, me, sim, sensor.nearestEnemy, 1);
+    expect(res3.completed).toBe(true);
+    expect(exec3.latchedLeg?.op).toBe('move_approach');
+
+    const exec = startSubroutineExec(s1, false, 4, {
+      latchedLeg: exec3.latchedLeg,
+      latchedTorso: exec3.latchedTorso,
+    });
     let completed = false;
     let sawFireRightArm = false;
 
@@ -39,7 +50,8 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
 
     expect(completed).toBe(true);
     expect(sawFireRightArm).toBe(true);
-    expect(exec.latchedLeg?.op).toBe('move_maintain');
+    expect(exec.latchedLeg?.op).toBe('move_approach');
+    expect(exec.latchedTorso?.op).toBe('torso_track');
   });
 
   it('waits for waist twist alignment during fire chip and advances immediately once fired', () => {
@@ -168,10 +180,15 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
     me.yawDeg = 0;
     sim.mechs[1].pos = { x: 250, y: 120, z: 0 };
 
-    // 1. Custom torso twist angle (positive and negative, clamped by chassis torsoTwistMaxDeg)
+    // 1. Threat-relative torso twist (moves perpendicular at yawDeg=90 while enemy is North bearingDeg=0 on radar)
+    me.yawDeg = 90;
+    const sensorThreat = buildMechSensorState(sim, me.id);
+    const threatTarget = sensorThreat.nearestEnemy ?? sensorThreat.nearestRadarEnemy;
+    expect(threatTarget).not.toBeNull();
+
     const twistSub: MechSubroutine = {
       slotId: 'S4',
-      name: '任意角度ツイスト',
+      name: '敵基準ツイスト',
       gridSize: 4,
       cells: [
         { row: 0, col: 0, op: 'start', dir: 'E' },
@@ -180,10 +197,49 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
       ],
     };
     const twistExec = startSubroutineExec(twistSub);
-    const sensor = buildMechSensorState(sim, me.id);
-    const ctrl1 = { ...EMPTY_CONTROL_INPUT };
-    stepSubroutineExecution(twistSub, twistExec, ctrl1, sensor, me, sim, null, 1);
+    const ctrlThreat = { ...EMPTY_CONTROL_INPUT };
+    stepSubroutineExecution(
+      twistSub,
+      twistExec,
+      ctrlThreat,
+      sensorThreat,
+      me,
+      sim,
+      threatTarget,
+      1
+    );
     expect(twistExec.latchedTorso).toEqual({ op: 'torso_twist_angle', param: -42 });
+    expect(ctrlThreat.torsoTargetYaw).toBeCloseTo(318, 0);
+
+    // Explicit torso_twist_r & torso_twist_l with useArg
+    const twistRightSub: MechSubroutine = {
+      slotId: 'S4',
+      name: '右ひねりARG',
+      gridSize: 4,
+      cells: [
+        { row: 0, col: 0, op: 'start', dir: 'E' },
+        { row: 0, col: 1, op: 'torso_twist_r', dir: 'E', param: 55, useArg: true },
+        { row: 0, col: 2, op: 'wait', dir: 'S', durationSec: 0.2 },
+      ],
+    };
+    const ctrlRightArg = { ...EMPTY_CONTROL_INPUT };
+    stepSubroutineExecution(
+      twistRightSub,
+      startSubroutineExec(twistRightSub, false, 4, { callArg: 70 }),
+      ctrlRightArg,
+      sensorThreat,
+      me,
+      sim,
+      threatTarget,
+      1
+    );
+    expect(ctrlRightArg.torsoTargetYaw).toBeCloseTo(70, 0);
+
+    // Fallback to leg-relative twist when no enemy/threat is present
+    sim.mechs[1].pos = { x: 250, y: 1200, z: 0 };
+    const sensorNoThreat = buildMechSensorState(sim, me.id);
+    const ctrl1 = { ...EMPTY_CONTROL_INPUT };
+    stepSubroutineExecution(twistSub, startSubroutineExec(twistSub), ctrl1, sensorNoThreat, me, sim, null, 1);
     expect(ctrl1.torsoTwistOffsetDeg).toBe(-42);
 
     const clampSub: MechSubroutine = {
@@ -198,8 +254,13 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
     };
     const clampExec = startSubroutineExec(clampSub);
     const ctrl2 = { ...EMPTY_CONTROL_INPUT };
-    stepSubroutineExecution(clampSub, clampExec, ctrl2, sensor, me, sim, null, 1);
+    stepSubroutineExecution(clampSub, clampExec, ctrl2, sensorNoThreat, me, sim, null, 1);
     expect(ctrl2.torsoTwistOffsetDeg).toBe(me.stats.torsoTwistMaxDeg);
+
+    // Restore enemy position for weapon group test below
+    sim.mechs[1].pos = { x: 250, y: 120, z: 0 };
+    me.yawDeg = 0;
+    const sensor = buildMechSensorState(sim, me.id);
 
     // 2. Weapon group G1 readiness check + simultaneous group fire
     const groupSub: MechSubroutine = {

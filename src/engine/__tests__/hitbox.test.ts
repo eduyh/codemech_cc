@@ -82,8 +82,8 @@ describe('8-part hitbox, front/rear armor, ricochet, and part destruction', () =
     )!;
     expect(rearTorsoHit.partId).toBe('torso');
     expect(rearTorsoHit.face).toBe('rear');
-    applyDamageToMechParts(mech, rearTorsoHit, 80, DEFAULT_MATCH_RULES);
-    expect(mech.parts.torso.rearArmor).toBe(rearTorsoBefore - 80);
+    applyDamageToMechParts(mech, rearTorsoHit, 40, DEFAULT_MATCH_RULES);
+    expect(mech.parts.torso.rearArmor).toBe(rearTorsoBefore - 40);
     expect(mech.parts.torso.frontArmor).toBe(frontTorsoBefore);
 
     const rShdFrontBefore = mech.parts.rightShoulder.frontArmor;
@@ -96,8 +96,8 @@ describe('8-part hitbox, front/rear armor, ricochet, and part destruction', () =
     )!;
     expect(rearRShdHit.partId).toBe('rightShoulder');
     expect(rearRShdHit.face).toBe('rear');
-    applyDamageToMechParts(mech, rearRShdHit, 40, DEFAULT_MATCH_RULES);
-    expect(mech.parts.rightShoulder.rearArmor).toBe(rShdRearBefore - 40);
+    applyDamageToMechParts(mech, rearRShdHit, 25, DEFAULT_MATCH_RULES);
+    expect(mech.parts.rightShoulder.rearArmor).toBe(rShdRearBefore - 25);
     expect(mech.parts.rightShoulder.frontArmor).toBe(rShdFrontBefore);
 
     const lShdFrontBefore = mech.parts.leftShoulder.frontArmor;
@@ -110,8 +110,8 @@ describe('8-part hitbox, front/rear armor, ricochet, and part destruction', () =
     )!;
     expect(rearLShdHit.partId).toBe('leftShoulder');
     expect(rearLShdHit.face).toBe('rear');
-    applyDamageToMechParts(mech, rearLShdHit, 40, DEFAULT_MATCH_RULES);
-    expect(mech.parts.leftShoulder.rearArmor).toBe(lShdRearBefore - 40);
+    applyDamageToMechParts(mech, rearLShdHit, 25, DEFAULT_MATCH_RULES);
+    expect(mech.parts.leftShoulder.rearArmor).toBe(lShdRearBefore - 25);
     expect(mech.parts.leftShoulder.frontArmor).toBe(lShdFrontBefore);
   });
 
@@ -162,7 +162,7 @@ describe('8-part hitbox, front/rear armor, ricochet, and part destruction', () =
       mech.pos,
       mech.yawDeg
     )!;
-    applyDamageToMechParts(mech, rLegHit, 999, DEFAULT_MATCH_RULES);
+    applyDamageToMechParts(mech, rLegHit, 300, DEFAULT_MATCH_RULES);
     expect(mech.parts.rightLeg.destroyed).toBe(true);
     const oneLegMob = getMechMobilityMultipliers(mech.parts);
     expect(oneLegMob.walkMult).toBeCloseTo(0.45, 5);
@@ -174,7 +174,7 @@ describe('8-part hitbox, front/rear armor, ricochet, and part destruction', () =
       mech.pos,
       mech.yawDeg
     )!;
-    applyDamageToMechParts(mech, lLegHit, 999, DEFAULT_MATCH_RULES);
+    applyDamageToMechParts(mech, lLegHit, 300, DEFAULT_MATCH_RULES);
     expect(mech.parts.leftLeg.destroyed).toBe(true);
     const twoLegMob = getMechMobilityMultipliers(mech.parts);
     expect(twoLegMob.walkMult).toBe(0);

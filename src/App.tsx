@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Award,
   Cpu,
@@ -19,7 +19,29 @@ import { MechGarage } from './components/MechGarage';
 import { MechPartsHud } from './components/MechPartsHud';
 import { MvpArenaCanvas } from './components/MvpArenaCanvas';
 import { ShareModal } from './components/ShareModal';
+import { CURRICULUM_MISSIONS } from './data/curriculum';
+import { getControlTierSpec } from './data/parts';
 import { DEFAULT_PILOT_PROFILE, PRESET_VANGUARD, STARTER_MECHS, STARTER_PILOTS } from './data/presets';
+import {
+  SavedCustomMech,
+  deleteSavedCustomMech,
+  formatCustomMechName,
+  loadSavedCustomMechs,
+  saveCustomMech,
+} from './utils/customMechStorage';
+import {
+  deleteUserRom,
+  getAllRoms,
+  loadUserRoms,
+  resolveMechBlueprintRoms,
+  saveUserRom,
+} from './utils/romLibrary';
+import {
+  deleteUserPilot,
+  getAllPilots,
+  loadUserPilots,
+  saveUserPilot,
+} from './utils/pilotLibrary';
 import { createSimFromReplay } from './engine/battlefield';
 import { buildMechSensorState, createSimulation, stepSimulation } from './engine/mechSim';
 import {
@@ -32,8 +54,13 @@ import {
   MatchParticipantEntry,
   MechBlueprint,
   MechControlInput,
+  MechSubroutineCell,
+  MechSubroutineSlotId,
   PilotDebugTrace,
+  PilotGridCell,
   PilotProfile,
+  ProgramRomEntry,
+  RomCategory,
   SIM_TPS,
   SimState,
 } from './types/mech';
@@ -88,7 +115,7 @@ function buildMatchSetup(
 
       entries.push({
         id,
-        name: isPlayer ? `★${mechBp.name.split(' ')[1] ?? mechBp.name}` : `T${t + 1}-${m + 1}`,
+        name: isPlayer ? `★${mechBp.name}` : `T${t + 1}-${m + 1}`,
         teamId: `T${t + 1}`,
         blueprint: mechBp,
         pilot,
@@ -112,7 +139,14 @@ type StudioTab = 'program' | 'garage' | 'curriculum';
 export default function App() {
   const [formatId, setFormatId] = useState<FormatId>('1v1');
   const [arenaPreset, setArenaPreset] = useState<ArenaPresetId>('plains_ridge');
-  const [playerMech, setPlayerMech] = useState<MechBlueprint>(() => structuredClone(PRESET_VANGUARD));
+  const [userRoms, setUserRoms] = useState<ProgramRomEntry[]>(() => loadUserRoms());
+  const allRoms = useMemo(() => getAllRoms(userRoms), [userRoms]);
+  const [userPilots, setUserPilots] = useState<PilotProfile[]>(() => loadUserPilots());
+  const allPilots = useMemo(() => getAllPilots(userPilots), [userPilots]);
+  const [playerMech, setPlayerMech] = useState<MechBlueprint>(() =>
+    resolveMechBlueprintRoms(structuredClone(PRESET_VANGUARD), getAllRoms(loadUserRoms()))
+  );
+  const [savedMechs, setSavedMechs] = useState<SavedCustomMech[]>(() => loadSavedCustomMechs());
   const [seed, setSeed] = useState(2026);
   const [playerPilot, setPlayerPilot] = useState<PilotProfile>(() =>
     structuredClone(DEFAULT_PILOT_PROFILE)
@@ -178,6 +212,90 @@ export default function App() {
     [formatId, arenaPreset, seed, resetMatch]
   );
 
+  const handleLoadMechBlueprint = useCallback(
+    (bp: MechBlueprint) => {
+      const cloned = resolveMechBlueprintRoms(structuredClone(bp), allRoms);
+      setPlayerMech(cloned);
+      playerMechRef.current = cloned;
+      resetMatch(formatId, arenaPreset, cloned, seed);
+    },
+    [allRoms, formatId, arenaPreset, seed, resetMatch]
+  );
+
+  const handleSaveUserRom = useCallback(
+    (input: {
+      id?: string;
+      name: string;
+      category?: RomCategory;
+      gridSize: 4 | 6;
+      cells: MechSubroutineCell[];
+      slotId?: MechSubroutineSlotId;
+    }) => {
+      const res = saveUserRom(userRoms, {
+        id: input.id,
+        name: input.name,
+        category: input.category,
+        gridSize: 4,
+        cells: input.cells,
+      });
+      setUserRoms(res.nextList);
+      const nextAllRoms = getAllRoms(res.nextList);
+      const cur = playerMechRef.current;
+      const nextBpInput: MechBlueprint = input.slotId
+        ? {
+            ...cur,
+            romSlots: {
+              ...(cur.romSlots ?? {}),
+              [input.slotId]: res.saved.id,
+            },
+          }
+        : cur;
+      const nextMech = resolveMechBlueprintRoms(nextBpInput, nextAllRoms);
+      setPlayerMech(nextMech);
+      playerMechRef.current = nextMech;
+      if (simRef.current.tick === 0) {
+        resetMatch(formatId, arenaPreset, nextMech, seed);
+      }
+      return { saved: res.saved, updated: res.updated };
+    },
+    [userRoms, formatId, arenaPreset, seed, resetMatch]
+  );
+
+  const handleDeleteUserRom = useCallback(
+    (romId: string) => {
+      const nextUserRoms = deleteUserRom(userRoms, romId);
+      setUserRoms(nextUserRoms);
+      const nextAllRoms = getAllRoms(nextUserRoms);
+      const nextMech = resolveMechBlueprintRoms(playerMechRef.current, nextAllRoms);
+      setPlayerMech(nextMech);
+      playerMechRef.current = nextMech;
+      if (simRef.current.tick === 0) {
+        resetMatch(formatId, arenaPreset, nextMech, seed);
+      }
+    },
+    [userRoms, formatId, arenaPreset, seed, resetMatch]
+  );
+
+  const handleSaveCustomMech = useCallback(
+    (tag: string) => {
+      const res = saveCustomMech(savedMechs, playerMechRef.current, tag);
+      setSavedMechs(res.nextList);
+      const savedClone = resolveMechBlueprintRoms(structuredClone(res.saved.blueprint), allRoms);
+      setPlayerMech(savedClone);
+      playerMechRef.current = savedClone;
+      resetMatch(formatId, arenaPreset, savedClone, seed);
+      return { saved: res.saved, updated: res.updated };
+    },
+    [savedMechs, allRoms, formatId, arenaPreset, seed, resetMatch]
+  );
+
+  const handleDeleteCustomMech = useCallback(
+    (id: string) => {
+      setSavedMechs((prev) => deleteSavedCustomMech(prev, id));
+    },
+    []
+  );
+
   const handleUpdatePlayerPilot = useCallback(
     (nextPilot: PilotProfile) => {
       setPlayerPilot(nextPilot);
@@ -187,6 +305,34 @@ export default function App() {
       }
     },
     [formatId, arenaPreset, seed, resetMatch]
+  );
+
+  const handleSelectPilot = useCallback(
+    (selected: PilotProfile) => {
+      handleUpdatePlayerPilot(structuredClone(selected));
+    },
+    [handleUpdatePlayerPilot]
+  );
+
+  const handleSaveUserPilot = useCallback(
+    (input: { id?: string; name: string; cells: PilotGridCell[] }) => {
+      const res = saveUserPilot(userPilots, input);
+      setUserPilots(res.nextList);
+      handleUpdatePlayerPilot(structuredClone(res.saved));
+      return { saved: res.saved, updated: res.updated };
+    },
+    [userPilots, handleUpdatePlayerPilot]
+  );
+
+  const handleDeleteUserPilot = useCallback(
+    (pilotId: string) => {
+      const nextList = deleteUserPilot(userPilots, pilotId);
+      setUserPilots(nextList);
+      if (playerPilotRef.current.id === pilotId) {
+        handleUpdatePlayerPilot(structuredClone(DEFAULT_PILOT_PROFILE));
+      }
+    },
+    [userPilots, handleUpdatePlayerPilot]
   );
 
   const advanceOneTick = useCallback(() => {
@@ -248,6 +394,8 @@ export default function App() {
   const playerSimMech = sim.mechs.find((m) => m.id === 'mech_0_0' || m.id === 'player');
   const livePlayerSensor = playerSimMech ? buildMechSensorState(sim, playerSimMech.id) : null;
   const recentEvents = sim.events.slice(-8).reverse();
+  const playerTierSpec = getControlTierSpec(playerMech.controlTier);
+  const isGarageFull = studioTab === 'garage';
 
   return (
     <div className="cm-studio">
@@ -259,114 +407,44 @@ export default function App() {
           <div>
             <h1 className="cm-title">CodeMech.py</h1>
             <p className="cm-subtitle">
-              ver0.0.3 — 3D メック戦＆階層グリッドプログラミング教材 (6×6 + 5サブルーチン)
+              ver0.1.0 — 3D メック戦＆階層グリッドプログラミング教材 (パイロット 6×6 ＋ 4×4 ROM 最大5枠)
             </p>
           </div>
         </div>
 
-        <div className="cm-toolbar-controls">
-          <label className="cm-ctl">
-            <span>対戦形式</span>
-            <select
-              value={formatId}
-              onChange={(e) => {
-                const v = e.target.value as FormatId;
-                setFormatId(v);
-                resetMatch(v, arenaPreset, playerMech, seed);
-              }}
-            >
-              {FORMAT_OPTIONS.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="cm-ctl">
-            <span>地形</span>
-            <select
-              value={arenaPreset}
-              onChange={(e) => {
-                const v = e.target.value as ArenaPresetId;
-                setArenaPreset(v);
-                resetMatch(formatId, v, playerMech, seed);
-              }}
-            >
-              {ARENA_OPTIONS.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="cm-ctl" title="現在のパイロット 6×6 を保ったまま搭乗機体を乗り換えます">
-            <span>搭乗機体(乗換)</span>
-            <select
-              value={playerMech.id}
-              onChange={(e) => {
-                const bp = STARTER_MECHS.find((m) => m.id === e.target.value);
-                if (bp) {
-                  const cloned = structuredClone(bp);
-                  setPlayerMech(cloned);
-                  playerMechRef.current = cloned;
-                  resetMatch(formatId, arenaPreset, cloned, seed);
-                }
-              }}
-            >
-              {STARTER_MECHS.map((bp) => (
-                <option key={bp.id} value={bp.id}>
-                  {bp.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="cm-ctl">
-            <span>AI雛形</span>
-            <select
-              value={playerPilot.id}
-              onChange={(e) => {
-                const found = STARTER_PILOTS.find((p) => p.id === e.target.value);
-                if (found) {
-                  const cloned = structuredClone(found);
-                  handleUpdatePlayerPilot(cloned);
-                }
-              }}
-            >
-              {STARTER_PILOTS.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="cm-ctl cm-ctl--seed">
-            <span>Seed</span>
-            <input
-              type="number"
-              value={seed}
-              onChange={(e) => {
-                const s = Number(e.target.value) || 1;
-                setSeed(s);
-                resetMatch(formatId, arenaPreset, playerMech, s);
-              }}
-            />
+        <div className="cm-topbar-nav">
+          <div className="cm-studio-tabs" role="tablist">
             <button
               type="button"
-              className="cm-icon-btn"
-              onClick={() => {
-                const next = ((seed * 1664525 + 1013904223) >>> 0) % 100000;
-                setSeed(next);
-                resetMatch(formatId, arenaPreset, playerMech, next);
-              }}
-              title="シード変更"
+              className={studioTab === 'program' ? 'cm-studio-tab is-active' : 'cm-studio-tab'}
+              onClick={() => setStudioTab('program')}
             >
-              <Shuffle size={14} />
+              <Grid2X2 size={15} />{' '}
+              {playerTierSpec.pilotEnabled
+                ? 'プログラム (6×6 / 4×4×5枠)'
+                : `プログラム (${playerTierSpec.shortLabel})`}
             </button>
-          </label>
+            <button
+              type="button"
+              className={studioTab === 'garage' ? 'cm-studio-tab is-active' : 'cm-studio-tab'}
+              onClick={() => {
+                setPlaying(false);
+                setStudioTab('garage');
+              }}
+            >
+              <Wrench size={15} /> 機体ガレージ
+            </button>
+            <a className="cm-studio-tab cm-studio-tab--arena" href="?app=battlefield">
+              <Swords size={15} /> バトルフィールド
+            </a>
+            <button
+              type="button"
+              className={studioTab === 'curriculum' ? 'cm-studio-tab is-active' : 'cm-studio-tab'}
+              onClick={() => setStudioTab('curriculum')}
+            >
+              <Award size={15} /> 学習課題 ({CURRICULUM_MISSIONS.length}問)
+            </button>
+          </div>
 
           <button
             type="button"
@@ -375,59 +453,39 @@ export default function App() {
           >
             <Share2 size={15} /> 共有・読込
           </button>
-
-          <a className="cm-link-btn" href="?app=battlefield">
-            <Swords size={15} /> Battlefield
-          </a>
         </div>
       </header>
 
-      <main className="cm-workspace">
+      <main className={`cm-workspace ${isGarageFull ? 'is-garage-full' : ''}`}>
         <div className="cm-col-left">
-          <div className="cm-studio-tabs" role="tablist">
-            <button
-              type="button"
-              className={studioTab === 'program' ? 'cm-studio-tab is-active' : 'cm-studio-tab'}
-              onClick={() => setStudioTab('program')}
-            >
-              <Grid2X2 size={15} /> プログラム (6×6 / 5枠)
-            </button>
-            <button
-              type="button"
-              className={studioTab === 'garage' ? 'cm-studio-tab is-active' : 'cm-studio-tab'}
-              onClick={() => setStudioTab('garage')}
-            >
-              <Wrench size={15} /> 機体ガレージ
-            </button>
-            <button
-              type="button"
-              className={studioTab === 'curriculum' ? 'cm-studio-tab is-active' : 'cm-studio-tab'}
-              onClick={() => setStudioTab('curriculum')}
-            >
-              <Award size={15} /> 学習課題 (5問)
-            </button>
-          </div>
-
           {studioTab === 'program' && (
             <GridProgramEditor
               pilot={playerPilot}
+              allPilots={allPilots}
               mech={playerMech}
+              allRoms={allRoms}
               debugTrace={playerDebugTrace}
               liveSensor={livePlayerSensor}
               onChangePilot={handleUpdatePlayerPilot}
+              onSelectPilot={handleSelectPilot}
+              onSavePilot={handleSaveUserPilot}
+              onDeletePilot={handleDeleteUserPilot}
               onChangeMech={handleUpdatePlayerMech}
+              onSaveRom={handleSaveUserRom}
+              onDeleteRom={handleDeleteUserRom}
             />
           )}
 
           {studioTab === 'garage' && (
             <MechGarage
               blueprint={playerMech}
+              savedMechs={savedMechs}
+              allRoms={allRoms}
+              pilot={playerPilot}
               onChange={handleUpdatePlayerMech}
-              onLoadPreset={(bp) => {
-                setPlayerMech(bp);
-                playerMechRef.current = bp;
-                resetMatch(formatId, arenaPreset, bp, seed);
-              }}
+              onSaveCustomMech={handleSaveCustomMech}
+              onLoadBlueprint={handleLoadMechBlueprint}
+              onDeleteCustomMech={handleDeleteCustomMech}
             />
           )}
 
@@ -460,140 +518,282 @@ export default function App() {
           )}
         </div>
 
-        <div className="cm-col-right">
-          <section className="cm-panel">
-            <div className="cm-sim-bar">
-              <div className="cm-sim-btns">
-                <button
-                  type="button"
-                  className="cm-btn-primary"
-                  onClick={() => {
-                    if (!playing && sim.finished) {
-                      resetMatch(formatId, arenaPreset, playerMechRef.current, seed, true);
-                      return;
-                    }
-                    setPlaying((p) => !p);
-                  }}
-                >
-                  {playing ? <Pause size={15} /> : <Play size={15} />}
-                  {playing ? '一時停止' : '模擬戦再生'}
-                </button>
-                <button
-                  type="button"
-                  className="cm-btn-secondary"
-                  disabled={playing || sim.finished}
-                  onClick={() => {
-                    advanceOneTick();
-                    setRenderTick((n) => n + 1);
-                  }}
-                >
-                  <StepForward size={15} /> +1 Tick
-                </button>
-                <button
-                  type="button"
-                  className="cm-btn-secondary"
-                  onClick={() => resetMatch()}
-                >
-                  <RotateCcw size={15} /> リセット
-                </button>
+        {!isGarageFull && (
+          <div className="cm-col-right">
+            <section className="cm-panel">
+              <div className="cm-battle-cfg-bar">
+                <label className="cm-ctl">
+                  <span>対戦形式</span>
+                  <select
+                    value={formatId}
+                    onChange={(e) => {
+                      const v = e.target.value as FormatId;
+                      setFormatId(v);
+                      resetMatch(v, arenaPreset, playerMech, seed);
+                    }}
+                  >
+                    {FORMAT_OPTIONS.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-                <div className="cm-seg">
-                  {([1, 2, 4] as const).map((sp) => (
+                <label className="cm-ctl">
+                  <span>地形</span>
+                  <select
+                    value={arenaPreset}
+                    onChange={(e) => {
+                      const v = e.target.value as ArenaPresetId;
+                      setArenaPreset(v);
+                      resetMatch(formatId, v, playerMech, seed);
+                    }}
+                  >
+                    {ARENA_OPTIONS.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="cm-ctl" title="現在のパイロット 6×6 を保ったまま搭乗機体を乗り換えます">
+                  <span>搭乗機体(乗換)</span>
+                  <select
+                    value={playerMech.id}
+                    onChange={(e) => {
+                      const custom = savedMechs.find((m) => m.id === e.target.value);
+                      if (custom) {
+                        handleLoadMechBlueprint(custom.blueprint);
+                        return;
+                      }
+                      const bp = STARTER_MECHS.find((m) => m.id === e.target.value);
+                      if (bp) {
+                        handleLoadMechBlueprint(bp);
+                      }
+                    }}
+                  >
+                    {savedMechs.length > 0 && (
+                      <optgroup label="保存済みカスタム">
+                        {savedMechs.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {formatCustomMechName(m.baseName, m.tag)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <optgroup label="標準機体">
+                      {STARTER_MECHS.map((bp) => (
+                        <option key={bp.id} value={bp.id}>
+                          {bp.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </label>
+
+                <label
+                  className="cm-ctl"
+                  style={!playerTierSpec.pilotEnabled ? { opacity: 0.52 } : undefined}
+                  title={
+                    playerTierSpec.pilotEnabled
+                      ? 'パイロット 6×6 の AI 雛形を切り替えます'
+                      : 'ロボット単体制御モード中はパイロット AI 未使用です'
+                  }
+                >
+                  <span>AI雛形{!playerTierSpec.pilotEnabled ? ' (単体中)' : ''}</span>
+                  <select
+                    disabled={!playerTierSpec.pilotEnabled}
+                    value={playerPilot.id}
+                    onChange={(e) => {
+                      const found = allPilots.find((p) => p.id === e.target.value);
+                      if (found) {
+                        handleSelectPilot(found);
+                      }
+                    }}
+                  >
+                    {!allPilots.some((p) => p.id === playerPilot.id) && (
+                      <option value={playerPilot.id}>{playerPilot.name}</option>
+                    )}
+                    {userPilots.length > 0 && (
+                      <optgroup label="自作パイロット">
+                        {userPilots.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <optgroup label="標準パイロット">
+                      {STARTER_PILOTS.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </label>
+
+                <label className="cm-ctl cm-ctl--seed">
+                  <span>Seed</span>
+                  <input
+                    type="number"
+                    value={seed}
+                    onChange={(e) => {
+                      const s = Number(e.target.value) || 1;
+                      setSeed(s);
+                      resetMatch(formatId, arenaPreset, playerMech, s);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="cm-icon-btn"
+                    onClick={() => {
+                      const next = ((seed * 1664525 + 1013904223) >>> 0) % 100000;
+                      setSeed(next);
+                      resetMatch(formatId, arenaPreset, playerMech, next);
+                    }}
+                    title="シード変更"
+                  >
+                    <Shuffle size={14} />
+                  </button>
+                </label>
+              </div>
+
+              <div className="cm-sim-bar">
+                <div className="cm-sim-btns">
+                  <button
+                    type="button"
+                    className="cm-btn-primary"
+                    onClick={() => {
+                      if (!playing && sim.finished) {
+                        resetMatch(formatId, arenaPreset, playerMechRef.current, seed, true);
+                        return;
+                      }
+                      setPlaying((p) => !p);
+                    }}
+                  >
+                    {playing ? <Pause size={15} /> : <Play size={15} />}
+                    {playing ? '一時停止' : '模擬戦再生'}
+                  </button>
+                  <button
+                    type="button"
+                    className="cm-btn-secondary"
+                    disabled={playing || sim.finished}
+                    onClick={() => {
+                      advanceOneTick();
+                      setRenderTick((n) => n + 1);
+                    }}
+                  >
+                    <StepForward size={15} /> +1 Tick
+                  </button>
+                  <button
+                    type="button"
+                    className="cm-btn-secondary"
+                    onClick={() => resetMatch()}
+                  >
+                    <RotateCcw size={15} /> リセット
+                  </button>
+
+                  <div className="cm-seg">
+                    {([1, 2, 4] as const).map((sp) => (
+                      <button
+                        key={sp}
+                        type="button"
+                        className={speed === sp ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
+                        onClick={() => setSpeed(sp)}
+                      >
+                        {sp}x
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="cm-seg">
                     <button
-                      key={sp}
                       type="button"
-                      className={speed === sp ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
-                      onClick={() => setSpeed(sp)}
+                      className={viewMode === '3d' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
+                      onClick={() => setViewMode('3d')}
                     >
-                      {sp}x
+                      3D ビュー
+                    </button>
+                    <button
+                      type="button"
+                      className={viewMode === '2d' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
+                      onClick={() => setViewMode('2d')}
+                    >
+                      2D 戦術図
+                    </button>
+                  </div>
+                </div>
+
+                <div className="cm-sim-clock">
+                  {sim.terrain.width}×{sim.terrain.depth}m ・ Tick {sim.tick} / {sim.time.toFixed(1)}s
+                  {sim.finished && (
+                    <span className="cm-winner-pill">
+                      勝者: {sim.winnerTeamId}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="cm-arena-wrap">
+                {viewMode === '3d' ? (
+                  <MechCanvas3D
+                    simState={sim}
+                    renderTick={renderTick}
+                    focusedMechId={focusedMechId}
+                    onSelectMech={setFocusedMechId}
+                  />
+                ) : (
+                  <MvpArenaCanvas
+                    simState={sim}
+                    renderTick={renderTick}
+                    focusedMechId={focusedMechId}
+                    onSelectMech={setFocusedMechId}
+                  />
+                )}
+
+                <div className="cm-roster-strip">
+                  {sim.mechs.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setFocusedMechId(m.id)}
+                      className={`cm-roster-pill ${
+                        m.id === focusedMechId ? 'is-selected' : ''
+                      } ${!m.alive ? 'is-dead' : ''}`}
+                    >
+                      <span>{m.name}</span>
+                      <small>{m.teamId}</small>
                     </button>
                   ))}
                 </div>
-
-                <div className="cm-seg">
-                  <button
-                    type="button"
-                    className={viewMode === '3d' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
-                    onClick={() => setViewMode('3d')}
-                  >
-                    3D ビュー
-                  </button>
-                  <button
-                    type="button"
-                    className={viewMode === '2d' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
-                    onClick={() => setViewMode('2d')}
-                  >
-                    2D 戦術図
-                  </button>
-                </div>
               </div>
 
-              <div className="cm-sim-clock">
-                {sim.terrain.width}×{sim.terrain.depth}m ・ Tick {sim.tick} / {sim.time.toFixed(1)}s
-                {sim.finished && (
-                  <span className="cm-winner-pill">
-                    勝者: {sim.winnerTeamId}
-                  </span>
+              <MechPartsHud mech={focusedMech} />
+
+              <div className="cm-event-log">
+                <div className="cm-event-title">戦況ログ (直近)</div>
+                {recentEvents.length === 0 ? (
+                  <div className="cm-event-empty">再生ボタンを押すと模擬戦ログが表示されます</div>
+                ) : (
+                  recentEvents.map((ev, i) => (
+                    <div key={`${ev.tick}-${i}`} className="cm-event-row">
+                      <span>T{ev.tick}</span>
+                      <span>{ev.type}</span>
+                      <span>
+                        {ev.actorId} {ev.targetId ? `→ ${ev.targetId}` : ''}{' '}
+                        {ev.partId ? `[${ev.partId}${ev.face && ev.face !== 'all' ? `:${ev.face}` : ''}]` : ''}{' '}
+                        {ev.damage ? `${Math.round(ev.damage)}dmg` : ''}
+                      </span>
+                    </div>
+                  ))
                 )}
               </div>
-            </div>
-
-            <div className="cm-arena-wrap">
-              {viewMode === '3d' ? (
-                <MechCanvas3D
-                  simState={sim}
-                  renderTick={renderTick}
-                  focusedMechId={focusedMechId}
-                  onSelectMech={setFocusedMechId}
-                />
-              ) : (
-                <MvpArenaCanvas
-                  simState={sim}
-                  renderTick={renderTick}
-                  focusedMechId={focusedMechId}
-                  onSelectMech={setFocusedMechId}
-                />
-              )}
-
-              <div className="cm-roster-strip">
-                {sim.mechs.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => setFocusedMechId(m.id)}
-                    className={`cm-roster-pill ${
-                      m.id === focusedMechId ? 'is-selected' : ''
-                    } ${!m.alive ? 'is-dead' : ''}`}
-                  >
-                    <span>{m.name}</span>
-                    <small>{m.teamId}</small>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <MechPartsHud mech={focusedMech} />
-
-            <div className="cm-event-log">
-              <div className="cm-event-title">戦況ログ (直近)</div>
-              {recentEvents.length === 0 ? (
-                <div className="cm-event-empty">再生ボタンを押すと模擬戦ログが表示されます</div>
-              ) : (
-                recentEvents.map((ev, i) => (
-                  <div key={`${ev.tick}-${i}`} className="cm-event-row">
-                    <span>T{ev.tick}</span>
-                    <span>{ev.type}</span>
-                    <span>
-                      {ev.actorId} {ev.targetId ? `→ ${ev.targetId}` : ''}{' '}
-                      {ev.partId ? `[${ev.partId}${ev.face && ev.face !== 'all' ? `:${ev.face}` : ''}]` : ''}{' '}
-                      {ev.damage ? `${Math.round(ev.damage)}dmg` : ''}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </section>
-        </div>
+            </section>
+          </div>
+        )}
       </main>
 
       <ShareModal

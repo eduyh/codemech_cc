@@ -5,7 +5,7 @@ import {
   MechControlTier,
   PilotProfile,
 } from '../types/mech';
-import { DEFAULT_PILOT_PROFILE, PRESET_VANGUARD } from './presets';
+import { DEFAULT_PILOT_PROFILE, PRESET_ABC } from './presets';
 
 export interface CurriculumMissionSpec {
   id: CurriculumStepId;
@@ -36,8 +36,8 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     seed: 10001,
     maxSeconds: 180,
     buildBrokenStarter: () => {
-      const mech = structuredClone(PRESET_VANGUARD);
-      mech.name = 'CM-01 基礎訓練機 (4×4)';
+      const mech = structuredClone(PRESET_ABC);
+      mech.name = 'ABC 基礎訓練機 (4×4)';
       mech.controlTier = 'direct_4x4';
       if (mech.romSlots) delete mech.romSlots.S1;
       mech.subroutines = mech.subroutines.map((s) =>
@@ -71,8 +71,8 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     seed: 10002,
     maxSeconds: 180,
     buildBrokenStarter: () => {
-      const mech = structuredClone(PRESET_VANGUARD);
-      mech.name = 'CM-01 応用訓練機 (4×4)';
+      const mech = structuredClone(PRESET_ABC);
+      mech.name = 'ABC 応用訓練機 (4×4)';
       mech.controlTier = 'direct_4x4';
       if (mech.romSlots) delete mech.romSlots.S1;
       mech.subroutines = mech.subroutines.map((s) =>
@@ -101,12 +101,12 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     subtitle: 'ここから 6×6 パイロットを追加！壊れた分岐配線（Yes/No 方向と CALL S1/S3）を直して勝利せよ',
     csConcept: '条件分岐 (if/else) とサブルーチン呼び分け',
     goal: 'パイロット 6×6 で 2 つ以上の機体枠（例: S1 主交戦 / S3 索敵）を呼び分け、訓練機に勝利する',
-    hint: 'この課題から「パイロット 6×6 + 5枠」モードになります。バグ入り課題では「視界に敵?」の Yes 先が S3 のまま止まっています。Yes で CALL S1（主交戦）、No で CALL S3（索敵・高台）へ繋ぎましょう。',
+    hint: 'この課題から「パイロット 6×6 + 5枠」モードになります。バグ入り課題では「視界に敵?」の Yes 先が S3 のまま止まっています。Yes で CALL S1（主交戦）、No で CALL S3（索敵・移動）へ繋ぎましょう。',
     arenaPreset: 'plains_ridge',
     seed: 10101,
     maxSeconds: 180,
     buildBrokenStarter: () => {
-      const mech = structuredClone(PRESET_VANGUARD);
+      const mech = structuredClone(PRESET_ABC);
       mech.controlTier = 'pilot_full';
       const pilot: PilotProfile = {
         version: 2,
@@ -132,21 +132,27 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     title: 'Step 4: 発熱監視＆冷却ヒステリシス制御',
     subtitle: 'オーバーヒート融解を防ぐ条件分岐＋状態ループを組め',
     csConcept: '状態維持ループ（ヒステリシス制御）',
-    goal: '高発熱レーザー機 (ヴァンガード改) に熱分岐（熱>% ＋ S4冷却/緊急冷却）を組み、熱融解せず勝利する',
-    hint: 'バグ入り課題では常に OVERRIDE ON のまま撃ち続けて自爆します。「熱 > 85%」→「CALL S4」→「熱 < 45%? (Noなら←でS4へ戻る)」のループを組みましょう。',
+    goal: '高発熱レーザー機 (ABC改) に熱分岐（熱>% ＋ S4冷却/緊急冷却）を組み、熱融解せず勝利する',
+    hint: 'バグ入り課題では常に OVERRIDE ON のまま撃ち続けて自爆します。「熱 > 80%」→「CALL S4」→「熱 < 45%? (Noなら←でS4へ戻る)」のループを組みましょう。',
     arenaPreset: 'twin_mesas',
     seed: 20202,
     maxSeconds: 180,
     buildBrokenStarter: () => {
-      const mech = structuredClone(PRESET_VANGUARD);
+      const mech = structuredClone(PRESET_ABC);
       mech.controlTier = 'pilot_full';
-      mech.name = 'CM-01 ヴァンガード (高発熱仕様)';
+      mech.name = 'ABC (高発熱仕様)';
       mech.extraHeatSinks = 0;
       mech.weaponMountCounts = undefined;
       mech.parts.rightArmWeapon = 'large_laser';
       mech.parts.leftArmWeapon = 'medium_laser';
       mech.parts.rightShoulderWeapon = 'large_laser';
       mech.parts.leftShoulderWeapon = 'shd_none';
+      mech.weaponGroups = {
+        G1: ['rightArm', 'leftArm', 'rightShoulder'],
+        G2: ['rightShoulder'],
+        G3: ['rightArm'],
+        G4: ['rightArm', 'leftArm', 'rightShoulder'],
+      };
       mech.armor = {
         ...mech.armor,
         torsoFront: 200,
@@ -180,12 +186,12 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     subtitle: '機体側の S3〜S5 (4×4) に脚・腰・武装と分岐を実装せよ',
     csConcept: '関数 (サブルーチン) 内部の実装とラッチ制御',
     goal: '4×4 枠（S3〜S5）のいずれかに 4 マス以上の行動（分岐または移動＋腰＋攻撃）を組んで実戦発動させ勝利する',
-    hint: 'バグ入り課題では S3 (4×4) が「その場停止＋待機」になっているため動けません。S3 に「高台移動 → 腰:敵追尾 → G2可? → 撃:G2」などを組みましょう。',
+    hint: 'バグ入り課題では S3 (4×4) が「その場停止＋待機」になっているため動けません。S3 に「移動 → 腰:敵追尾 → G2可? → 撃:G2」などを組みましょう。',
     arenaPreset: 'plains_ridge',
     seed: 30303,
     maxSeconds: 180,
     buildBrokenStarter: () => {
-      const mech = structuredClone(PRESET_VANGUARD);
+      const mech = structuredClone(PRESET_ABC);
       mech.controlTier = 'pilot_full';
       if (mech.romSlots) {
         delete mech.romSlots.S3;
@@ -236,12 +242,12 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     subtitle: '前後装甲配分と S1 (4×4 主戦術: 距離分岐＋射撃制御) を両立せよ',
     csConcept: 'データ設計 (機体パラメータ) × 制御アルゴリズムの統合',
     goal: '中央胴(前)装甲 > 中央胴(後)装甲、かつ S1 (4×4) に分岐を含む 5 マス以上の戦術を組んで市街地ピラー戦に勝利する',
-    hint: 'バグ入り課題では前面装甲が極薄 (50) で、S1 も「停止＋待機のみ」です。「機体ガレージ」で前装甲を厚くし、S1 (4×4) で距離判断＋追尾＋武装グループ射撃、さらに S2/S4 等で盾ひねり防御も組みましょう。',
+    hint: 'バグ入り課題では前面装甲が極薄 (50) で、S1 も「停止＋待機のみ」です。「機体ガレージ」で前装甲を厚くし、S1 (4×4) で距離判断＋追尾＋武装グループ射撃を組みましょう。',
     arenaPreset: 'urban_pillars',
     seed: 40404,
     maxSeconds: 200,
     buildBrokenStarter: () => {
-      const mech = structuredClone(PRESET_VANGUARD);
+      const mech = structuredClone(PRESET_ABC);
       mech.controlTier = 'pilot_full';
       if (mech.romSlots) delete mech.romSlots.S1;
       mech.armor.torsoFront = 50;
@@ -271,13 +277,13 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     title: 'Step 7: 小隊 2v2 連携＆機体乗り換え適性',
     subtitle: 'パイロット 6×6 を抽象化し、別機体でも戦える上位判断を完成させよう',
     csConcept: 'インターフェースと実装の分離 (機体乗り換え適性)',
-    goal: 'パイロット 6×6 で 3 枠以上の CALL (S1〜S5) を使い分け、小隊 2v2 に勝利＆別機体 (ホークアイ) への乗換検証を突破する',
-    hint: 'バグ入り課題では CALL S1 しか使わないため過熱や背後奇襲に対応できません。S1/S3/S4/S5 などを状況に応じて呼び分け、味方フォートレスと連携して勝利しましょう。',
+    goal: 'パイロット 6×6 で 3 枠以上の CALL (S1〜S5) を使い分け、小隊 2v2 に勝利＆別機体 (XHD) への乗換検証を突破する',
+    hint: 'バグ入り課題では CALL S1 しか使わないため過熱や接近戦に対応できません。S1/S2/S3/S4/S5 などを状況に応じて呼び分け、味方 XHD と連携して勝利しましょう。',
     arenaPreset: 'valley_basin',
     seed: 50505,
     maxSeconds: 220,
     buildBrokenStarter: () => {
-      const mech = structuredClone(PRESET_VANGUARD);
+      const mech = structuredClone(PRESET_ABC);
       mech.controlTier = 'pilot_full';
       const pilot: PilotProfile = {
         version: 2,

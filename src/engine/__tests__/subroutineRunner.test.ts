@@ -1,16 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { PRESET_VANGUARD, STARTER_MECHS } from '../../data/presets';
+import { PRESET_ABC, PRESET_ABH, PRESET_ABL } from '../../data/presets';
 import { MechSubroutine } from '../../types/mech';
 import { buildMechSensorState, createSimulation, EMPTY_CONTROL_INPUT, stepSimulation } from '../mechSim';
 import { startSubroutineExec, stepSubroutineExecution } from '../subroutineRunner';
 
 describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
   it('executes modular 4x4 S3 movement latch + S1 attack routine and auto-returns cleanly', () => {
+    const armedAbl = structuredClone(PRESET_ABL);
+    armedAbl.parts.rightArmWeapon = 'medium_laser';
+    armedAbl.weaponGroups = {
+      G1: ['rightArm'],
+      G2: ['rightShoulder'],
+      G3: ['rightArm'],
+      G4: ['rightArm', 'rightShoulder'],
+    };
     const sim = createSimulation({
       seed: 10,
       entries: [
-        { id: 'me', name: 'Me', teamId: 'A', blueprint: PRESET_VANGUARD },
-        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: STARTER_MECHS[1] },
+        { id: 'me', name: 'Me', teamId: 'A', blueprint: armedAbl },
+        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: PRESET_ABC },
       ],
     });
     sim.terrain.obstacles = [];
@@ -19,8 +27,8 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
     me.yawDeg = 180;
     sim.mechs[1].pos = { x: 300, y: 350, z: 0 };
 
-    const s3 = PRESET_VANGUARD.subroutines.find((s) => s.slotId === 'S3')!;
-    const s1 = PRESET_VANGUARD.subroutines.find((s) => s.slotId === 'S1')!;
+    const s3 = PRESET_ABC.subroutines.find((s) => s.slotId === 'S3')!;
+    const s1 = PRESET_ABC.subroutines.find((s) => s.slotId === 'S1')!;
     expect(s3.gridSize).toBe(4);
     expect(s1.gridSize).toBe(4);
 
@@ -55,11 +63,13 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
   });
 
   it('waits for waist twist alignment during fire chip and advances immediately once fired', () => {
+    const armedAbc = structuredClone(PRESET_ABC);
+    armedAbc.parts.rightArmWeapon = 'ac5';
     const sim = createSimulation({
       seed: 20,
       entries: [
-        { id: 'me', name: 'Me', teamId: 'A', blueprint: PRESET_VANGUARD },
-        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: STARTER_MECHS[1] },
+        { id: 'me', name: 'Me', teamId: 'A', blueprint: armedAbc },
+        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: PRESET_ABL },
       ],
     });
     sim.terrain.obstacles = [];
@@ -108,8 +118,8 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
     const sim = createSimulation({
       seed: 30,
       entries: [
-        { id: 'me', name: 'Me', teamId: 'A', blueprint: PRESET_VANGUARD },
-        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: STARTER_MECHS[1] },
+        { id: 'me', name: 'Me', teamId: 'A', blueprint: PRESET_ABC },
+        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: PRESET_ABL },
       ],
     });
     const me = sim.mechs[0];
@@ -159,7 +169,9 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
   });
 
   it('supports parameterized torso_twist_angle (clamped to chassis max) and weapon groups G1..G4', () => {
-    const bp = structuredClone(PRESET_VANGUARD);
+    const bp = structuredClone(PRESET_ABH);
+    bp.parts.rightArmWeapon = 'ac10';
+    bp.parts.leftArmWeapon = 'large_laser';
     bp.weaponGroups = {
       G1: ['rightArm', 'leftArm'],
       G2: ['rightShoulder'],
@@ -171,7 +183,7 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
       seed: 40,
       entries: [
         { id: 'me', name: 'Me', teamId: 'A', blueprint: bp },
-        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: STARTER_MECHS[2] }, // Fortress (400m omni RCS)
+        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: PRESET_ABH },
       ],
     });
     sim.terrain.obstacles = [];
@@ -291,13 +303,21 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
   });
 
   it('aligns if_group_1_ready with LOS blocking and optimal-to-max extended range', () => {
-    const bp = structuredClone(PRESET_VANGUARD); // G1 = rightArm (AC/5: opt 380, max 680) + leftArm (M-Laser: opt 280, max 420)
+    const bp = structuredClone(PRESET_ABC);
+    bp.parts.rightArmWeapon = 'ac5';
+    bp.parts.leftArmWeapon = 'medium_laser';
+    bp.weaponGroups = {
+      G1: ['rightArm', 'leftArm'],
+      G2: ['leftShoulder'],
+      G3: ['rightArm'],
+      G4: ['leftArm'],
+    };
     const sim = createSimulation({
       seed: 55,
       rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
       entries: [
         { id: 'me', name: 'Me', teamId: 'A', blueprint: bp },
-        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: STARTER_MECHS[2] }, // Fortress (400m omni RCS)
+        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: PRESET_ABH },
       ],
     });
     sim.terrain.obstacles = [
@@ -371,12 +391,20 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
   });
 
   it('triggers timed move_jump burn without being overwritten by subsequent leg latch ops and senses obstacles ahead', () => {
+    const jumperBp = structuredClone(PRESET_ABL);
+    jumperBp.parts.rightArmWeapon = 'medium_laser';
+    jumperBp.weaponGroups = {
+      G1: ['rightArm'],
+      G2: ['rightShoulder'],
+      G3: ['rightArm'],
+      G4: ['rightArm', 'rightShoulder'],
+    };
     const sim = createSimulation({
       seed: 55,
       rules: { arenaPreset: 'urban_pillars', arenaWidth: 1000, arenaDepth: 1000 },
       entries: [
-        { id: 'jumper', name: 'Jumper', teamId: 'A', blueprint: PRESET_VANGUARD },
-        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: STARTER_MECHS[1] },
+        { id: 'jumper', name: 'Jumper', teamId: 'A', blueprint: jumperBp },
+        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: PRESET_ABC },
       ],
     });
     const me = sim.mechs[0];

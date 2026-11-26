@@ -4,7 +4,8 @@ import { MechBlueprint } from '../types/mech';
 import { stripReferencedSubroutinesForStorage } from './romLibrary';
 
 export const SAVED_MECHS_STORAGE_KEY = 'codemech_saved_mechs_v1';
-export const MAX_CUSTOM_TAG_LEN = 3;
+export const DEFAULT_STARTER_MODEL_TAG = 'T1';
+export const MAX_CUSTOM_TAG_LEN = 8;
 
 export interface SavedCustomMech {
   id: string;
@@ -21,54 +22,155 @@ export function isStarterMechId(id: string): boolean {
 }
 
 /**
- * Normalizes a custom variant tag to half-width ASCII alphanumeric/_/- characters,
- * converting full-width ASCII where possible and clamping to at most 3 characters.
+ * Normalizes a custom model suffix string:
+ * - converts full-width ASCII alphanumeric & '-' / '_' to half-width
+ * - strips whitespace and reserved delimiter chars ('/', '[', ']', '\')
+ * - clamps to MAX_CUSTOM_TAG_LEN characters
  */
 export function normalizeCustomTag(raw: string): string {
   const halfWidth = raw
     .trim()
     .replace(/[\uFF01-\uFF5E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0));
-  return halfWidth.replace(/[^A-Za-z0-9_-]/g, '').slice(0, MAX_CUSTOM_TAG_LEN);
+  const cleaned = halfWidth.replace(/[\s/[\]\\]/g, '');
+  return Array.from(cleaned).slice(0, MAX_CUSTOM_TAG_LEN).join('');
 }
 
 /**
- * Resolves the canonical inherent base name (e.g. "CM-03 フォートレス") for a chassis.
+ * Resolves the canonical inherent base name (e.g. "ABC-T1", "FNT-T1") for a chassis.
  */
 export function getBaseMechName(chassisId: string): string {
-  return STARTER_MECHS.find((m) => m.chassisId === chassisId)?.name ?? getChassisSpec(chassisId).name;
+  const starter = STARTER_MECHS.find((m) => m.chassisId === chassisId);
+  if (starter) return starter.name;
+  const chassis = getChassisSpec(chassisId);
+  if (chassis.modelCode) {
+    return `${chassis.modelCode}-${DEFAULT_STARTER_MODEL_TAG}`;
+  }
+  return chassis.name;
 }
 
 /**
- * Formats a mech display name by appending "/TAG" to the model code prefix (e.g. "CM-01/ABC ヴァンガード").
+ * Extracts the model series prefix (e.g. "ABC", "LLB", "XHD") from a chassisId or base name.
+ */
+export function getBaseMechPrefix(baseNameOrChassisId: string): string {
+  const raw = baseNameOrChassisId.startsWith('chassis_')
+    ? getBaseMechName(baseNameOrChassisId)
+    : baseNameOrChassisId;
+  const trimmed = raw.trim();
+  const match = /^([A-Za-z0-9]+)-[^-\s]+$/.exec(trimmed);
+  if (match) return match[1];
+  return trimmed.replace(/-[^-]+$/, '');
+}
+
+/**
+ * Resolves the Japanese role name (e.g. "基本ミドル", "高機動ライト") for a chassis.
+ */
+export function getChassisRoleName(chassisId: string): string {
+  const chassis = getChassisSpec(chassisId);
+  return chassis.roleName ?? chassis.name.split(/[\s（(]/)[0] ?? '';
+}
+
+/**
+ * Formats a mech label for dropdowns/headers as "和名 形式名" (e.g. "基本ミドル ABC-T1").
+ */
+export function formatMechDropdownLabel(chassisId: string | undefined, modelName: string): string {
+  const trimmed = modelName.trim();
+  if (!chassisId) return trimmed;
+  const roleName = getChassisRoleName(chassisId).trim();
+  if (!roleName) return trimmed;
+  if (!trimmed) return roleName;
+  if (trimmed.startsWith(roleName)) return trimmed;
+  return `${roleName} ${trimmed}`;
+}
+
+/**
+ * Formats a mech display name by replacing the model suffix ("ABC-T1" + "X2" -> "ABC-X2")
+ * while keeping legacy "CM-01 ヴァンガード" -> "CM-01/TAG ヴァンガード" compatibility.
  */
 export function formatCustomMechName(baseName: string, tag: string): string {
+  const trimmed = baseName.trim();
   const clean = normalizeCustomTag(tag);
-  if (!clean) return baseName;
-  const match = /^([A-Z]+-\d+)(\s+.*)?$/.exec(baseName.trim());
-  if (match) {
-    return `${match[1]}/${clean}${match[2] ?? ''}`;
+  if (!clean) return trimmed;
+  const legacyCmMatch = /^([A-Z]+-\d+)(\s+.*)?$/.exec(trimmed);
+  if (legacyCmMatch) {
+    return `${legacyCmMatch[1]}/${clean}${legacyCmMatch[2] ?? ''}`;
   }
-  return `${baseName}/${clean}`;
+  const hyphenMatch = /^([A-Za-z0-9]+)-[^\s]+$/.exec(trimmed);
+  if (hyphenMatch) {
+    return `${hyphenMatch[1]}-${clean}`;
+  }
+  return `${trimmed}-${clean}`;
 }
 
 /**
- * Extracts a custom variant tag from either "CM-01/ABC 機体名" or legacy "[tag]" display names.
+ * Extracts a custom model suffix from "ABC-X2", legacy "CM-01/TAG 機体名", or legacy "[TAG]" names.
  */
 export function extractCustomTagFromName(name: string): string {
-  const slashMatch = /^(?:[A-Z]+-\d+|[^/\s]+)\/([A-Za-z0-9_-]{1,3})(?:\s|$)/.exec(name.trim());
+  const trimmed = name.trim();
+  const slashMatch = /^(?:[A-Z]+-\d+|[^/\s]+)\/([^\s]+)(?:\s|$)/.exec(trimmed);
   if (slashMatch) return normalizeCustomTag(slashMatch[1]);
-  const legacyMatch = /\s\[([^\]]+)\]$/.exec(name.trim());
-  return legacyMatch ? normalizeCustomTag(legacyMatch[1]) : '';
+  const legacyMatch = /\s\[([^\]]+)\]$/.exec(trimmed);
+  if (legacyMatch) return normalizeCustomTag(legacyMatch[1]);
+  const hyphenMatch = /^[A-Za-z0-9]+-([^\s]+)$/.exec(trimmed);
+  if (hyphenMatch) return normalizeCustomTag(hyphenMatch[1]);
+  return '';
+}
+
+/**
+ * Returns the default starter model tag for a blueprint ("T1", "T2", etc.).
+ */
+export function getDefaultModelTagForBlueprint(
+  bp: Pick<MechBlueprint, 'id'>
+): string {
+  const starter = STARTER_MECHS.find((m) => m.id === bp.id);
+  if (starter) {
+    return extractCustomTagFromName(starter.name) || DEFAULT_STARTER_MODEL_TAG;
+  }
+  return DEFAULT_STARTER_MODEL_TAG;
+}
+
+/**
+ * Resolves the canonical name to revert to when a starter or custom blueprint's
+ * editable suffix input is cleared back to empty.
+ */
+export function getRevertMechName(
+  bp: Pick<MechBlueprint, 'id' | 'chassisId'>
+): string {
+  const starter = STARTER_MECHS.find((m) => m.id === bp.id);
+  return starter?.name ?? getBaseMechName(bp.chassisId);
+}
+
+/**
+ * Returns initial editable input tag for UI: hides default "T1"/"T2" on unmodified starter mechs
+ * so the placeholder shows the starter's tag until the user types a custom suffix.
+ */
+export function getEditableModelTagFromBlueprint(
+  bp: Pick<MechBlueprint, 'id' | 'name'>
+): string {
+  const starter = STARTER_MECHS.find((m) => m.id === bp.id);
+  if (starter && bp.name.trim() === starter.name.trim()) {
+    return '';
+  }
+  return extractCustomTagFromName(bp.name);
 }
 
 function getFallbackTag(list: SavedCustomMech[], chassisId: string): string {
-  for (let i = 1; i < 100; i++) {
-    const cand = normalizeCustomTag(`C${i}`);
-    if (cand && !list.some((m) => m.chassisId === chassisId && m.tag === cand)) {
+  const usedTags = new Set<string>();
+  for (const m of list) {
+    if (m.chassisId === chassisId && m.tag) usedTags.add(m.tag);
+  }
+  for (const s of STARTER_MECHS) {
+    if (s.chassisId === chassisId) {
+      const sTag = extractCustomTagFromName(s.name);
+      if (sTag) usedTags.add(sTag);
+    }
+  }
+  for (let i = 2; i < 100; i++) {
+    const cand = normalizeCustomTag(`T${i}`);
+    if (cand && !usedTags.has(cand)) {
       return cand;
     }
   }
-  return 'C01';
+  return 'T99';
 }
 
 export function loadSavedCustomMechs(): SavedCustomMech[] {
@@ -90,7 +192,7 @@ export function loadSavedCustomMechs(): SavedCustomMech[] {
           Boolean(item.blueprint)
       )
       .map((item) => {
-        const tag = normalizeCustomTag(item.tag) || 'C1';
+        const tag = normalizeCustomTag(item.tag) || 'T2';
         const formattedName = formatCustomMechName(item.baseName, tag);
         return {
           ...item,

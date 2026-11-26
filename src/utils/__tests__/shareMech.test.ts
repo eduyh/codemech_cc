@@ -211,6 +211,7 @@ describe('shareMech closed-network packages & codec', () => {
       controlTier: 'direct_4x4' as const,
       weaponMountCounts: { leftArm: 3 as const },
     };
+    directMech.parts.leftArmWeapon = 'medium_laser';
     directMech.parts.leftShoulderWeapon = 'ams_bap_pod';
     const directCode = encodeMechCode({ mech: directMech, pilot: DEFAULT_PILOT_PROFILE });
     const decodedDirect = decodeMechCode(directCode);

@@ -129,6 +129,8 @@ export interface BoosterPartSpec {
 export interface MechChassisSpec {
   id: string;
   name: string;
+  roleName?: string;
+  modelCode?: string;
   weightClass: MechWeightClass;
   legStyle: LegStyle;
   sizeScale: number;
@@ -304,6 +306,7 @@ export interface ProgramRomEntry {
   id: string;
   name: string;
   category?: RomCategory;
+  weightTags?: MechWeightClass[];
   gridSize: 4 | 6;
   builtIn?: boolean;
   savedAt?: number;

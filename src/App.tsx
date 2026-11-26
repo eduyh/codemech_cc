@@ -29,13 +29,18 @@ import {
   getShoulderWeaponSpec,
   isPassiveModuleSpec,
 } from './data/parts';
-import { DEFAULT_PILOT_PROFILE, PRESET_VANGUARD, STARTER_MECHS, STARTER_PILOTS } from './data/presets';
+import { DEFAULT_PILOT_PROFILE, PRESET_ABC, STARTER_MECHS, STARTER_PILOTS } from './data/presets';
 import {
+  MAX_CUSTOM_TAG_LEN,
   SavedCustomMech,
   deleteSavedCustomMech,
-  extractCustomTagFromName,
   formatCustomMechName,
+  formatMechDropdownLabel,
   getBaseMechName,
+  getBaseMechPrefix,
+  getDefaultModelTagForBlueprint,
+  getEditableModelTagFromBlueprint,
+  getRevertMechName,
   isStarterMechId,
   loadSavedCustomMechs,
   normalizeCustomTag,
@@ -46,8 +51,11 @@ import {
   deleteUserRom,
   findRomById,
   formatRomLabel,
+  formatRomWeightTagsShort,
   getAllRoms,
   getRomCategory,
+  getRomWeightTags,
+  isBasicBuiltInRom,
   loadUserRoms,
   resolveMechBlueprintRoms,
   saveUserRom,
@@ -73,6 +81,7 @@ import {
   MechControlInput,
   MechSubroutineCell,
   MechSubroutineSlotId,
+  MechWeightClass,
   PilotDebugTrace,
   PilotGridCell,
   PilotProfile,
@@ -175,11 +184,11 @@ export default function App() {
   const [userPilots, setUserPilots] = useState<PilotProfile[]>(() => loadUserPilots());
   const allPilots = useMemo(() => getAllPilots(userPilots), [userPilots]);
   const [playerMech, setPlayerMech] = useState<MechBlueprint>(() =>
-    resolveMechBlueprintRoms(structuredClone(PRESET_VANGUARD), getAllRoms(loadUserRoms()))
+    resolveMechBlueprintRoms(structuredClone(PRESET_ABC), getAllRoms(loadUserRoms()))
   );
   const [savedMechs, setSavedMechs] = useState<SavedCustomMech[]>(() => loadSavedCustomMechs());
   const [starterEdited, setStarterEdited] = useState(false);
-  const [setupTag, setSetupTag] = useState(() => extractCustomTagFromName(playerMech.name));
+  const [setupTag, setSetupTag] = useState(() => getEditableModelTagFromBlueprint(playerMech));
   const [setupSaveNotice, setSetupSaveNotice] = useState('');
   const setupNoticeTimerRef = useRef<number | null>(null);
   const [seed, setSeed] = useState(2026);
@@ -202,7 +211,7 @@ export default function App() {
       const oppPilot = oppStarter.defaultPilotId
         ? STARTER_PILOTS.find((p) => p.id === oppStarter.defaultPilotId)
         : undefined;
-      return buildMatchSetup('1v1', 'plains_ridge', PRESET_VANGUARD, 2026, DEFAULT_PILOT_PROFILE, {
+      return buildMatchSetup('1v1', 'plains_ridge', PRESET_ABC, 2026, DEFAULT_PILOT_PROFILE, {
         blueprint: resolveMechBlueprintRoms(
           structuredClone(oppStarter),
           getAllRoms(loadUserRoms())
@@ -227,8 +236,8 @@ export default function App() {
   const [playerDebugTrace, setPlayerDebugTrace] = useState<PilotDebugTrace | null>(null);
 
   useEffect(() => {
-    setSetupTag(extractCustomTagFromName(playerMech.name));
-  }, [playerMech.id, playerMech.name]);
+    setSetupTag(getEditableModelTagFromBlueprint(playerMech));
+  }, [playerMech.id]);
 
   useEffect(() => {
     return () => {
@@ -324,6 +333,7 @@ export default function App() {
       const cloned = resolveMechBlueprintRoms(structuredClone(bp), allRoms);
       setPlayerMech(cloned);
       playerMechRef.current = cloned;
+      setSetupTag(getEditableModelTagFromBlueprint(cloned));
       setStarterEdited(false);
       const resolvedPilotId = pilotId ?? bp.defaultPilotId;
       const matchedPilot = resolvedPilotId
@@ -346,6 +356,7 @@ export default function App() {
       id?: string;
       name: string;
       category?: RomCategory;
+      weightTags?: MechWeightClass[];
       gridSize: 4 | 6;
       cells: MechSubroutineCell[];
       slotId?: MechSubroutineSlotId;
@@ -354,6 +365,7 @@ export default function App() {
         id: input.id,
         name: input.name,
         category: input.category,
+        weightTags: input.weightTags,
         gridSize: 4,
         cells: input.cells,
       });
@@ -742,7 +754,7 @@ export default function App() {
                       <optgroup label="ユーザー機体">
                         {savedMechs.map((m) => (
                           <option key={m.id} value={m.id}>
-                            {formatCustomMechName(m.baseName, m.tag)}
+                            {formatMechDropdownLabel(m.chassisId, formatCustomMechName(m.baseName, m.tag))}
                           </option>
                         ))}
                       </optgroup>
@@ -750,7 +762,7 @@ export default function App() {
                     <optgroup label="標準機体">
                       {STARTER_MECHS.map((bp) => (
                         <option key={bp.id} value={bp.id}>
-                          {bp.name}
+                          {formatMechDropdownLabel(bp.chassisId, bp.name)}
                         </option>
                       ))}
                     </optgroup>
@@ -777,39 +789,54 @@ export default function App() {
                   {setupSaveNotice && <span className="cm-save-notice">{setupSaveNotice}</span>}
                 </div>
 
-                {isStarterMech && (
-                  <>
-                    {isStarterDirty && (
-                      <div className="cm-starter-save-guide cm-starter-save-guide--compact">
-                        標準機体「{getBaseMechName(playerMech.chassisId)}」を編集中です。上書きできないため、識別名（半角3文字以内）を付けて新規ユーザー機体として保存してください。
-                      </div>
-                    )}
-                    <div className="cm-starter-save-row">
-                      <input
-                        type="text"
-                        className="cm-tag-input"
-                        maxLength={3}
-                        inputMode="text"
-                        value={setupTag}
-                        placeholder="C1等"
-                        aria-label="ユーザー機体識別名（半角3文字まで）"
-                        onChange={(e) => setSetupTag(normalizeCustomTag(e.target.value))}
-                      />
-                      <button
-                        type="button"
-                        className={`cm-btn-primary-xs ${isStarterDirty ? 'is-attention' : ''}`}
-                        onClick={() => {
-                          const res = handleSaveCustomMech(setupTag);
-                          setSetupTag(res.saved.tag);
-                          const codeLabel = res.saved.blueprint.name.split(' ')[0] ?? res.saved.tag;
-                          flashSetupNotice(`新規保存: ${codeLabel}`);
-                        }}
-                      >
-                        新規ユーザー機体として保存
-                      </button>
-                    </div>
-                  </>
+                {isStarterMech && isStarterDirty && (
+                  <div className="cm-starter-save-guide cm-starter-save-guide--compact">
+                    標準機体「{getBaseMechName(playerMech.chassisId)}」を編集中です。上書きできないため、型式番号（{getBaseMechPrefix(playerMech.chassisId)}-任意の文字列）を付けて新規ユーザー機体として保存してください。
+                  </div>
                 )}
+
+                <div className="cm-starter-save-row">
+                  <span className="cm-tag-prefix">
+                    {getBaseMechPrefix(playerMech.chassisId)}-
+                  </span>
+                  <input
+                    type="text"
+                    className="cm-tag-input"
+                    maxLength={MAX_CUSTOM_TAG_LEN}
+                    inputMode="text"
+                    value={setupTag}
+                    placeholder={getDefaultModelTagForBlueprint(playerMech)}
+                    aria-label={`型式番号（${MAX_CUSTOM_TAG_LEN}文字まで）`}
+                    onChange={(e) => {
+                      const nextTag = normalizeCustomTag(e.target.value);
+                      setSetupTag(nextTag);
+                      const cur = playerMechRef.current;
+                      handleUpdatePlayerMech({
+                        ...cur,
+                        name: nextTag
+                          ? formatCustomMechName(getBaseMechName(cur.chassisId), nextTag)
+                          : getRevertMechName(cur),
+                      });
+                    }}
+                  />
+                  <span className="cm-tag-count">
+                    {Array.from(setupTag).length}/{MAX_CUSTOM_TAG_LEN}
+                  </span>
+                  {isStarterMech && (
+                    <button
+                      type="button"
+                      className={`cm-btn-primary-xs ${isStarterDirty ? 'is-attention' : ''}`}
+                      onClick={() => {
+                        const res = handleSaveCustomMech(setupTag);
+                        setSetupTag(res.saved.tag);
+                        const codeLabel = res.saved.blueprint.name.split(' ')[0] ?? res.saved.tag;
+                        flashSetupNotice(`新規保存: ${codeLabel}`);
+                      }}
+                    >
+                      新規ユーザー機体として保存
+                    </button>
+                  )}
+                </div>
 
                 <div className="cm-wgroup-quick-panel">
                   <div className="cm-wgroup-quick-note">
@@ -948,29 +975,36 @@ export default function App() {
                                 const cSpec = ROM_CATEGORY_SPECS.find(
                                   (c) => c.id === getRomCategory(r)
                                 );
+                                const wtShort = formatRomWeightTagsShort(getRomWeightTags(r));
                                 return (
                                   <option key={r.id} value={r.id}>
-                                    [{cSpec?.short ?? '制'}] {formatRomLabel(r)}
+                                    [{cSpec?.short ?? '制'}
+                                    {wtShort ? `/${wtShort}` : ''}] {formatRomLabel(r)}
                                   </option>
                                 );
                               })}
                             </optgroup>
                           )}
-                          {ROM_CATEGORY_SPECS.map((cat) => {
-                            const list = allRoms.filter(
-                              (r) => r.builtIn && getRomCategory(r) === cat.id
-                            );
-                            if (list.length === 0) return null;
+                          {(() => {
+                            const basicList = allRoms.filter((r) => isBasicBuiltInRom(r));
+                            if (basicList.length === 0) return null;
                             return (
-                              <optgroup key={cat.id} label={`標準ルーチン・${cat.label}`}>
-                                {list.map((r) => (
-                                  <option key={r.id} value={r.id}>
-                                    [{cat.short}] {formatRomLabel(r)}
-                                  </option>
-                                ))}
+                              <optgroup label="基本ルーチン">
+                                {basicList.map((r) => {
+                                  const cSpec = ROM_CATEGORY_SPECS.find(
+                                    (c) => c.id === getRomCategory(r)
+                                  );
+                                  const wtShort = formatRomWeightTagsShort(getRomWeightTags(r));
+                                  return (
+                                    <option key={r.id} value={r.id}>
+                                      [{cSpec?.short ?? '制'}
+                                      {wtShort ? `/${wtShort}` : ''}] {formatRomLabel(r)}
+                                    </option>
+                                  );
+                                })}
                               </optgroup>
                             );
-                          })}
+                          })()}
                         </select>
                       </label>
                     );
@@ -1023,7 +1057,7 @@ export default function App() {
                           <optgroup label="ユーザー機体">
                             {savedMechs.map((m) => (
                               <option key={m.id} value={m.id}>
-                                {formatCustomMechName(m.baseName, m.tag)}
+                                {formatMechDropdownLabel(m.chassisId, formatCustomMechName(m.baseName, m.tag))}
                               </option>
                             ))}
                           </optgroup>
@@ -1031,7 +1065,7 @@ export default function App() {
                         <optgroup label="標準機体">
                           {STARTER_MECHS.map((bp) => (
                             <option key={bp.id} value={bp.id}>
-                              {bp.name}
+                              {formatMechDropdownLabel(bp.chassisId, bp.name)}
                             </option>
                           ))}
                         </optgroup>

@@ -30,6 +30,7 @@ import {
   MechSubroutineCell,
   MechSubroutineOp,
   MechSubroutineSlotId,
+  MechWeightClass,
   PilotDebugTrace,
   PilotGridCell,
   PilotGridOp,
@@ -44,12 +45,18 @@ import {
 } from '../types/mech';
 import {
   ROM_CATEGORY_SPECS,
+  ROM_WEIGHT_TAG_SPECS,
   analyzeMechRomCompatibility,
+  checkSingleRomCompatibility,
   filterCellsForGrid,
   findRomById,
   formatRomLabel,
+  formatRomWeightTagsShort,
   getRomCategory,
+  getRomWeightTags,
+  isBasicBuiltInRom,
   normalizeRomName,
+  normalizeRomWeightTags,
 } from '../utils/romLibrary';
 import { isBuiltInPilotId } from '../utils/pilotLibrary';
 import {
@@ -79,6 +86,7 @@ interface GridProgramEditorProps {
     id?: string;
     name: string;
     category?: RomCategory;
+    weightTags?: MechWeightClass[];
     gridSize: 4 | 6;
     cells: MechSubroutineCell[];
     slotId?: MechSubroutineSlotId;
@@ -1254,8 +1262,15 @@ export function GridProgramEditor({
 }: GridProgramEditorProps) {
   const [selection, setSelection] = useState<EditorSelection>({ kind: 'pilot' });
   const [romDrafts, setRomDrafts] = useState<
-    Record<string, { cells: MechSubroutineCell[]; category: RomCategory }>
+    Record<
+      string,
+      { cells: MechSubroutineCell[]; category: RomCategory; weightTags?: MechWeightClass[] }
+    >
   >({});
+  const [libraryExpanded, setLibraryExpanded] = useState<boolean>(true);
+  const [romSourceFilter, setRomSourceFilter] = useState<'all' | 'custom' | 'basic'>('all');
+  const [romCatFilter, setRomCatFilter] = useState<'all' | RomCategory>('all');
+  const [romWeightFilter, setRomWeightFilter] = useState<'all' | 'mech' | MechWeightClass>('all');
   const [autoFollow, setAutoFollow] = useState<boolean>(false);
   const [selectedPos, setSelectedPos] = useState<{ row: number; col: number }>({ row: 0, col: 0 });
 
@@ -1345,14 +1360,53 @@ export function GridProgramEditor({
 
   const sortedAllRoms = useMemo(() => {
     const order: Record<RomCategory, number> = { attack: 0, move: 1, control: 2 };
+    const sourceRank = (r: ProgramRomEntry) => (!r.builtIn ? 0 : isBasicBuiltInRom(r) ? 1 : 2);
     return [...allRoms].sort((a, b) => {
+      const ra = sourceRank(a);
+      const rb = sourceRank(b);
+      if (ra !== rb) return ra - rb;
       const ca = order[romDrafts[a.id]?.category ?? getRomCategory(a)];
       const cb = order[romDrafts[b.id]?.category ?? getRomCategory(b)];
       if (ca !== cb) return ca - cb;
-      if (Boolean(a.builtIn) !== Boolean(b.builtIn)) return a.builtIn ? 1 : -1;
       return 0;
     });
   }, [allRoms, romDrafts]);
+
+  const romCompatById = useMemo(() => {
+    const map: Record<string, ReturnType<typeof checkSingleRomCompatibility>> = {};
+    for (const r of allRoms) {
+      map[r.id] = checkSingleRomCompatibility(r, mech);
+    }
+    return map;
+  }, [allRoms, mech]);
+
+  const currentWeightShort =
+    ROM_WEIGHT_TAG_SPECS.find((w) => w.id === chassisSpec.weightClass)?.short ?? '中';
+
+  const filteredLibraryRoms = useMemo(() => {
+    return sortedAllRoms.filter((r) => {
+      if (romSourceFilter === 'custom' && r.builtIn) return false;
+      if (romSourceFilter === 'basic' && !isBasicBuiltInRom(r)) return false;
+      const cat = romDrafts[r.id]?.category ?? getRomCategory(r);
+      if (romCatFilter !== 'all' && cat !== romCatFilter) return false;
+      if (romWeightFilter !== 'all') {
+        const wTags = romDrafts[r.id]?.weightTags ?? getRomWeightTags(r);
+        if (romWeightFilter === 'mech') {
+          if (wTags.length > 0 && !wTags.includes(chassisSpec.weightClass)) return false;
+        } else if (!wTags.includes(romWeightFilter)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [
+    sortedAllRoms,
+    romSourceFilter,
+    romCatFilter,
+    romWeightFilter,
+    romDrafts,
+    chassisSpec.weightClass,
+  ]);
 
   const pilotButtonList = useMemo(() => {
     const base = allPilots && allPilots.length > 0 ? [...allPilots] : [];
@@ -1423,6 +1477,9 @@ export function GridProgramEditor({
     : editingInlineSub
       ? editingInlineSub.category ?? getRomCategory({ cells: editingInlineSub.cells })
       : 'control';
+  const editingWeightTags: MechWeightClass[] = editingCatalogRom
+    ? romDrafts[editingCatalogRom.id]?.weightTags ?? getRomWeightTags(editingCatalogRom)
+    : [];
 
   const currentRomCells: MechSubroutineCell[] = useMemo(() => {
     if (isMain) return [];
@@ -1468,11 +1525,13 @@ export function GridProgramEditor({
     if (isMain || !editingCatalogRom) return false;
     const savedCat = getRomCategory(editingCatalogRom);
     if (editingCategory !== savedCat) return true;
+    const savedWeights = getRomWeightTags(editingCatalogRom);
+    if (JSON.stringify(editingWeightTags) !== JSON.stringify(savedWeights)) return true;
     return (
       JSON.stringify(filterCellsForGrid(currentRomCells, 4)) !==
       JSON.stringify(filterCellsForGrid(editingCatalogRom.cells, 4))
     );
-  }, [isMain, editingCatalogRom, editingCategory, currentRomCells]);
+  }, [isMain, editingCatalogRom, editingCategory, editingWeightTags, currentRomCells]);
 
   const clampedRow = Math.min(selectedPos.row, gridSize - 1);
   const clampedCol = Math.min(selectedPos.col, gridSize - 1);
@@ -1532,13 +1591,15 @@ export function GridProgramEditor({
 
   const updateCurrentRomState = (
     nextCells: MechSubroutineCell[],
-    nextCategory?: RomCategory
+    nextCategory?: RomCategory,
+    nextWeightTags?: MechWeightClass[]
   ) => {
     if (selection.kind === 'rom' && editingCatalogRom) {
       const cat = nextCategory ?? editingCategory;
+      const weights = normalizeRomWeightTags(nextWeightTags ?? editingWeightTags);
       setRomDrafts((prev) => ({
         ...prev,
-        [editingCatalogRom.id]: { cells: nextCells, category: cat },
+        [editingCatalogRom.id]: { cells: nextCells, category: cat, weightTags: weights },
       }));
       if (editingRomMountedSlots.length > 0) {
         const nextSubs = mech.subroutines.map((s) =>
@@ -2156,114 +2217,289 @@ export function GridProgramEditor({
           </div>
         )}
 
-        <div className="cm-selector-row">
+        {/* Mounted Slots Pickup Row */}
+        <div className="cm-selector-row cm-selector-row--mounted">
           <span className="cm-selector-label">
-            <Grid3X3 size={12} /> ルーチン
+            <Grid3X3 size={12} /> 搭載中
           </span>
-          <div className="cm-rom-btn-row" role="tablist" aria-label="ルーチン一覧">
-            {inlineSubSlots.map((slotId) => {
-              const sub = mech.subroutines.find((s) => s.slotId === slotId);
-              if (!sub) return null;
-              const cat = sub.category ?? getRomCategory({ cells: sub.cells });
-              const isActive = selection.kind === 'inline' && selection.slotId === slotId;
-              const isRunning = debugTrace?.activeSubroutineSlot === slotId;
-              const hasIssues = romIssues[slotId].length > 0;
-              const cleanName = sub.name.replace(/\s*\([46]×[46]\)$/, '') || slotId;
-              return (
-                <button
-                  key={`inline:${slotId}`}
-                  type="button"
-                  className={`cm-rom-btn is-cat-${cat} ${isActive ? 'is-active' : ''} ${
-                    isRunning ? 'is-running' : ''
-                  }`}
-                  title={`${slotId} 搭載中 (機体直接): ${sub.name}`}
-                  onClick={() => {
-                    setSelection({ kind: 'inline', slotId });
-                    setHoveredCellPos(null);
-                    setHoveredPaletteOp(null);
-                  }}
-                >
-                  <span className="cm-rom-chip-top">
-                    <span className="cm-rom-chip-slots">
-                      <span className="cm-rom-slot-tag">{slotId}</span>
-                    </span>
-                    {hasIssues && <span className="cm-board-tab-warn">!</span>}
+          <div className="cm-rom-btn-row" role="tablist" aria-label="搭載中ルーチン一覧">
+            {(() => {
+              const items: JSX.Element[] = [];
+              for (const slotId of tierSpec.enabledSlots) {
+                const refId = mech.romSlots?.[slotId];
+                const rom = typeof refId === 'string' ? findRomById(allRoms, refId) : undefined;
+                if (rom) {
+                  const cat = romDrafts[rom.id]?.category ?? getRomCategory(rom);
+                  const wTags = romDrafts[rom.id]?.weightTags ?? getRomWeightTags(rom);
+                  const wShort = formatRomWeightTagsShort(wTags);
+                  const isActive = selection.kind === 'rom' && selection.romId === rom.id;
+                  const isRunning = debugTrace?.activeSubroutineSlot === slotId;
+                  const hasIssues = romIssues[slotId].length > 0;
+                  const catLabel =
+                    ROM_CATEGORY_SPECS.find((c) => c.id === cat)?.label ?? '制御系';
+                  items.push(
+                    <button
+                      key={`mounted:${slotId}`}
+                      type="button"
+                      className={`cm-rom-btn is-cat-${cat} ${isActive ? 'is-active' : ''} ${
+                        isRunning ? 'is-running' : ''
+                      } ${hasIssues ? 'is-incompatible' : ''}`}
+                      title={`${slotId}: ${formatRomLabel(rom)} [${catLabel}]${
+                        wShort ? ` [${wShort}]` : ''
+                      }${hasIssues ? ` ⚠ ${romIssues[slotId][0].text}` : ''}`}
+                      onClick={() => {
+                        setSelection({ kind: 'rom', romId: rom.id });
+                        setHoveredCellPos(null);
+                        setHoveredPaletteOp(null);
+                      }}
+                    >
+                      <span className="cm-rom-chip-top">
+                        <span className="cm-rom-chip-slots">
+                          <span className="cm-rom-slot-tag">{slotId}</span>
+                        </span>
+                        <span className="cm-rom-chip-flags">
+                          {!rom.builtIn && <span className="cm-rom-custom-tag">自作</span>}
+                          {hasIssues && <span className="cm-board-tab-warn">!</span>}
+                        </span>
+                      </span>
+                      <span className="cm-rom-chip-name">{rom.name}</span>
+                      {wTags.length > 0 && (
+                        <span className="cm-rom-chip-weights">
+                          {wTags.map((wt) => (
+                            <span key={wt} className="cm-rom-weight-badge">
+                              {ROM_WEIGHT_TAG_SPECS.find((s) => s.id === wt)?.short}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                    </button>
+                  );
+                } else if (inlineSubSlots.includes(slotId)) {
+                  const sub = mech.subroutines.find((s) => s.slotId === slotId);
+                  if (!sub) continue;
+                  const cat = sub.category ?? getRomCategory({ cells: sub.cells });
+                  const isActive = selection.kind === 'inline' && selection.slotId === slotId;
+                  const isRunning = debugTrace?.activeSubroutineSlot === slotId;
+                  const hasIssues = romIssues[slotId].length > 0;
+                  const cleanName = sub.name.replace(/\s*\([46]×[46]\)$/, '') || slotId;
+                  items.push(
+                    <button
+                      key={`inline:${slotId}`}
+                      type="button"
+                      className={`cm-rom-btn is-cat-${cat} ${isActive ? 'is-active' : ''} ${
+                        isRunning ? 'is-running' : ''
+                      } ${hasIssues ? 'is-incompatible' : ''}`}
+                      title={`${slotId} 搭載中 (機体直接): ${sub.name}`}
+                      onClick={() => {
+                        setSelection({ kind: 'inline', slotId });
+                        setHoveredCellPos(null);
+                        setHoveredPaletteOp(null);
+                      }}
+                    >
+                      <span className="cm-rom-chip-top">
+                        <span className="cm-rom-chip-slots">
+                          <span className="cm-rom-slot-tag">{slotId}</span>
+                        </span>
+                        {hasIssues && <span className="cm-board-tab-warn">!</span>}
+                      </span>
+                      <span className="cm-rom-chip-name">{cleanName}</span>
+                    </button>
+                  );
+                }
+              }
+              if (items.length === 0) {
+                return (
+                  <span className="cm-rom-empty-note">
+                    搭載中のルーチンなし（下のライブラリまたはガレージから搭載できます）
                   </span>
-                  <span className="cm-rom-chip-name">{cleanName}</span>
-                </button>
-              );
-            })}
+                );
+              }
+              return items;
+            })()}
+          </div>
+        </div>
 
-            {sortedAllRoms.map((rom) => {
-              const cat = romDrafts[rom.id]?.category ?? getRomCategory(rom);
-              const mountedSlots = mountedSlotsByRomId[rom.id] ?? [];
-              const isActive = selection.kind === 'rom' && selection.romId === rom.id;
-              const isRunning = Boolean(
-                debugTrace?.activeSubroutineSlot &&
-                  mountedSlots.includes(debugTrace.activeSubroutineSlot)
-              );
-              const hasIssues = mountedSlots.some((s) => romIssues[s].length > 0);
-              const catLabel =
-                ROM_CATEGORY_SPECS.find((c) => c.id === cat)?.label ?? '制御系';
-              return (
+        {/* Collapsible Library Row with Source, Category, and Weight-Class Filters */}
+        <div className="cm-selector-row cm-selector-row--library">
+          <div className="cm-library-header">
+            <button
+              type="button"
+              className="cm-library-toggle"
+              aria-expanded={libraryExpanded}
+              onClick={() => setLibraryExpanded((v) => !v)}
+            >
+              {libraryExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              <span>
+                ルーチン一覧 ({filteredLibraryRoms.length}/{sortedAllRoms.length})
+              </span>
+            </button>
+
+            <div className="cm-library-filters">
+              <div className="cm-filter-group" role="group" aria-label="ルーチン区分フィルタ">
+                {(
+                  [
+                    ['all', '全て'],
+                    ['custom', '自作'],
+                    ['basic', '基本'],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`cm-filter-pill ${romSourceFilter === id ? 'is-active' : ''}`}
+                    onClick={() => setRomSourceFilter(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="cm-filter-group" role="group" aria-label="系統フィルタ">
                 <button
-                  key={rom.id}
                   type="button"
-                  className={`cm-rom-btn is-cat-${cat} ${isActive ? 'is-active' : ''} ${
-                    isRunning ? 'is-running' : ''
-                  }`}
-                  title={`${formatRomLabel(rom)} [${catLabel}]${
-                    mountedSlots.length > 0 ? ` ・搭載: ${mountedSlots.join(', ')}` : ' ・未搭載'
-                  }`}
-                  onClick={() => {
-                    setSelection({ kind: 'rom', romId: rom.id });
-                    setHoveredCellPos(null);
-                    setHoveredPaletteOp(null);
-                  }}
+                  className={`cm-filter-pill ${romCatFilter === 'all' ? 'is-active' : ''}`}
+                  onClick={() => setRomCatFilter('all')}
                 >
-                  {(mountedSlots.length > 0 || !rom.builtIn || hasIssues) && (
-                    <span className="cm-rom-chip-top">
-                      <span className="cm-rom-chip-slots">
-                        {mountedSlots.map((sl) => (
-                          <span key={sl} className="cm-rom-slot-tag">
-                            {sl}
+                  全
+                </button>
+                {ROM_CATEGORY_SPECS.map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    className={`cm-filter-pill is-cat-${cat.id} ${
+                      romCatFilter === cat.id ? 'is-active' : ''
+                    }`}
+                    onClick={() => setRomCatFilter(cat.id)}
+                  >
+                    {cat.short}
+                  </button>
+                ))}
+              </div>
+
+              <div className="cm-filter-group" role="group" aria-label="重量級フィルタ">
+                <button
+                  type="button"
+                  className={`cm-filter-pill ${romWeightFilter === 'all' ? 'is-active' : ''}`}
+                  onClick={() => setRomWeightFilter('all')}
+                >
+                  全重量
+                </button>
+                <button
+                  type="button"
+                  className={`cm-filter-pill ${romWeightFilter === 'mech' ? 'is-active' : ''}`}
+                  title="現在搭乗中の機体クラス向け＋汎用ルーチンを表示"
+                  onClick={() => setRomWeightFilter('mech')}
+                >
+                  自機({currentWeightShort})
+                </button>
+                {ROM_WEIGHT_TAG_SPECS.map((wt) => (
+                  <button
+                    key={wt.id}
+                    type="button"
+                    className={`cm-filter-pill ${romWeightFilter === wt.id ? 'is-active' : ''}`}
+                    title={`${wt.label}タグ付きのルーチンを表示`}
+                    onClick={() => setRomWeightFilter(wt.id)}
+                  >
+                    {wt.short}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {libraryExpanded && (
+            <div className="cm-rom-btn-row" role="tablist" aria-label="ルーチンライブラリ">
+              {filteredLibraryRoms.map((rom) => {
+                const cat = romDrafts[rom.id]?.category ?? getRomCategory(rom);
+                const wTags = romDrafts[rom.id]?.weightTags ?? getRomWeightTags(rom);
+                const wShort = formatRomWeightTagsShort(wTags);
+                const mountedSlots = mountedSlotsByRomId[rom.id] ?? [];
+                const compatIssues = romCompatById[rom.id] ?? [];
+                const isIncompatible = compatIssues.length > 0;
+                const isActive = selection.kind === 'rom' && selection.romId === rom.id;
+                const isRunning = Boolean(
+                  debugTrace?.activeSubroutineSlot &&
+                    mountedSlots.includes(debugTrace.activeSubroutineSlot)
+                );
+                const hasSlotIssues = mountedSlots.some((s) => romIssues[s].length > 0);
+                const showWarn = hasSlotIssues || isIncompatible;
+                const catLabel =
+                  ROM_CATEGORY_SPECS.find((c) => c.id === cat)?.label ?? '制御系';
+                const compatNote =
+                  compatIssues.length > 0 ? ` ⚠ ${compatIssues[0].text}` : '';
+                return (
+                  <button
+                    key={rom.id}
+                    type="button"
+                    className={`cm-rom-btn is-cat-${cat} ${isActive ? 'is-active' : ''} ${
+                      isRunning ? 'is-running' : ''
+                    } ${isIncompatible ? 'is-incompatible' : ''}`}
+                    title={`${formatRomLabel(rom)} [${catLabel}]${wShort ? ` [${wShort}]` : ''}${
+                      mountedSlots.length > 0 ? ` ・搭載: ${mountedSlots.join(', ')}` : ' ・未搭載'
+                    }${compatNote}`}
+                    onClick={() => {
+                      setSelection({ kind: 'rom', romId: rom.id });
+                      setHoveredCellPos(null);
+                      setHoveredPaletteOp(null);
+                    }}
+                  >
+                    {(mountedSlots.length > 0 || !rom.builtIn || showWarn) && (
+                      <span className="cm-rom-chip-top">
+                        <span className="cm-rom-chip-slots">
+                          {mountedSlots.map((sl) => (
+                            <span key={sl} className="cm-rom-slot-tag">
+                              {sl}
+                            </span>
+                          ))}
+                        </span>
+                        <span className="cm-rom-chip-flags">
+                          {!rom.builtIn && <span className="cm-rom-custom-tag">自作</span>}
+                          {showWarn && <span className="cm-board-tab-warn">!</span>}
+                        </span>
+                      </span>
+                    )}
+                    <span className="cm-rom-chip-name">{rom.name}</span>
+                    {wTags.length > 0 && (
+                      <span className="cm-rom-chip-weights">
+                        {wTags.map((wt) => (
+                          <span key={wt} className="cm-rom-weight-badge">
+                            {ROM_WEIGHT_TAG_SPECS.find((s) => s.id === wt)?.short}
                           </span>
                         ))}
                       </span>
-                      <span className="cm-rom-chip-flags">
-                        {!rom.builtIn && <span className="cm-rom-custom-tag">自作</span>}
-                        {hasIssues && <span className="cm-board-tab-warn">!</span>}
-                      </span>
-                    </span>
-                  )}
-                  <span className="cm-rom-chip-name">{rom.name}</span>
-                </button>
-              );
-            })}
+                    )}
+                  </button>
+                );
+              })}
 
-            {onSaveRom && (
-              <button
-                type="button"
-                className="cm-add-lib-btn cm-rom-add-tile"
-                title="新しい 4×4 ルーチンを作成して編集します"
-                onClick={() => {
-                  const res = onSaveRom({
-                    name: '新規ルーチン',
-                    category: 'attack',
-                    gridSize: 4,
-                    cells: [{ row: 0, col: 0, op: 'start', dir: 'E' }],
-                  });
-                  setSelection({ kind: 'rom', romId: res.saved.id });
-                  setHoveredCellPos(null);
-                  setHoveredPaletteOp(null);
-                  flashRomNotice(`新規ルーチン「${formatRomLabel(res.saved)}」を作成しました`);
-                }}
-              >
-                <Plus size={14} />
-                <span>新規ルーチン</span>
-              </button>
-            )}
-          </div>
+              {filteredLibraryRoms.length === 0 && (
+                <span className="cm-rom-empty-note">該当するルーチンがありません</span>
+              )}
+
+              {onSaveRom && (
+                <button
+                  type="button"
+                  className="cm-add-lib-btn cm-rom-add-tile"
+                  title="新しい 4×4 ルーチンを作成して編集します"
+                  onClick={() => {
+                    const res = onSaveRom({
+                      name: '新規ルーチン',
+                      category: 'attack',
+                      gridSize: 4,
+                      cells: [{ row: 0, col: 0, op: 'start', dir: 'E' }],
+                    });
+                    setSelection({ kind: 'rom', romId: res.saved.id });
+                    setHoveredCellPos(null);
+                    setHoveredPaletteOp(null);
+                    flashRomNotice(`新規ルーチン「${formatRomLabel(res.saved)}」を作成しました`);
+                  }}
+                >
+                  <Plus size={14} />
+                  <span>新規ルーチン</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -2472,6 +2708,7 @@ export function GridProgramEditor({
                             id: prevId,
                             name: romNameDraft || editingCatalogRom.name,
                             category: editingCategory,
+                            weightTags: editingWeightTags,
                             gridSize: 4,
                             cells: currentRomCells,
                           });
@@ -2495,6 +2732,7 @@ export function GridProgramEditor({
                           const res = onSaveRom({
                             name: romNameDraft || '自作ルーチン',
                             category: editingCategory,
+                            weightTags: editingWeightTags,
                             gridSize: 4,
                             cells: currentRomCells,
                             slotId: editingInlineSub?.slotId,
@@ -2563,6 +2801,34 @@ export function GridProgramEditor({
                       </button>
                     ))}
                   </div>
+
+                  {selection.kind === 'rom' && editingCatalogRom && (
+                    <div className="cm-weight-seg" role="group" aria-label="重量級ラベル">
+                      <span className="cm-weight-seg-label">適性:</span>
+                      {ROM_WEIGHT_TAG_SPECS.map((wt) => {
+                        const active = editingWeightTags.includes(wt.id);
+                        return (
+                          <button
+                            key={wt.id}
+                            type="button"
+                            className={`cm-weight-seg-btn ${active ? 'is-active' : ''}`}
+                            title={`${wt.label}タグを${active ? '外す' : '付ける'}`}
+                            onClick={() => {
+                              const nextTags = active
+                                ? editingWeightTags.filter((t) => t !== wt.id)
+                                : [...editingWeightTags, wt.id];
+                              updateCurrentRomState(currentRomCells, editingCategory, nextTags);
+                            }}
+                          >
+                            {wt.short}
+                          </button>
+                        );
+                      })}
+                      {editingWeightTags.length === 0 && (
+                        <span className="cm-weight-any-hint">汎用</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

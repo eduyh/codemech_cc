@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ARM_WEAPONS,
+  MECH_CHASSIS_CATALOG,
   SHOULDER_WEAPONS,
   computeMechStats,
   computeRangeFalloffMultiplier,
@@ -8,10 +9,9 @@ import {
 } from '../../data/parts';
 import { CURRICULUM_MISSIONS } from '../../data/curriculum';
 import {
-  PRESET_FORTRESS,
-  PRESET_SNIPER,
-  PRESET_STRIKER,
-  PRESET_VANGUARD,
+  PRESET_ABC,
+  PRESET_ABH,
+  PRESET_ABL,
   STARTER_MECHS,
 } from '../../data/presets';
 import { MAX_CHASSIS_TONNAGE, MatchParticipantEntry, MechControlInput } from '../../types/mech';
@@ -111,11 +111,13 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('blocks low shots across the central ridge while elevated shots clear it', () => {
+    const shooterBp = structuredClone(PRESET_ABH);
+    shooterBp.parts.rightArmWeapon = 'ac10';
     const sim = createSimulation({
       seed: 7,
       rules: { arenaPreset: 'plains_ridge', arenaWidth: 600, arenaDepth: 600 },
       entries: [
-        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: STARTER_MECHS[3] },
+        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: shooterBp },
         { id: 'target', name: 'Target', teamId: 'B', blueprint: STARTER_MECHS[0] },
       ],
     });
@@ -147,7 +149,7 @@ describe('deterministic 30 TPS mech simulator', () => {
       seed: 7,
       rules: { arenaPreset: 'plains_ridge', arenaWidth: 600, arenaDepth: 600 },
       entries: [
-        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: STARTER_MECHS[3] },
+        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: shooterBp },
         { id: 'target', name: 'Target', teamId: 'B', blueprint: STARTER_MECHS[0] },
       ],
     });
@@ -289,8 +291,8 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('supports override shutdown (internal torso heat damage while staying active), laser beams, ammo depletion, and extra heat sinks', () => {
-    const withSink = { ...structuredClone(PRESET_VANGUARD), extraHeatSinks: 3 };
-    const noSink = { ...structuredClone(PRESET_VANGUARD), extraHeatSinks: 0 };
+    const withSink = { ...structuredClone(PRESET_ABC), extraHeatSinks: 3 };
+    const noSink = { ...structuredClone(PRESET_ABC), extraHeatSinks: 0 };
     const sWith = computeMechStats(withSink);
     const sNo = computeMechStats(noSink);
     expect(sWith.heatSinkWeight).toBe(3);
@@ -298,12 +300,14 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(sWith.heatDissipationPerSec).toBeGreaterThan(sNo.heatDissipationPerSec);
 
     const hotLaserMech = CURRICULUM_MISSIONS.find((m) => m.id === 'step2_heat_hysteresis')!.buildBrokenStarter().mech;
+    const targetBp = structuredClone(PRESET_ABH);
+    targetBp.parts.rightArmWeapon = 'ac10';
     const sim = createSimulation({
       seed: 99,
       rules: { arenaPreset: 'urban_pillars', maxSeconds: 60 },
       entries: [
         { id: 'hot', name: 'Hot', teamId: 'A', blueprint: hotLaserMech },
-        { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_VANGUARD },
+        { id: 'target', name: 'Target', teamId: 'B', blueprint: targetBp },
       ],
     });
     sim.terrain.obstacles = [];
@@ -388,18 +392,37 @@ describe('deterministic 30 TPS mech simulator', () => {
     }
   });
 
-  it('enforces 100t chassis cap, fixed booster-mount eligibility, ON/OFF toggle, and leg-damage impact', () => {
+  it('provides 8 standardized frames (2 per class, all ECM+thruster capable) with monotonic lighter-faster scaling and toggle behavior', () => {
     for (const bp of STARTER_MECHS) {
       const stats = computeMechStats(bp);
       expect(stats.valid).toBe(true);
       expect(stats.loadCapacity).toBeLessThanOrEqual(MAX_CHASSIS_TONNAGE);
     }
-    expect(computeMechStats(PRESET_FORTRESS).loadCapacity).toBe(100);
 
-    // 1. Toggling booster OFF on PRESET_VANGUARD frees 4.0t and prevents boost/jump
-    const vOn = computeMechStats(PRESET_VANGUARD);
-    const vanguardOff = { ...structuredClone(PRESET_VANGUARD), boosterEnabled: false };
-    const vOff = computeMechStats(vanguardOff);
+    expect(MECH_CHASSIS_CATALOG).toHaveLength(8);
+    for (const wc of ['light', 'medium', 'heavy', 'assault'] as const) {
+      expect(MECH_CHASSIS_CATALOG.filter((c) => c.weightClass === wc)).toHaveLength(2);
+    }
+    for (let i = 0; i < MECH_CHASSIS_CATALOG.length; i++) {
+      const c = MECH_CHASSIS_CATALOG[i];
+      expect(c.hasJumpBoosterMount).toBe(true);
+      expect(c.hasEcmMount).toBe(true);
+      expect(c.maxTonnage).toBeLessThanOrEqual(MAX_CHASSIS_TONNAGE);
+      if (i > 0) {
+        const prev = MECH_CHASSIS_CATALOG[i - 1];
+        expect(c.maxTonnage).toBeGreaterThan(prev.maxTonnage);
+        expect(c.walkSpeed).toBeLessThan(prev.walkSpeed);
+        expect(c.jumpImpulse).toBeLessThan(prev.jumpImpulse);
+        expect(c.sizeScale).toBeGreaterThan(prev.sizeScale);
+        expect(c.radarSignatureRange).toBeGreaterThan(prev.radarSignatureRange);
+      }
+    }
+
+    // 1. Toggling booster OFF on ABC frees 4.0t and prevents boost/jump
+    const abcOnBp = { ...structuredClone(PRESET_ABC), boosterEnabled: true };
+    const vOn = computeMechStats(abcOnBp);
+    const abcOffBp = { ...structuredClone(PRESET_ABC), boosterEnabled: false };
+    const vOff = computeMechStats(abcOffBp);
     expect(vOn.hasBoosterMount).toBe(true);
     expect(vOn.boosterActive).toBe(true);
     expect(vOff.boosterActive).toBe(false);
@@ -407,21 +430,22 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(vOff.boostSpeed).toBe(0);
     expect(vOff.jumpImpulse).toBe(0);
 
-    // 2. Non-booster chassis (PRESET_FORTRESS) cannot retrofit booster
-    const illegalFortress = { ...structuredClone(PRESET_FORTRESS), boosterEnabled: true };
-    const illegalStats = computeMechStats(illegalFortress);
-    expect(illegalStats.valid).toBe(false);
-    expect(illegalStats.hasBoosterMount).toBe(false);
-    expect(illegalStats.boosterActive).toBe(false);
-    expect(validateAndRepairMechBlueprint(illegalFortress).boosterEnabled).toBe(false);
+    // 2. Heavy ABH chassis also supports optional thruster toggle (5.5t) & lighter mechs jump higher
+    const abhOnBp = { ...structuredClone(PRESET_ABH), boosterEnabled: true, ecmEnabled: true };
+    const abhOnStats = computeMechStats(abhOnBp);
+    expect(abhOnStats.valid).toBe(true);
+    expect(abhOnStats.boosterActive).toBe(true);
+    expect(abhOnStats.ecmActive).toBe(true);
+    expect(abhOnStats.boosterWeight).toBe(5.5);
+    expect(vOn.jumpImpulse).toBeGreaterThan(abhOnStats.jumpImpulse);
 
     const sim = createSimulation({
       seed: 88,
       rules: { arenaPreset: 'urban_pillars' },
       entries: [
-        { id: 'van_on', name: 'VanOn', teamId: 'A', blueprint: PRESET_VANGUARD },
-        { id: 'van_off', name: 'VanOff', teamId: 'B', blueprint: vanguardOff },
-        { id: 'fort', name: 'Fortress', teamId: 'C', blueprint: illegalFortress },
+        { id: 'abc_on', name: 'AbcOn', teamId: 'A', blueprint: abcOnBp },
+        { id: 'abc_off', name: 'AbcOff', teamId: 'B', blueprint: abcOffBp },
+        { id: 'abh_on', name: 'AbhOn', teamId: 'C', blueprint: abhOnBp },
       ],
     });
     sim.terrain.obstacles = [];
@@ -429,18 +453,18 @@ describe('deterministic 30 TPS mech simulator', () => {
     sim.mechs[1].pos = { x: 300, y: 300, z: 0 };
     sim.mechs[2].pos = { x: 450, y: 300, z: 0 };
 
-    const zStartFort = sim.mechs[2].pos.z;
-    const zStartVanOff = sim.mechs[1].pos.z;
+    const zStartAbcOff = sim.mechs[1].pos.z;
     for (let t = 0; t < 15; t++) {
       stepSimulation(sim, {
-        van_on: { ...EMPTY_CONTROL_INPUT, moveForward: 1, boost: true, jump: true },
-        van_off: { ...EMPTY_CONTROL_INPUT, moveForward: 1, boost: true, jump: true },
-        fort: { ...EMPTY_CONTROL_INPUT, moveForward: 1, boost: true, jump: true },
+        abc_on: { ...EMPTY_CONTROL_INPUT, moveForward: 1, boost: true, jump: true },
+        abc_off: { ...EMPTY_CONTROL_INPUT, moveForward: 1, boost: true, jump: true },
+        abh_on: { ...EMPTY_CONTROL_INPUT, moveForward: 1, boost: true, jump: true },
       });
     }
     expect(sim.mechs[0].pos.z).toBeGreaterThan(2.5);
-    expect(sim.mechs[1].pos.z).toBeCloseTo(zStartVanOff, 4);
-    expect(sim.mechs[2].pos.z).toBeCloseTo(zStartFort, 4);
+    expect(sim.mechs[1].pos.z).toBeCloseTo(zStartAbcOff, 4);
+    expect(sim.mechs[2].pos.z).toBeGreaterThan(1.0);
+    expect(sim.mechs[0].pos.z).toBeGreaterThan(sim.mechs[2].pos.z);
 
     // 3. Leg damage still degrades and disables boost/jump on booster-equipped mech
     const van = sim.mechs[0];
@@ -453,12 +477,14 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('lands ballistic lead shots on moving targets cleanly in MechWarrior cadence', () => {
+    const shooterBp = structuredClone(PRESET_ABC);
+    shooterBp.parts.rightArmWeapon = 'ac5';
     const sim = createSimulation({
       seed: 314,
       rules: { arenaPreset: 'urban_pillars', maxSeconds: 30 },
       entries: [
-        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: PRESET_VANGUARD },
-        { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_VANGUARD },
+        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: shooterBp },
+        { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_ABC },
       ],
     });
     sim.terrain.obstacles = [];
@@ -492,14 +518,15 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('enforces forward/reverse locomotion (no strafe), speed-dependent turning, and ~60-deg forward boost-jump', () => {
+    const abcJumpBp = { ...structuredClone(PRESET_ABC), boosterEnabled: true };
     const sim = createSimulation({
       seed: 404,
       rules: { arenaPreset: 'urban_pillars', maxSeconds: 30 },
       entries: [
-        { id: 'pivot', name: 'Pivot', teamId: 'A', blueprint: PRESET_VANGUARD },
-        { id: 'mover', name: 'Mover', teamId: 'B', blueprint: PRESET_VANGUARD },
-        { id: 'light_run', name: 'LightRun', teamId: 'C', blueprint: PRESET_STRIKER },
-        { id: 'heavy_still', name: 'HeavyStill', teamId: 'D', blueprint: PRESET_VANGUARD },
+        { id: 'pivot', name: 'Pivot', teamId: 'A', blueprint: abcJumpBp },
+        { id: 'mover', name: 'Mover', teamId: 'B', blueprint: abcJumpBp },
+        { id: 'light_run', name: 'LightRun', teamId: 'C', blueprint: PRESET_ABL },
+        { id: 'heavy_still', name: 'HeavyStill', teamId: 'D', blueprint: abcJumpBp },
       ],
     });
     sim.terrain.obstacles = [];
@@ -564,12 +591,14 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('twists upper torso independently of legs and enforces firing arcs', () => {
+    const meBp = structuredClone(PRESET_ABC);
+    meBp.parts.rightArmWeapon = 'ac5';
     const sim = createSimulation({
       seed: 515,
       rules: { arenaPreset: 'urban_pillars', maxSeconds: 30 },
       entries: [
-        { id: 'me', name: 'Me', teamId: 'A', blueprint: PRESET_VANGUARD },
-        { id: 'east', name: 'East', teamId: 'B', blueprint: PRESET_STRIKER },
+        { id: 'me', name: 'Me', teamId: 'A', blueprint: meBp },
+        { id: 'east', name: 'East', teamId: 'B', blueprint: PRESET_ABL },
       ],
     });
     sim.terrain.obstacles = [];
@@ -617,21 +646,24 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('separates 800m optical FOV+LOS vision from target-RCS 360-deg radar, preserves allySpotted, and supports indirect LRM fire', () => {
-    const strikerNoEcm = {
-      ...PRESET_STRIKER,
+    const observerBp = structuredClone(PRESET_ABC);
+    observerBp.parts.rightArmWeapon = 'ac5';
+    observerBp.parts.rightShoulderWeapon = 'lrm5';
+    const ablNoEcm = {
+      ...PRESET_ABL,
       ecmEnabled: false,
-      parts: { ...PRESET_STRIKER.parts, leftShoulderWeapon: 'shd_none' },
+      parts: { ...PRESET_ABL.parts, leftShoulderWeapon: 'shd_none' },
     };
     const sim = createSimulation({
       seed: 616,
       rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200, maxSeconds: 30 },
       entries: [
-        { id: 'me', name: 'Me', teamId: 'A', blueprint: PRESET_VANGUARD },
-        { id: 'ally', name: 'Ally', teamId: 'A', blueprint: strikerNoEcm },
-        { id: 'behind_light', name: 'BehindLight', teamId: 'B', blueprint: strikerNoEcm },
-        { id: 'covered_light', name: 'CoveredLight', teamId: 'B', blueprint: strikerNoEcm },
-        { id: 'covered_assault', name: 'CoveredAssault', teamId: 'B', blueprint: PRESET_FORTRESS },
-        { id: 'far_visible', name: 'FarVisible', teamId: 'B', blueprint: PRESET_SNIPER },
+        { id: 'me', name: 'Me', teamId: 'A', blueprint: observerBp },
+        { id: 'ally', name: 'Ally', teamId: 'A', blueprint: ablNoEcm },
+        { id: 'behind_light', name: 'BehindLight', teamId: 'B', blueprint: ablNoEcm },
+        { id: 'covered_light', name: 'CoveredLight', teamId: 'B', blueprint: ablNoEcm },
+        { id: 'covered_assault', name: 'CoveredHeavy', teamId: 'B', blueprint: PRESET_ABH },
+        { id: 'far_visible', name: 'FarVisible', teamId: 'B', blueprint: PRESET_ABH },
       ],
     });
     // Wall blocks optical LOS due North from (600, 600)
@@ -698,9 +730,11 @@ describe('deterministic 30 TPS mech simulator', () => {
 
   it('supports LRM Stream vs Salvo mode, 2-stage lofted climb, ECM/BAP/PPC EMP, and Ballistic/Laser AMS interception', () => {
     // 1. LRM Stream vs Salvo + 2-stage lofted arc
-    const streamBp = structuredClone(PRESET_VANGUARD);
+    const streamBp = structuredClone(PRESET_ABC);
+    streamBp.parts.rightShoulderWeapon = 'lrm5';
     streamBp.lrmFireMode = 'stream';
-    const salvoBp = structuredClone(PRESET_VANGUARD);
+    const salvoBp = structuredClone(PRESET_ABC);
+    salvoBp.parts.rightShoulderWeapon = 'lrm5';
     salvoBp.lrmFireMode = 'salvo';
 
     const simStream = createSimulation({
@@ -709,7 +743,7 @@ describe('deterministic 30 TPS mech simulator', () => {
       entries: [
         { id: 'stream', name: 'Stream', teamId: 'A', blueprint: streamBp },
         { id: 'salvo', name: 'Salvo', teamId: 'A', blueprint: salvoBp },
-        { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_FORTRESS },
+        { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_ABH },
       ],
     });
     simStream.terrain.obstacles = [];
@@ -746,18 +780,22 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(simStream.projectiles.filter((p) => p.ownerId === 'stream').length).toBe(5);
 
     // 2. ECM bubble halves omni RCS, blocks allySpotted, doubles lock time; BAP counters ECM; PPC hit disrupts ECM for 4.0s
-    const ecmTargetBp = structuredClone(PRESET_STRIKER); // Light 120m RCS, ECM ON -> 60m RCS
-    ecmTargetBp.ecmEnabled = true;
-    const obsNoBapBp = structuredClone(PRESET_VANGUARD);
+    const ecmTargetBp = {
+      ...structuredClone(PRESET_ABL), // Light 120m RCS, ECM ON -> 60m RCS
+      ecmEnabled: true,
+      parts: { ...PRESET_ABL.parts, leftShoulderWeapon: 'shd_none' },
+    };
+    const obsNoBapBp = structuredClone(PRESET_ABC);
     obsNoBapBp.parts.rightArmWeapon = 'ppc';
-    const obsBapBp = structuredClone(PRESET_SNIPER); // Has bap_probe equipped
+    const obsBapBp = structuredClone(PRESET_ABH);
+    obsBapBp.parts.leftShoulderWeapon = 'ams_bap_pod';
 
     const ecmSim = createSimulation({
       seed: 202,
       rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
       entries: [
         { id: 'obs', name: 'Obs', teamId: 'A', blueprint: obsNoBapBp },
-        { id: 'spotter', name: 'Spotter', teamId: 'A', blueprint: PRESET_VANGUARD },
+        { id: 'spotter', name: 'Spotter', teamId: 'A', blueprint: PRESET_ABC },
         { id: 'bapObs', name: 'BapObs', teamId: 'C', blueprint: obsBapBp },
         { id: 'ecmFoe', name: 'EcmFoe', teamId: 'B', blueprint: ecmTargetBp },
       ],
@@ -812,9 +850,9 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(buildMechSensorState(ecmSim, 'ecmFoe').ecmActive).toBe(false);
 
     // 3. Ballistic AMS (ammo, 0 heat) & Laser AMS (unlimited ammo, +heat) intercept incoming missiles
-    const balAmsBp = structuredClone(PRESET_FORTRESS);
+    const balAmsBp = structuredClone(PRESET_ABH);
     balAmsBp.parts.leftShoulderWeapon = 'ams_ballistic';
-    const lasAmsBp = structuredClone(PRESET_FORTRESS);
+    const lasAmsBp = structuredClone(PRESET_ABH);
     lasAmsBp.parts.leftShoulderWeapon = 'ams_laser';
 
     const amsSim = createSimulation({
@@ -823,7 +861,7 @@ describe('deterministic 30 TPS mech simulator', () => {
       entries: [
         { id: 'balAms', name: 'BalAMS', teamId: 'A', blueprint: balAmsBp },
         { id: 'lasAms', name: 'LasAMS', teamId: 'A', blueprint: lasAmsBp },
-        { id: 'lrmBoat', name: 'LrmBoat', teamId: 'B', blueprint: PRESET_VANGUARD },
+        { id: 'lrmBoat', name: 'LrmBoat', teamId: 'B', blueprint: salvoBp },
       ],
     });
     amsSim.terrain.obstacles = [];
@@ -890,20 +928,22 @@ describe('deterministic 30 TPS mech simulator', () => {
 
   it('lands locked LRM salvos and streams reliably across direct, indirect cover-clearing, and moving-target trajectories', () => {
     // A. Direct 600m locked Stream & Salvo LRM-5 both hit target
-    const streamBp = structuredClone(PRESET_VANGUARD);
+    const streamBp = structuredClone(PRESET_ABC);
+    streamBp.parts.rightShoulderWeapon = 'lrm5';
     streamBp.lrmFireMode = 'stream';
-    const salvoBp = structuredClone(PRESET_VANGUARD);
+    const salvoBp = structuredClone(PRESET_ABC);
+    salvoBp.parts.rightShoulderWeapon = 'lrm5';
     salvoBp.lrmFireMode = 'salvo';
 
-    const noAmsFortress = structuredClone(PRESET_FORTRESS);
-    noAmsFortress.parts.leftShoulderWeapon = 'shd_none';
+    const noAmsHeavy = structuredClone(PRESET_ABH);
+    noAmsHeavy.parts.leftShoulderWeapon = 'shd_none';
     const directSim = createSimulation({
       seed: 410,
       rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
       entries: [
         { id: 'stream', name: 'Stream', teamId: 'A', blueprint: streamBp },
         { id: 'salvo', name: 'Salvo', teamId: 'A', blueprint: salvoBp },
-        { id: 'tgt', name: 'Target', teamId: 'B', blueprint: noAmsFortress },
+        { id: 'tgt', name: 'Target', teamId: 'B', blueprint: noAmsHeavy },
       ],
     });
     directSim.terrain.obstacles = [];
@@ -953,12 +993,12 @@ describe('deterministic 30 TPS mech simulator', () => {
           name: 'Spotter',
           teamId: 'A',
           blueprint: {
-            ...PRESET_STRIKER,
+            ...PRESET_ABL,
             ecmEnabled: false,
-            parts: { ...PRESET_STRIKER.parts, leftShoulderWeapon: 'shd_none' },
+            parts: { ...PRESET_ABL.parts, leftShoulderWeapon: 'shd_none' },
           },
         },
-        { id: 'covered', name: 'Covered', teamId: 'B', blueprint: noAmsFortress },
+        { id: 'covered', name: 'Covered', teamId: 'B', blueprint: noAmsHeavy },
       ],
     });
     indirectSim.terrain.obstacles = [
@@ -1002,9 +1042,9 @@ describe('deterministic 30 TPS mech simulator', () => {
           name: 'Runner',
           teamId: 'B',
           blueprint: {
-            ...PRESET_STRIKER,
+            ...PRESET_ABL,
             ecmEnabled: false,
-            parts: { ...PRESET_STRIKER.parts, leftShoulderWeapon: 'shd_none' },
+            parts: { ...PRESET_ABL.parts, leftShoulderWeapon: 'shd_none' },
           },
         },
       ],
@@ -1047,12 +1087,16 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(blade).toBeDefined();
     expect(blade!.kind).toBe('melee');
 
-    const legacyLrm20Bp = structuredClone(PRESET_VANGUARD);
+    const legacyLrm20Bp = structuredClone(PRESET_ABC);
     legacyLrm20Bp.parts.rightShoulderWeapon = 'lrm20';
     expect(validateAndRepairMechBlueprint(legacyLrm20Bp).parts.rightShoulderWeapon).toBe('lrm15');
 
-    const baseStats = computeMechStats(PRESET_VANGUARD);
-    const upAmmoBp = structuredClone(PRESET_VANGUARD);
+    const baseAmmoBp = structuredClone(PRESET_ABC);
+    baseAmmoBp.parts.rightArmWeapon = 'ac5';
+    baseAmmoBp.parts.rightShoulderWeapon = 'lrm5';
+    baseAmmoBp.extraAmmo = {};
+    const baseStats = computeMechStats(baseAmmoBp);
+    const upAmmoBp = structuredClone(baseAmmoBp);
     upAmmoBp.extraAmmo = { rightArm: 2, rightShoulder: 1 };
     const upStats = computeMechStats(upAmmoBp);
 
@@ -1068,7 +1112,7 @@ describe('deterministic 30 TPS mech simulator', () => {
       seed: 717,
       entries: [
         { id: 'u', name: 'U', teamId: 'A', blueprint: repaired },
-        { id: 'e', name: 'E', teamId: 'B', blueprint: PRESET_STRIKER },
+        { id: 'e', name: 'E', teamId: 'B', blueprint: PRESET_ABL },
       ],
     });
     expect(sim.mechs[0].weapons.rightArm.ammoRemaining).toBe(105);
@@ -1077,13 +1121,14 @@ describe('deterministic 30 TPS mech simulator', () => {
 
   it('burns laser damage over burnDurationSec, spreads across twisting target parts, and sweeps off when shooter twists away', () => {
     // Single medium_laser (damage 40, range 280, maxRange 420, burnDurationSec 0.7 => 21 ticks)
-    const singleLaserVanguard = structuredClone(PRESET_VANGUARD);
-    singleLaserVanguard.weaponMountCounts = undefined;
+    const singleLaserAbc = structuredClone(PRESET_ABC);
+    singleLaserAbc.parts.leftArmWeapon = 'medium_laser';
+    singleLaserAbc.weaponMountCounts = undefined;
     const sim = createSimulation({
       seed: 808,
       entries: [
-        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: singleLaserVanguard },
-        { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_FORTRESS },
+        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: singleLaserAbc },
+        { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_ABH },
       ],
     });
     sim.terrain.obstacles = [];
@@ -1120,8 +1165,8 @@ describe('deterministic 30 TPS mech simulator', () => {
     const sim2 = createSimulation({
       seed: 809,
       entries: [
-        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: singleLaserVanguard },
-        { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_FORTRESS },
+        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: singleLaserAbc },
+        { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_ABH },
       ],
     });
     sim2.terrain.obstacles = [];
@@ -1145,14 +1190,15 @@ describe('deterministic 30 TPS mech simulator', () => {
 
   it('applies linear optimal-to-max range damage falloff for ballistics and lasers', () => {
     // 1. Laser falloff: medium_laser optimal=280, max=420 -> at 350m multiplier is 0.5 (~20 total dmg)
-    const singleLaserBp = structuredClone(PRESET_VANGUARD);
+    const singleLaserBp = structuredClone(PRESET_ABC);
+    singleLaserBp.parts.leftArmWeapon = 'medium_laser';
     singleLaserBp.weaponMountCounts = undefined;
     const laserSim = createSimulation({
       seed: 901,
       rules: { arenaWidth: 1000, arenaDepth: 1000 },
       entries: [
         { id: 's', name: 'S', teamId: 'A', blueprint: singleLaserBp },
-        { id: 't', name: 'T', teamId: 'B', blueprint: PRESET_FORTRESS },
+        { id: 't', name: 'T', teamId: 'B', blueprint: PRESET_ABH },
       ],
     });
     laserSim.terrain.obstacles = [];
@@ -1177,12 +1223,14 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(computeRangeFalloffMultiplier(530, 380, 680)).toBeCloseTo(0.5, 4);
     expect(computeRangeFalloffMultiplier(700, 380, 680)).toBe(0);
 
+    const gaussBp = structuredClone(PRESET_ABH);
+    gaussBp.parts.rightArmWeapon = 'gauss_rifle';
     const gaussSim = createSimulation({
       seed: 905,
       rules: { arenaWidth: 1000, arenaDepth: 1000 },
       entries: [
-        { id: 's', name: 'S', teamId: 'A', blueprint: PRESET_SNIPER },
-        { id: 't', name: 'T', teamId: 'B', blueprint: PRESET_FORTRESS },
+        { id: 's', name: 'S', teamId: 'A', blueprint: gaussBp },
+        { id: 't', name: 'T', teamId: 'B', blueprint: PRESET_ABH },
       ],
     });
     gaussSim.terrain.obstacles = [];
@@ -1206,19 +1254,26 @@ describe('deterministic 30 TPS mech simulator', () => {
 
   it('supports multi-mount weapons (M-Laser x3 / AC5 x2), combined AMS+BAP pod, slot ECM destruction, and shared torso armor caps', () => {
     // 1. Multi-mount weight, heat, ammo, beams, projectiles, and damage
-    const multiBp = structuredClone(PRESET_FORTRESS);
+    const multiBp = structuredClone(PRESET_ABH);
     multiBp.parts.rightArmWeapon = 'ac5';
     multiBp.parts.leftArmWeapon = 'medium_laser';
+    multiBp.parts.rightShoulderWeapon = 'lrm10';
+    multiBp.parts.leftShoulderWeapon = 'ams_bap_pod';
     multiBp.weaponMountCounts = { rightArm: 2, leftArm: 3 };
     const multiStats = computeMechStats(multiBp);
-    expect(multiStats.weaponsWeight).toBeCloseTo(5.5 * 2 + 2.0 * 3 + 9.5 + 3.0, 2);
+    expect(multiStats.weaponsWeight).toBeCloseTo(5.5 * 2 + 2.0 * 3 + 7.0 + 3.0, 2);
 
+    const ecmSlotTarget = {
+      ...structuredClone(PRESET_ABL),
+      ecmEnabled: false,
+      parts: { ...PRESET_ABL.parts, leftShoulderWeapon: 'ecm_suite' },
+    };
     const sim = createSimulation({
       seed: 950,
       rules: { arenaWidth: 1000, arenaDepth: 1000 },
       entries: [
         { id: 'multi', name: 'Multi', teamId: 'A', blueprint: multiBp },
-        { id: 'target', name: 'Target', teamId: 'B', blueprint: PRESET_STRIKER },
+        { id: 'target', name: 'Target', teamId: 'B', blueprint: ecmSlotTarget },
       ],
     });
     sim.terrain.obstacles = [];
@@ -1258,7 +1313,7 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(isMechEcmActive(ecmMech)).toBe(false);
 
     // 3. Shared front+rear torso armor cap validation
-    const overTorso = structuredClone(PRESET_VANGUARD);
+    const overTorso = structuredClone(PRESET_ABC);
     overTorso.armor.torsoFront = 280;
     overTorso.armor.torsoRear = 80; // 360 > 320 cap
     const overStats = computeMechStats(overTorso);
@@ -1267,7 +1322,7 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('supports per-slot LRM fire modes (salvo vs stream) on different shoulder mounts', () => {
-    const bp = structuredClone(PRESET_VANGUARD);
+    const bp = structuredClone(PRESET_ABC);
     bp.parts.rightShoulderWeapon = 'lrm5';
     bp.parts.leftShoulderWeapon = 'lrm5';
     bp.lrmFireMode = 'salvo';
@@ -1281,7 +1336,7 @@ describe('deterministic 30 TPS mech simulator', () => {
       rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
       entries: [
         { id: 'lrmer', name: 'LRM', teamId: 'A', blueprint: bp },
-        { id: 'tgt', name: 'TGT', teamId: 'B', blueprint: PRESET_FORTRESS },
+        { id: 'tgt', name: 'TGT', teamId: 'B', blueprint: PRESET_ABH },
       ],
     });
     sim.terrain.obstacles = [];
@@ -1314,15 +1369,16 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('supports 3-direction timed jump jets (forward, vertical, backward) and airborne Jump-Turn bonus', () => {
+    const jumpAbc = { ...structuredClone(PRESET_ABC), boosterEnabled: true };
     const sim = createSimulation({
       seed: 910,
       rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
       entries: [
-        { id: 'fwd', name: 'Fwd', teamId: 'A', blueprint: PRESET_VANGUARD },
-        { id: 'vert', name: 'Vert', teamId: 'B', blueprint: PRESET_VANGUARD },
-        { id: 'back', name: 'Back', teamId: 'C', blueprint: PRESET_VANGUARD },
-        { id: 'turn_boost', name: 'TurnBoost', teamId: 'D', blueprint: PRESET_VANGUARD },
-        { id: 'turn_coast', name: 'TurnCoast', teamId: 'E', blueprint: PRESET_VANGUARD },
+        { id: 'fwd', name: 'Fwd', teamId: 'A', blueprint: jumpAbc },
+        { id: 'vert', name: 'Vert', teamId: 'B', blueprint: jumpAbc },
+        { id: 'back', name: 'Back', teamId: 'C', blueprint: jumpAbc },
+        { id: 'turn_boost', name: 'TurnBoost', teamId: 'D', blueprint: jumpAbc },
+        { id: 'turn_coast', name: 'TurnCoast', teamId: 'E', blueprint: jumpAbc },
       ],
     });
     sim.terrain.obstacles = [];
@@ -1381,12 +1437,14 @@ describe('deterministic 30 TPS mech simulator', () => {
 
   it('cuts LRM guidance on lock loss, enforces 0 damage inside 120m minRange, and intercepts >=4 missiles with enhanced AMS', () => {
     // 1. Lock loss during flight drops projectile homingTurnDegPerSec to 0
+    const lrm5Bp = structuredClone(PRESET_ABC);
+    lrm5Bp.parts.rightShoulderWeapon = 'lrm5';
     const lockSim = createSimulation({
       seed: 911,
       rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
       entries: [
-        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: PRESET_VANGUARD },
-        { id: 'tgt', name: 'Target', teamId: 'B', blueprint: PRESET_FORTRESS },
+        { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: lrm5Bp },
+        { id: 'tgt', name: 'Target', teamId: 'B', blueprint: PRESET_ABH },
       ],
     });
     lockSim.terrain.obstacles = [];
@@ -1412,14 +1470,14 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(inFlight.every((p) => p.homingTurnDegPerSec === 0)).toBe(true);
 
     // 2. MinRange < 120m deals 0 damage even when hitting target
-    const closeBp = structuredClone(PRESET_VANGUARD);
+    const closeBp = structuredClone(lrm5Bp);
     closeBp.lrmFireMode = 'salvo';
     const closeSim = createSimulation({
       seed: 912,
       rules: { arenaPreset: 'urban_pillars', arenaWidth: 1200, arenaDepth: 1200 },
       entries: [
         { id: 'shooter', name: 'Shooter', teamId: 'A', blueprint: closeBp },
-        { id: 'tgt', name: 'Target', teamId: 'B', blueprint: PRESET_FORTRESS },
+        { id: 'tgt', name: 'Target', teamId: 'B', blueprint: PRESET_ABH },
       ],
     });
     closeSim.terrain.obstacles = [];
@@ -1439,10 +1497,10 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(closeSim.mechs[1].damageTaken).toBe(0);
 
     // 3. Enhanced AMS (105m, 0.14s CD) intercepts >= 4 missiles from incoming LRM10 salvo at 350m
-    const lrm10Bp = structuredClone(PRESET_VANGUARD);
+    const lrm10Bp = structuredClone(PRESET_ABC);
     lrm10Bp.parts.rightShoulderWeapon = 'lrm10';
     lrm10Bp.lrmFireMode = 'salvo';
-    const amsDefBp = structuredClone(PRESET_VANGUARD);
+    const amsDefBp = structuredClone(PRESET_ABC);
     amsDefBp.parts.leftShoulderWeapon = 'ams_ballistic';
     const amsTestSim = createSimulation({
       seed: 913,

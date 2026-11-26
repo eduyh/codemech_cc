@@ -13,7 +13,7 @@ import {
   inferChassisIdFromParts,
   resolveLegacyWeaponId,
 } from '../data/parts';
-import { DEFAULT_PILOT_PROFILE, PRESET_VANGUARD } from '../data/presets';
+import { DEFAULT_PILOT_PROFILE, PRESET_ABC } from '../data/presets';
 import { clamp, normalizeMatchSeed } from '../engine/math';
 import {
   ArenaPresetId,
@@ -173,7 +173,7 @@ function pickId<T extends { id: string }>(list: readonly T[], id: unknown, fallb
 }
 
 export function validateAndRepairMechBlueprint(raw: MechBlueprint): MechBlueprint {
-  const def = PRESET_VANGUARD;
+  const def = PRESET_ABC;
   const resolvedChassisId =
     typeof raw?.chassisId === 'string' && raw.chassisId.trim()
       ? raw.chassisId.trim()

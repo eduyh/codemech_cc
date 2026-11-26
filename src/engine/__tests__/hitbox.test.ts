@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PRESET_VANGUARD } from '../../data/presets';
+import { PRESET_ABC } from '../../data/presets';
 import { MechPartId } from '../../types/mech';
 import {
   applyDamageToMechParts,
@@ -13,8 +13,8 @@ function createDummyMech() {
   const sim = createSimulation({
     seed: 100,
     entries: [
-      { id: 'm1', name: 'Target', teamId: 'A', blueprint: PRESET_VANGUARD },
-      { id: 'm2', name: 'Enemy', teamId: 'B', blueprint: PRESET_VANGUARD },
+      { id: 'm1', name: 'Target', teamId: 'A', blueprint: PRESET_ABC },
+      { id: 'm2', name: 'Enemy', teamId: 'B', blueprint: PRESET_ABC },
     ],
   });
   const m = sim.mechs[0];

@@ -2,9 +2,9 @@ import { CURRICULUM_MISSIONS } from '../data/curriculum';
 import { computeMechStats, getEffectiveSubroutineGridSize } from '../data/parts';
 import {
   DEFAULT_PILOT_PROFILE,
-  PRESET_FORTRESS,
-  PRESET_SNIPER,
-  PRESET_STRIKER,
+  PILOT_BASIC_HEAVY,
+  PRESET_ABH,
+  PRESET_ABL,
 } from '../data/presets';
 import {
   CurriculumStepId,
@@ -204,7 +204,7 @@ export function verifyCurriculumMission(
       id: 'enemy_1',
       name: '基礎訓練標的',
       teamId: 'T_ENEMY',
-      blueprint: makeTrainingTargetMech(PRESET_STRIKER, 0.35, '基礎訓練標的'),
+      blueprint: makeTrainingTargetMech(PRESET_ABL, 0.35, '基礎訓練標的'),
       pilot: trainingPilot,
     });
   } else if (missionId === 'step0b_robot_6x6') {
@@ -212,7 +212,7 @@ export function verifyCurriculumMission(
       id: 'enemy_1',
       name: '応用訓練スカウト',
       teamId: 'T_ENEMY',
-      blueprint: makeTrainingTargetMech(PRESET_STRIKER, 0.5, '応用訓練スカウト'),
+      blueprint: makeTrainingTargetMech(PRESET_ABL, 0.5, '応用訓練スカウト'),
       pilot: trainingPilot,
     });
   } else if (missionId === 'step1_pilot_routing') {
@@ -220,7 +220,7 @@ export function verifyCurriculumMission(
       id: 'enemy_1',
       name: '訓練用スカウト',
       teamId: 'T_ENEMY',
-      blueprint: makeTrainingTargetMech(PRESET_STRIKER, 0.55, '訓練用スカウト'),
+      blueprint: makeTrainingTargetMech(PRESET_ABL, 0.55, '訓練用スカウト'),
       pilot: trainingPilot,
     });
   } else if (missionId === 'step2_heat_hysteresis') {
@@ -228,7 +228,7 @@ export function verifyCurriculumMission(
       id: 'enemy_1',
       name: '演習用スカウト',
       teamId: 'T_ENEMY',
-      blueprint: makeTrainingTargetMech(PRESET_STRIKER, 0.52, '演習用スカウト'),
+      blueprint: makeTrainingTargetMech(PRESET_ABL, 0.52, '演習用スカウト'),
       pilot: trainingPilot,
     });
   } else if (missionId === 'step3_subroutine_4x4') {
@@ -236,7 +236,7 @@ export function verifyCurriculumMission(
       id: 'enemy_1',
       name: '訓練用重スカウト',
       teamId: 'T_ENEMY',
-      blueprint: makeTrainingTargetMech(PRESET_STRIKER, 0.5, '訓練用重スカウト'),
+      blueprint: makeTrainingTargetMech(PRESET_ABL, 0.5, '訓練用重スカウト'),
       pilot: trainingPilot,
     });
   } else if (missionId === 'step4_assemble_and_6x6') {
@@ -244,33 +244,42 @@ export function verifyCurriculumMission(
       id: 'enemy_1',
       name: '市街地演習機',
       teamId: 'T_ENEMY',
-      blueprint: makeTrainingTargetMech(PRESET_STRIKER, 0.45, '市街地演習機'),
+      blueprint: makeTrainingTargetMech(PRESET_ABL, 0.45, '市街地演習機'),
       pilot: trainingPilot,
     });
   } else {
     // step5: 2v2 squad battle
     entries.push({
       id: 'ally_1',
-      name: '僚機フォートレス',
+      name: '僚機 XHD',
       teamId: 'T_PLAYER',
-      blueprint: PRESET_FORTRESS,
-      pilot: DEFAULT_PILOT_PROFILE,
+      blueprint: PRESET_ABH,
+      pilot: PILOT_BASIC_HEAVY,
     });
     entries.push({
       id: 'enemy_1',
-      name: '強襲機1号',
+      name: '軽強襲機 LLB',
       teamId: 'T_ENEMY',
-      blueprint: makeTrainingTargetMech(PRESET_STRIKER, 0.4, '強襲機1号'),
+      blueprint: makeTrainingTargetMech(PRESET_ABL, 0.4, '軽強襲機 LLB'),
       pilot: makeBasicTrainingPilot(140),
     });
-    const trainingSniper = makeTrainingTargetMech(PRESET_SNIPER, 0.3, '狙撃機2号');
-    trainingSniper.parts.rightArmWeapon = 'large_laser';
-    trainingSniper.weaponMountCounts = undefined;
+    const trainingHeavy = makeTrainingTargetMech(PRESET_ABH, 0.3, '重火力機2号');
+    trainingHeavy.parts.rightArmWeapon = 'large_laser';
+    trainingHeavy.parts.leftArmWeapon = 'arm_none';
+    trainingHeavy.parts.rightShoulderWeapon = 'shd_none';
+    trainingHeavy.parts.leftShoulderWeapon = 'shd_none';
+    trainingHeavy.weaponMountCounts = undefined;
+    trainingHeavy.weaponGroups = {
+      G1: ['rightArm'],
+      G2: ['rightArm'],
+      G3: ['rightArm'],
+      G4: ['rightArm'],
+    };
     entries.push({
       id: 'enemy_2',
-      name: '狙撃機2号',
+      name: '重火力機2号',
       teamId: 'T_ENEMY',
-      blueprint: trainingSniper,
+      blueprint: trainingHeavy,
       pilot: makeBasicTrainingPilot(210),
     });
   }
@@ -354,8 +363,8 @@ export function verifyCurriculumMission(
       seed: spec.seed + 1,
       rules: { maxSeconds: 10, arenaPreset: spec.arenaPreset },
       entries: [
-        { id: 'tx_player', name: '乗換機', teamId: 'T_PLAYER', blueprint: PRESET_SNIPER, pilot: playerPilot },
-        { id: 'tx_enemy', name: '標的', teamId: 'T_ENEMY', blueprint: PRESET_STRIKER, pilot: trainingPilot },
+        { id: 'tx_player', name: '乗換機', teamId: 'T_PLAYER', blueprint: PRESET_ABH, pilot: playerPilot },
+        { id: 'tx_enemy', name: '標的', teamId: 'T_ENEMY', blueprint: PRESET_ABL, pilot: trainingPilot },
       ],
     });
     const txRt = createPilotRuntimeState(playerPilot);
@@ -375,7 +384,7 @@ export function verifyCurriculumMission(
       if (!Number.isFinite(m0.pos.x)) txValid = false;
     }
     checklist.push({
-      label: '別機体 (ホークアイ) へのパイロット 6×6 乗り換え適性確認',
+      label: '別機体 (XHD) へのパイロット 6×6 乗り換え適性確認',
       ok: txValid,
     });
   }

@@ -3,25 +3,27 @@ import { computeBlueprintRomWeight, computeMechStats } from '../../data/parts';
 import {
   DEFAULT_PILOT_PROFILE,
   PILOT_BASIC,
+  PILOT_BASIC_HEAVY,
   PRESET_ABC,
-  PRESET_FORTRESS,
-  PRESET_STRIKER,
-  PRESET_VANGUARD,
+  PRESET_ABH,
+  PRESET_ABL,
   STARTER_MECHS,
   STARTER_PILOTS,
 } from '../../data/presets';
-import { createSimulation } from '../../engine/mechSim';
+import { buildMechSensorState, createSimulation, isMechAmsActive } from '../../engine/mechSim';
 import { createPilotRuntimeState, evaluatePilotTick } from '../../engine/pilotRuntime';
-import { buildMechSensorState } from '../../engine/mechSim';
 import {
   BUILTIN_ROMS,
   analyzeMechRomCompatibility,
+  checkSingleRomCompatibility,
   deleteUserRom,
   findRomById,
   formatRomLabel,
   getAllRoms,
   getRomCategory,
+  getRomWeightTags,
   inferRomCategory,
+  isBasicBuiltInRom,
   normalizeRomName,
   resolveMechBlueprintRoms,
   saveUserRom,
@@ -35,18 +37,28 @@ describe('romLibrary & ROM weight rules', () => {
     expect(formatRomLabel({ name: '基礎突撃', gridSize: 4 })).toBe('基礎突撃 (4×4)');
   });
 
-  it('keeps all 4 starter presets valid and non-overweight with 4x4 ROMs mounted (2.5t)', () => {
+  it('keeps all 3 starter presets (ABC-T1, LLB-T1, XHD-T1) valid and non-overweight with 4x4 ROMs mounted (2.5t)', () => {
     for (const preset of STARTER_MECHS) {
       const stats = computeMechStats(preset);
       expect(stats.overweight).toBe(false);
       expect(stats.valid).toBe(true);
       expect(stats.romWeight).toBe(2.5);
     }
-    expect(computeMechStats(PRESET_STRIKER).totalWeight).toBeLessThanOrEqual(35);
+    expect(computeMechStats(PRESET_ABL).totalWeight).toBe(33.5);
+    expect(computeMechStats(PRESET_ABL).ecmActive).toBe(true);
+    const ablSim = createSimulation({
+      seed: 11,
+      entries: [
+        { id: 'abl', name: 'LLB-T1', teamId: 'A', blueprint: PRESET_ABL },
+        { id: 'abc', name: 'ABC-T1', teamId: 'B', blueprint: PRESET_ABC },
+      ],
+    });
+    expect(isMechAmsActive(ablSim.mechs[0])).toBe(true);
+    expect(computeMechStats(PRESET_ABH).totalWeight).toBe(67.5);
   });
 
-  it('computes 0.5t per 4x4 ROM and 0t when unmounted', () => {
-    const bp = structuredClone(PRESET_VANGUARD);
+  it('computes 0.5t per 4x4 ROM and 0t when unmounted, resolving legacy rom_std ID aliases', () => {
+    const bp = structuredClone(PRESET_ABC);
     expect(computeBlueprintRomWeight(bp)).toBe(2.5);
 
     // Mount 4x4 ROMs in 3 slots and unmount S2 & S5 (0t each -> 1.5t), including legacy ID alias lookup
@@ -64,7 +76,8 @@ describe('romLibrary & ROM weight rules', () => {
       BUILTIN_ROMS
     );
     expect(computeBlueprintRomWeight(modified)).toBe(1.5);
-    expect(findRomById(BUILTIN_ROMS, 'rom_std_s3_recon')?.id).toBe('rom_std_s3_range');
+    expect(findRomById(BUILTIN_ROMS, 'rom_std_s3_recon')?.id).toBe('rom_basic_s3_move');
+    expect(findRomById(BUILTIN_ROMS, 'rom_std_s2_jump')?.id).toBe('rom_basic_light_jump');
 
     // Direct 4x4 mode only counts S1 (0.5t)
     expect(computeBlueprintRomWeight({ ...bp, controlTier: 'direct_4x4' })).toBe(0.5);
@@ -75,9 +88,9 @@ describe('romLibrary & ROM weight rules', () => {
       expect(rom.gridSize).toBe(4);
       expect(['attack', 'move', 'control']).toContain(rom.category);
     }
-    expect(getRomCategory(BUILTIN_ROMS.find((r) => r.id === 'rom_std_s1_bal')!)).toBe('attack');
-    expect(getRomCategory(BUILTIN_ROMS.find((r) => r.id === 'rom_std_s3_range')!)).toBe('move');
-    expect(getRomCategory(BUILTIN_ROMS.find((r) => r.id === 'rom_std_s4_cool')!)).toBe('control');
+    expect(getRomCategory(BUILTIN_ROMS.find((r) => r.id === 'rom_basic_s1_fire')!)).toBe('attack');
+    expect(getRomCategory(BUILTIN_ROMS.find((r) => r.id === 'rom_basic_s3_move')!)).toBe('move');
+    expect(getRomCategory(BUILTIN_ROMS.find((r) => r.id === 'rom_basic_s4_cool')!)).toBe('control');
     expect(inferRomCategory([{ row: 0, col: 1, op: 'move_approach', dir: 'E' }])).toBe('move');
 
     const { saved } = saveUserRom([], {
@@ -99,13 +112,12 @@ describe('romLibrary & ROM weight rules', () => {
     expect(saved.builtIn).toBe(false);
 
     const bpA = {
-      ...structuredClone(PRESET_VANGUARD),
-      romSlots: { ...PRESET_VANGUARD.romSlots, S1: saved.id },
+      ...structuredClone(PRESET_ABC),
+      romSlots: { ...PRESET_ABC.romSlots, S1: saved.id },
     };
     const stripped = stripReferencedSubroutinesForStorage(bpA);
     expect(stripped.subroutines).toHaveLength(0);
 
-    // Update ROM in place -> resolving bpA picks up new cell automatically
     const updated = saveUserRom(nextList, {
       id: saved.id,
       name: '電撃改',
@@ -121,7 +133,6 @@ describe('romLibrary & ROM weight rules', () => {
     expect(s1?.name).toBe('電撃改 (4×4)');
     expect(s1?.cells).toHaveLength(2);
 
-    // Delete ROM -> compatibility checker flags missing reference
     const afterDelete = deleteUserRom(updated.nextList, saved.id);
     const resolvedAfterDelete = resolveMechBlueprintRoms(stripped, getAllRoms(afterDelete));
     const issues = analyzeMechRomCompatibility(resolvedAfterDelete, getAllRoms(afterDelete));
@@ -129,23 +140,23 @@ describe('romLibrary & ROM weight rules', () => {
   });
 
   it('detects booster, empty weapon group, and pilot CALL to unmounted slot mismatches', () => {
-    const fortressWithJump = resolveMechBlueprintRoms(
+    const heavyWithJump = resolveMechBlueprintRoms(
       {
-        ...structuredClone(PRESET_FORTRESS),
+        ...structuredClone(PRESET_ABH),
         weaponGroups: { G1: ['rightArm'], G2: [], G3: ['rightArm'], G4: ['leftArm'] },
         romSlots: {
-          ...PRESET_FORTRESS.romSlots,
-          S2: 'rom_std_s2_jump', // uses move_jump & fire_alpha on boosterless chassis
-          S3: null, // pilot DEFAULT_PILOT_PROFILE calls S3
+          ...PRESET_ABH.romSlots,
+          S2: 'rom_basic_light_jump', // uses move_jump on boosterless heavy chassis
+          S3: null, // pilot PILOT_BASIC_HEAVY calls S3
         },
       },
       BUILTIN_ROMS
     );
 
     const issues = analyzeMechRomCompatibility(
-      fortressWithJump,
+      heavyWithJump,
       BUILTIN_ROMS,
-      DEFAULT_PILOT_PROFILE
+      PILOT_BASIC_HEAVY
     );
     expect(issues.S2.some((i) => i.text.includes('跳躍不可'))).toBe(true);
     expect(issues.S1.some((i) => i.text.includes('G2 未割当'))).toBe(true);
@@ -155,9 +166,9 @@ describe('romLibrary & ROM weight rules', () => {
   it('does not fall back to S1 in runtime when an unmounted slot is called', () => {
     const bpNoS3 = resolveMechBlueprintRoms(
       {
-        ...structuredClone(PRESET_VANGUARD),
+        ...structuredClone(PRESET_ABC),
         romSlots: {
-          ...PRESET_VANGUARD.romSlots,
+          ...PRESET_ABC.romSlots,
           S3: null,
         },
       },
@@ -177,7 +188,7 @@ describe('romLibrary & ROM weight rules', () => {
       seed: 42,
       entries: [
         { id: 'm1', name: 'P1', teamId: 'T1', blueprint: bpNoS3, pilot: pilotCallingS3Only },
-        { id: 'm2', name: 'E1', teamId: 'T2', blueprint: PRESET_VANGUARD, pilot: DEFAULT_PILOT_PROFILE },
+        { id: 'm2', name: 'E1', teamId: 'T2', blueprint: PRESET_ABC, pilot: DEFAULT_PILOT_PROFILE },
       ],
     });
     const rt = createPilotRuntimeState(pilotCallingS3Only);
@@ -189,10 +200,10 @@ describe('romLibrary & ROM weight rules', () => {
   it('supports mounting a 6th ROM in S6 (3.0t total) and executing call_s6 from the pilot grid', () => {
     const bp6 = resolveMechBlueprintRoms(
       {
-        ...structuredClone(PRESET_VANGUARD),
+        ...structuredClone(PRESET_ABC),
         romSlots: {
-          ...PRESET_VANGUARD.romSlots,
-          S6: 'rom_std_s5_close',
+          ...PRESET_ABC.romSlots,
+          S6: 'rom_basic_s5_close',
         },
       },
       BUILTIN_ROMS
@@ -213,7 +224,7 @@ describe('romLibrary & ROM weight rules', () => {
       seed: 99,
       entries: [
         { id: 'm1', name: 'P1', teamId: 'T1', blueprint: bp6, pilot: pilotCallingS6 },
-        { id: 'm2', name: 'E1', teamId: 'T2', blueprint: PRESET_VANGUARD, pilot: DEFAULT_PILOT_PROFILE },
+        { id: 'm2', name: 'E1', teamId: 'T2', blueprint: PRESET_ABC, pilot: DEFAULT_PILOT_PROFILE },
       ],
     });
     const rt = createPilotRuntimeState(pilotCallingS6);
@@ -246,19 +257,10 @@ describe('romLibrary & ROM weight rules', () => {
       expect(issues[slot]).toEqual([]);
     }
 
-    const basicIds = [
-      'rom_basic_s1_fire',
-      'rom_basic_s2_lrm',
-      'rom_basic_s3_move',
-      'rom_basic_s4_cool',
-      'rom_basic_s5_close',
-      'rom_basic_4x4_solo',
-    ];
-    for (const id of basicIds) {
-      const rom = BUILTIN_ROMS.find((r) => r.id === id);
-      expect(rom).toBeDefined();
-      expect(rom!.name.startsWith('基本')).toBe(true);
-      expect(rom!.name.length).toBeLessThanOrEqual(6);
+    for (const rom of BUILTIN_ROMS) {
+      expect(rom.name.startsWith('基本')).toBe(true);
+      expect(rom.name.length).toBeLessThanOrEqual(6);
+      expect(isBasicBuiltInRom(rom)).toBe(true);
     }
 
     for (const starter of STARTER_MECHS) {
@@ -266,5 +268,40 @@ describe('romLibrary & ROM weight rules', () => {
       expect(STARTER_PILOTS.some((p) => p.id === starter.defaultPilotId)).toBe(true);
     }
     expect(PRESET_ABC.defaultPilotId).toBe('pilot_basic');
+    expect(PRESET_ABL.defaultPilotId).toBe('pilot_basic_light');
+    expect(PRESET_ABH.defaultPilotId).toBe('pilot_basic_heavy');
+  });
+
+  it('normalizes weightTags, classifies basic routines, and checks single-ROM compatibility', () => {
+    const { saved } = saveUserRom([], {
+      name: '重量テスト',
+      category: 'attack',
+      weightTags: ['assault', 'light', 'assault'],
+      gridSize: 4,
+      cells: [{ row: 0, col: 0, op: 'start', dir: 'E' }],
+    });
+    expect(saved.weightTags).toEqual(['light', 'assault']);
+
+    const { saved: untagged } = saveUserRom([], {
+      name: '汎用テスト',
+      category: 'control',
+      weightTags: [],
+      gridSize: 4,
+      cells: [{ row: 0, col: 0, op: 'start', dir: 'E' }],
+    });
+    expect(untagged.weightTags).toBeUndefined();
+
+    const basicRoms = BUILTIN_ROMS.filter((r) => isBasicBuiltInRom(r));
+    expect(basicRoms).toHaveLength(12);
+
+    const jumpRom = BUILTIN_ROMS.find((r) => r.id === 'rom_basic_light_jump')!;
+    const shieldRom = BUILTIN_ROMS.find((r) => r.id === 'rom_basic_heavy_shield')!;
+    expect(getRomWeightTags(jumpRom)).toContain('light');
+    expect(getRomWeightTags(shieldRom)).toContain('heavy');
+
+    expect(
+      checkSingleRomCompatibility(jumpRom, PRESET_ABH).some((i) => i.text.includes('跳躍不可'))
+    ).toBe(true);
+    expect(checkSingleRomCompatibility(jumpRom, PRESET_ABL)).toEqual([]);
   });
 });

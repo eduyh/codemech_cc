@@ -13,6 +13,7 @@ import {
   MechSubroutine,
   MechSubroutineCell,
   MechSubroutineSlotId,
+  MechWeightClass,
   PilotProfile,
   ProgramRomEntry,
   RomCategory,
@@ -32,6 +33,45 @@ export const ROM_CATEGORY_SPECS: ReadonlyArray<{
   { id: 'move', label: '移動系', short: '移' },
   { id: 'control', label: '制御系', short: '制' },
 ];
+
+export const ROM_WEIGHT_TAG_SPECS: ReadonlyArray<{
+  id: MechWeightClass;
+  label: string;
+  short: string;
+}> = [
+  { id: 'light', label: '軽量級', short: '軽' },
+  { id: 'medium', label: '中量級', short: '中' },
+  { id: 'heavy', label: '重量級', short: '重' },
+  { id: 'assault', label: '超重量級', short: '超' },
+];
+
+const WEIGHT_TAG_ORDER: readonly MechWeightClass[] = ['light', 'medium', 'heavy', 'assault'];
+
+export function normalizeRomWeightTags(raw: unknown): MechWeightClass[] {
+  if (!Array.isArray(raw)) return [];
+  const set = new Set<MechWeightClass>();
+  for (const item of raw) {
+    if (item === 'light' || item === 'medium' || item === 'heavy' || item === 'assault') {
+      set.add(item);
+    }
+  }
+  return WEIGHT_TAG_ORDER.filter((w) => set.has(w));
+}
+
+export function getRomWeightTags(rom: Pick<ProgramRomEntry, 'weightTags'>): MechWeightClass[] {
+  return normalizeRomWeightTags(rom.weightTags);
+}
+
+export function formatRomWeightTagsShort(tags: readonly MechWeightClass[]): string {
+  return tags
+    .map((w) => ROM_WEIGHT_TAG_SPECS.find((s) => s.id === w)?.short ?? '')
+    .filter(Boolean)
+    .join('・');
+}
+
+export function isBasicBuiltInRom(rom: Pick<ProgramRomEntry, 'id' | 'builtIn' | 'name'>): boolean {
+  return Boolean(rom.builtIn && (rom.id.startsWith('rom_basic_') || rom.name.startsWith('基本')));
+}
 
 export function isValidRomCategory(cat: unknown): cat is RomCategory {
   return cat === 'attack' || cat === 'move' || cat === 'control';
@@ -91,12 +131,14 @@ export function loadUserRoms(): ProgramRomEntry[] {
       )
       .map((item) => {
         const cleanCells = filterCellsForGrid(item.cells, 4);
+        const weightTags = normalizeRomWeightTags(item.weightTags);
         return {
           id: item.id,
           name: normalizeRomName(item.name) || '自作',
           category: isValidRomCategory(item.category)
             ? item.category
             : inferRomCategory(cleanCells),
+          ...(weightTags.length > 0 ? { weightTags } : {}),
           gridSize: 4 as const,
           builtIn: false,
           savedAt: typeof item.savedAt === 'number' ? item.savedAt : Date.now(),
@@ -122,9 +164,27 @@ export function getAllRoms(userRoms: readonly ProgramRomEntry[]): ProgramRomEntr
 }
 
 const LEGACY_ROM_ID_ALIASES: Record<string, string> = {
-  rom_std_s1_fortress: 'rom_std_s1_bal',
-  rom_std_s3_recon: 'rom_std_s3_range',
-  rom_std_4x4_basic: 'rom_std_4x4_solo',
+  rom_std_s1_bal: 'rom_basic_s1_fire',
+  rom_std_s1_aggr: 'rom_basic_s1_fire',
+  rom_std_s1_skirmish: 'rom_basic_s1_fire',
+  rom_std_s1_sniper: 'rom_basic_s1_fire',
+  rom_std_s1_fortress: 'rom_basic_s1_fire',
+  rom_std_s2_backup: 'rom_basic_s2_lrm',
+  rom_std_s2_lrm: 'rom_basic_s2_lrm',
+  rom_std_s2_heavy: 'rom_basic_s2_lrm',
+  rom_std_s2_jump: 'rom_basic_light_jump',
+  rom_std_poptart: 'rom_basic_light_jump',
+  rom_std_s3_range: 'rom_basic_s3_move',
+  rom_std_s3_recon: 'rom_basic_s3_move',
+  rom_std_s3_sniper: 'rom_basic_s3_move',
+  rom_std_s3_orbit: 'rom_basic_light_orbit',
+  rom_std_s3_advance: 'rom_basic_heavy_advance',
+  rom_std_s4_cool: 'rom_basic_s4_cool',
+  rom_std_def_shield: 'rom_basic_heavy_shield',
+  rom_std_s5_close: 'rom_basic_s5_close',
+  rom_std_s5_retreat: 'rom_basic_s5_close',
+  rom_std_4x4_solo: 'rom_basic_4x4_solo',
+  rom_std_4x4_basic: 'rom_basic_4x4_solo',
 };
 
 export function findRomById(
@@ -170,6 +230,7 @@ export function saveUserRom(
     id?: string;
     name: string;
     category?: RomCategory;
+    weightTags?: MechWeightClass[];
     gridSize?: 4 | 6;
     cells: readonly MechSubroutineCell[];
   },
@@ -189,11 +250,13 @@ export function saveUserRom(
   const category = isValidRomCategory(input.category)
     ? input.category
     : inferRomCategory(cleanCells);
+  const weightTags = normalizeRomWeightTags(input.weightTags);
 
   const entry: ProgramRomEntry = {
     id,
     name: cleanName,
     category,
+    ...(weightTags.length > 0 ? { weightTags } : {}),
     gridSize: 4,
     builtIn: false,
     savedAt: now,
@@ -438,6 +501,35 @@ export function analyzeMechRomCompatibility(
   }
 
   return result;
+}
+
+export function checkSingleRomCompatibility(
+  rom: Pick<ProgramRomEntry, 'cells' | 'gridSize'>,
+  bp: MechBlueprint
+): RomCompatibilityIssue[] {
+  const stats = computeMechStats(bp);
+  const groups = getResolvedWeaponGroups(bp);
+  const ra = getArmWeaponSpec(bp.parts.rightArmWeapon);
+  const la = getArmWeaponSpec(bp.parts.leftArmWeapon);
+  const rs = getShoulderWeaponSpec(bp.parts.rightShoulderWeapon);
+  const ls = getShoulderWeaponSpec(bp.parts.leftShoulderWeapon);
+
+  const slotActiveWeapon: Record<WeaponSlotId, boolean> = {
+    rightArm: ra.id !== 'arm_none' && !isPassiveModuleSpec(ra),
+    leftArm: la.id !== 'arm_none' && !isPassiveModuleSpec(la),
+    rightShoulder: rs.id !== 'shd_none' && !isPassiveModuleSpec(rs),
+    leftShoulder: ls.id !== 'shd_none' && !isPassiveModuleSpec(ls),
+  };
+
+  return checkCellsCompatibility(
+    rom.cells,
+    rom.gridSize,
+    4,
+    bp,
+    stats.boosterActive,
+    groups,
+    slotActiveWeapon
+  );
 }
 
 export function getRomFeatureTags(rom: Pick<ProgramRomEntry, 'cells'>): string[] {

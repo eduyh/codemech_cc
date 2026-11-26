@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PILOT_PROFILE,
-  PILOT_AGGRESSIVE,
-  PILOT_SNIPER_TACTICIAN,
+  PILOT_BASIC,
+  PILOT_BASIC_HEAVY,
+  PILOT_BASIC_LIGHT,
+  PRESET_ABC,
+  PRESET_ABH,
+  PRESET_ABL,
   STARTER_MECHS,
   STARTER_PILOTS,
 } from '../../data/presets';
-import { MatchParticipantEntry } from '../../types/mech';
+import { MatchParticipantEntry, PilotProfile } from '../../types/mech';
 import { buildMechSensorState, createSimulation, stepSimulation } from '../mechSim';
 import { createPilotRuntimeState, evaluatePilotTick } from '../pilotRuntime';
 
@@ -15,9 +19,9 @@ function createThreeMechSim(seed = 101) {
     seed,
     rules: { arenaPreset: 'urban_pillars' },
     entries: [
-      { id: 'player', name: 'Player', teamId: 'A', blueprint: STARTER_MECHS[0] },
-      { id: 'frontEnemy', name: 'FrontEnemy', teamId: 'B', blueprint: STARTER_MECHS[0] },
-      { id: 'flankEnemy', name: 'FlankEnemy', teamId: 'B', blueprint: STARTER_MECHS[1] },
+      { id: 'player', name: 'Player', teamId: 'A', blueprint: PRESET_ABC },
+      { id: 'frontEnemy', name: 'FrontEnemy', teamId: 'B', blueprint: PRESET_ABH },
+      { id: 'flankEnemy', name: 'FlankEnemy', teamId: 'B', blueprint: PRESET_ABL },
     ],
   });
   sim.terrain.obstacles = [];
@@ -28,37 +32,36 @@ function createThreeMechSim(seed = 101) {
   sim.mechs[1].pos = { x: 300, y: 80, z: 0 };
   sim.mechs[1].yawDeg = 180;
 
-  sim.mechs[2].pos = { x: 410, y: 300, z: 0 };
+  sim.mechs[2].pos = { x: 350, y: 300, z: 0 };
   sim.mechs[2].yawDeg = 270;
 
   return sim;
 }
 
 describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
-  it('routes heat hysteresis loop (heat > 85% -> call_s4 until heat < 45%) cleanly', () => {
+  it('routes heat hysteresis loop (heat > 80% -> call_s4 until heat < 45%) cleanly', () => {
     const sim = createThreeMechSim();
     const player = sim.mechs[0];
-    const runtime = createPilotRuntimeState(DEFAULT_PILOT_PROFILE);
+    const runtime = createPilotRuntimeState(PILOT_BASIC);
 
-    // Trigger high heat > 85%
-    player.heat = player.maxHeat * 0.9;
+    // Trigger high heat > 80%
+    player.heat = player.maxHeat * 0.85;
     const out1 = evaluatePilotTick(
-      DEFAULT_PILOT_PROFILE,
+      PILOT_BASIC,
       runtime,
       buildMechSensorState(sim, player.id),
       player,
       sim
     );
-    expect(runtime.flagA).toBe(true);
     expect(out1.activeSubroutineSlot).toBe('S4');
 
-    // Keep cooling until activeCall finishes while heat is still 60% (>= 45%): stays in S4 loop!
+    // Keep cooling until activeCall finishes while heat is still 60% (>= 45%): loops back to S4
     player.heat = player.maxHeat * 0.6;
     let sawRepeatS4 = false;
     for (let t = 0; t < 25; t++) {
       sim.tick += 1;
       const out = evaluatePilotTick(
-        DEFAULT_PILOT_PROFILE,
+        PILOT_BASIC,
         runtime,
         buildMechSensorState(sim, player.id),
         player,
@@ -70,41 +73,48 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
     }
     expect(sawRepeatS4).toBe(true);
 
-    // Drop heat below 45% -> clears flagA after current S4 completes and returns to combat routing
+    // Drop heat below 45% -> exits cooling loop and dispatches combat routine
     player.heat = player.maxHeat * 0.3;
+    let exitedCoolLoop = false;
     for (let t = 0; t < 25; t++) {
       sim.tick += 1;
-      evaluatePilotTick(
-        DEFAULT_PILOT_PROFILE,
+      const out = evaluatePilotTick(
+        PILOT_BASIC,
         runtime,
         buildMechSensorState(sim, player.id),
         player,
         sim
       );
+      if (out.activeSubroutineSlot !== 'S4') {
+        exitedCoolLoop = true;
+        break;
+      }
     }
-    expect(runtime.flagA).toBe(false);
+    expect(exitedCoolLoop).toBe(true);
   });
 
-  it('dispatches flank intercept (S5), sight combat (S1), and backup ammo switch (S2)', () => {
+  it('dispatches close intercept (S5), sight combat (S3+S1), and radar indirect LRM (S3+S2)', () => {
     const sim = createThreeMechSim();
     const player = sim.mechs[0];
 
-    // 1. Flank enemy < 150m -> dispatches S5
-    const rt1 = createPilotRuntimeState(DEFAULT_PILOT_PROFILE);
-    const outFlank = evaluatePilotTick(
-      DEFAULT_PILOT_PROFILE,
+    // 1. Visible enemy < 120m -> dispatches S5
+    sim.mechs[1].pos = { x: 300, y: 210, z: 0 };
+    const rt1 = createPilotRuntimeState(PILOT_BASIC);
+    const outClose = evaluatePilotTick(
+      PILOT_BASIC,
       rt1,
       buildMechSensorState(sim, player.id),
       player,
       sim
     );
-    expect(outFlank.activeSubroutineSlot).toBe('S5');
+    expect(outClose.activeSubroutineSlot).toBe('S5');
 
-    // 2. Remove flanker, frontEnemy visible with ammo -> dispatches S3 (movement update) then S1 (attack)
-    sim.mechs[2].pos.x = 550;
-    const rt2 = createPilotRuntimeState(DEFAULT_PILOT_PROFILE);
+    // 2. Restore frontEnemy to 220m North and move flanker far away -> dispatches S3 (movement) then S1 (attack)
+    sim.mechs[1].pos = { x: 300, y: 80, z: 0 };
+    sim.mechs[2].pos.x = 1200;
+    const rt2 = createPilotRuntimeState(PILOT_BASIC);
     const outMove = evaluatePilotTick(
-      DEFAULT_PILOT_PROFILE,
+      PILOT_BASIC,
       rt2,
       buildMechSensorState(sim, player.id),
       player,
@@ -114,7 +124,7 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
     expect(rt2.latchedLeg?.op).toBe('move_approach');
     sim.tick += 1;
     const outMain = evaluatePilotTick(
-      DEFAULT_PILOT_PROFILE,
+      PILOT_BASIC,
       rt2,
       buildMechSensorState(sim, player.id),
       player,
@@ -122,11 +132,11 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
     );
     expect(outMain.activeSubroutineSlot).toBe('S1');
 
-    // 3. Deplete rightArm ammo -> dispatches S3 then S2 backup weapons
-    player.weapons.rightArm.ammoRemaining = 0;
-    const rt3 = createPilotRuntimeState(DEFAULT_PILOT_PROFILE);
+    // 3. Turn away (enemy out of sight, still on radar) -> dispatches S3 then S2 LRM
+    player.yawDeg = 180;
+    const rt3 = createPilotRuntimeState(PILOT_BASIC);
     const outMove3 = evaluatePilotTick(
-      DEFAULT_PILOT_PROFILE,
+      PILOT_BASIC,
       rt3,
       buildMechSensorState(sim, player.id),
       player,
@@ -134,23 +144,68 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
     );
     expect(outMove3.activeSubroutineSlot).toBe('S3');
     sim.tick += 1;
-    const outBackup = evaluatePilotTick(
-      DEFAULT_PILOT_PROFILE,
+    const outRadar = evaluatePilotTick(
+      PILOT_BASIC,
       rt3,
       buildMechSensorState(sim, player.id),
       player,
       sim
     );
-    expect(outBackup.activeSubroutineSlot).toBe('S2');
+    expect(outRadar.activeSubroutineSlot).toBe('S2');
   });
 
-  it('supports override_on on PILOT_AGGRESSIVE and runs 12-mech simultaneous battle', () => {
+  it('dispatches class-specific routines for PILOT_BASIC_LIGHT and PILOT_BASIC_HEAVY', () => {
+    const sim = createThreeMechSim(150);
+    const light = sim.mechs[2]; // ABL (Team B)
+    light.heat = 0;
+    sim.mechs[0].pos = { x: 350, y: 120, z: 0 }; // Team A enemy 180m North in sight (>= 120m)
+    light.yawDeg = 0;
+    const lightRt = createPilotRuntimeState(PILOT_BASIC_LIGHT);
+    const lightMove = evaluatePilotTick(
+      PILOT_BASIC_LIGHT,
+      lightRt,
+      buildMechSensorState(sim, light.id),
+      light,
+      sim
+    );
+    expect(lightMove.activeSubroutineSlot).toBe('S3');
+    expect(lightRt.latchedLeg?.op).toBe('move_circle');
+
+    // Heavy pilot reacts to incoming fire with S5 shield twist
+    const heavy = sim.mechs[1];
+    heavy.lastHitTick = sim.tick;
+    heavy.lastHitRelBearingDeg = 0;
+    const heavyRt = createPilotRuntimeState(PILOT_BASIC_HEAVY);
+    const heavyOut = evaluatePilotTick(
+      PILOT_BASIC_HEAVY,
+      heavyRt,
+      buildMechSensorState(sim, heavy.id),
+      heavy,
+      sim
+    );
+    expect(heavyOut.activeSubroutineSlot).toBe('S5');
+  });
+
+  it('supports override_on on pilot grid and runs 12-mech simultaneous battle', () => {
     const simProbe = createThreeMechSim();
     const player = simProbe.mechs[0];
     player.heat = player.maxHeat * 0.95;
-    const aggRt = createPilotRuntimeState(PILOT_AGGRESSIVE);
+    const overridePilot: PilotProfile = {
+      version: 2,
+      id: 'pilot_override_test',
+      name: 'Override Test',
+      grid: {
+        gridSize: 6,
+        cells: [
+          { row: 0, col: 0, op: 'start', dir: 'S' },
+          { row: 1, col: 0, op: 'override_on', dir: 'E' },
+          { row: 1, col: 1, op: 'call_s5', dir: 'E', target: 'nearest', durationSec: 0.5 },
+        ],
+      },
+    };
+    const aggRt = createPilotRuntimeState(overridePilot);
     const outAgg = evaluatePilotTick(
-      PILOT_AGGRESSIVE,
+      overridePilot,
       aggRt,
       buildMechSensorState(simProbe, player.id),
       player,
@@ -159,16 +214,18 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
     expect(outAgg.control.overrideShutdown).toBe(true);
     expect(outAgg.activeSubroutineSlot).toBe('S5');
 
-    // 12-mech (3 mechs x 4 teams) grid-driven battle
+    // 12-mech (3 mechs x 4 teams) grid-driven battle using only ABC/ABL/ABH and basic pilots
     const entries: MatchParticipantEntry[] = [];
     for (let t = 0; t < 4; t++) {
       for (let m = 0; m < 3; m++) {
+        const bp = STARTER_MECHS[(t * 3 + m) % STARTER_MECHS.length];
+        const pilot = STARTER_PILOTS.find((p) => p.id === bp.defaultPilotId) ?? DEFAULT_PILOT_PROFILE;
         entries.push({
           id: `u_${t}_${m}`,
           name: `U${t}-${m}`,
           teamId: `T${t}`,
-          blueprint: STARTER_MECHS[(t * 3 + m) % STARTER_MECHS.length],
-          pilot: STARTER_PILOTS[(t + m) % STARTER_PILOTS.length],
+          blueprint: bp,
+          pilot,
         });
       }
     }
@@ -178,7 +235,7 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
       entries.map((e) => [e.id, createPilotRuntimeState(e.pilot ?? DEFAULT_PILOT_PROFILE)])
     );
     const profiles = Object.fromEntries(
-      entries.map((e) => [e.id, e.pilot ?? PILOT_SNIPER_TACTICIAN])
+      entries.map((e) => [e.id, e.pilot ?? DEFAULT_PILOT_PROFILE])
     );
 
     for (let t = 0; t < 300; t++) {
@@ -203,7 +260,7 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
         rules: { arenaPreset: 'plains_ridge' },
         entries: [
           { id: 'tx', name: bp.name, teamId: 'A', blueprint: bp, pilot: DEFAULT_PILOT_PROFILE },
-          { id: 'foe', name: 'Foe', teamId: 'B', blueprint: STARTER_MECHS[1], pilot: PILOT_AGGRESSIVE },
+          { id: 'foe', name: 'Foe', teamId: 'B', blueprint: STARTER_MECHS[1], pilot: PILOT_BASIC_LIGHT },
         ],
       });
       const rt = createPilotRuntimeState(DEFAULT_PILOT_PROFILE);
@@ -224,8 +281,7 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
   });
 
   it('bypasses Pilot 6x6 and loops S1 directly in direct_4x4 (ignoring >=4 out-of-bounds cells) and direct_6x6', () => {
-    // 1. direct_4x4: empty pilot + out-of-bounds cell at (0,4) must be ignored
-    const bp4 = structuredClone(STARTER_MECHS[0]);
+    const bp4 = structuredClone(PRESET_ABC);
     bp4.controlTier = 'direct_4x4';
     bp4.subroutines = bp4.subroutines.map((s) =>
       s.slotId === 'S1'
@@ -238,7 +294,6 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
               { row: 0, col: 1, op: 'move_approach', dir: 'E' },
               { row: 0, col: 2, op: 'torso_track', dir: 'E' },
               { row: 0, col: 3, op: 'fire_group_1', dir: 'E', durationSec: 0.45 },
-              // Out of 4x4 bounds -> must NOT be executed
               { row: 0, col: 4, op: 'emergency_cool', dir: 'S', durationSec: 0.8 },
             ],
           }
@@ -267,7 +322,7 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
         sim4
       );
       if (out.activePilotCell !== null) sawPilotCell = true;
-      if (out.activeSubroutineSlot === 'S1' && out.control.fireRightArm) sawFire = true;
+      if (out.activeSubroutineSlot === 'S1' && out.control.fireRightShoulder) sawFire = true;
       if (out.control.emergencyCool) sawCool = true;
       expect(out.activeSubroutineCell?.col ?? 0).toBeLessThan(4);
     }
@@ -275,8 +330,7 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
     expect(sawFire).toBe(true);
     expect(sawCool).toBe(false);
 
-    // 2. Legacy direct_6x6 maps cleanly to direct_4x4 without breaking
-    const bp6 = structuredClone(STARTER_MECHS[0]);
+    const bp6 = structuredClone(PRESET_ABC);
     bp6.controlTier = 'direct_6x6';
     const sim6 = createThreeMechSim(124);
     sim6.mechs[0].blueprint = bp6;
@@ -293,7 +347,7 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
   });
 
   it('persists latchedLeg/latchedTorso across CALLs and passes ARG into useArg cells', () => {
-    const bp = structuredClone(STARTER_MECHS[0]);
+    const bp = structuredClone(PRESET_ABC);
     bp.subroutines = [
       {
         slotId: 'S1',
@@ -347,19 +401,16 @@ describe('Pilot 6x6 & 5-slot Subroutine Runtime', () => {
     me.blueprint = bp;
     const rt = createPilotRuntimeState(modularPilot);
 
-    // Tick 0: CALL S3(arg=110) updates latchedLeg and returns
     const tick0 = evaluatePilotTick(modularPilot, rt, buildMechSensorState(sim, me.id), me, sim);
     expect(tick0.activeSubroutineSlot).toBe('S3');
     expect(rt.latchedLeg).toEqual({ op: 'move_circle', param: 110, direction: 'left' });
 
-    // Next tick: CALL S4(arg=60) has NO move_* chip, yet keeps move_circle(110, left) while twisting!
     const tick1 = evaluatePilotTick(modularPilot, rt, buildMechSensorState(sim, me.id), me, sim);
     expect(tick1.activeSubroutineSlot).toBe('S4');
     expect(rt.latchedLeg).toEqual({ op: 'move_circle', param: 110, direction: 'left' });
     expect(rt.latchedTorso).toEqual({ op: 'torso_twist_r', param: 60 });
     expect(tick1.control.moveForward).toBeGreaterThan(0);
 
-    // Wait for S4 to finish, then verify CALL S1 inherits both move_circle and torso_twist_r
     let sawS1WithMove = false;
     for (let t = 0; t < 15; t++) {
       sim.tick += 1;

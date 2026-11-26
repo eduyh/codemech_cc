@@ -4,6 +4,9 @@ import { fullProgramToPython, pilotGridToPython, subroutineToPython } from '../g
 
 describe('gridPython read-only translator (def main + def sub_s1..s5)', () => {
   it('translates all starter pilots and mech subroutines into readable Python', () => {
+    expect(STARTER_PILOTS).toHaveLength(3);
+    expect(STARTER_MECHS).toHaveLength(3);
+
     for (const pilot of STARTER_PILOTS) {
       const py = pilotGridToPython(pilot);
       expect(py).toContain('def main(mech, vision, radar):');
@@ -20,11 +23,14 @@ describe('gridPython read-only translator (def main + def sub_s1..s5)', () => {
 
     const full = fullProgramToPython(STARTER_PILOTS[0], STARTER_MECHS[0]);
     expect(full).toContain('def main(mech, vision, radar):');
-    expect(full).toContain('def sub_s1(target, arg=None):');
+    expect(full).toContain('def sub_s1(target):');
     expect(full).toContain('def sub_s3(target, arg=None):');
-    expect(full).toContain('flag_a = True');
+    expect(full).toContain('arg=220');
 
-    const sniperPy = pilotGridToPython(STARTER_PILOTS[2]);
-    expect(sniperPy).toContain('arg=250');
+    const lightPy = pilotGridToPython(STARTER_PILOTS[1]);
+    expect(lightPy).toContain('arg=110');
+
+    const heavyPy = pilotGridToPython(STARTER_PILOTS[2]);
+    expect(heavyPy).toContain('arg=180');
   });
 });

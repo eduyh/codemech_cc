@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  MAX_CUSTOM_TAG_LEN,
   SavedCustomMech,
-  extractCustomTagFromName,
   formatCustomMechName,
+  formatMechDropdownLabel,
   getBaseMechName,
+  getBaseMechPrefix,
+  getDefaultModelTagForBlueprint,
+  getEditableModelTagFromBlueprint,
+  getRevertMechName,
   isStarterMechId,
   normalizeCustomTag,
 } from '../utils/customMechStorage';
@@ -12,8 +17,11 @@ import {
   analyzeMechRomCompatibility,
   findRomById,
   formatRomLabel,
+  formatRomWeightTagsShort,
   getRomCategory,
   getRomFeatureTags,
+  getRomWeightTags,
+  isBasicBuiltInRom,
   resolveMechBlueprintRoms,
 } from '../utils/romLibrary';
 import { MechPaperdoll } from './MechPaperdoll';
@@ -223,7 +231,9 @@ export function MechGarage({
   const [selectedPart, setSelectedPart] = useState<MechPartId>('torso');
   const [symLock, setSymLock] = useState<boolean>(true);
   const [mobileSection, setMobileSection] = useState<'all' | 'chassis' | 'weapons' | 'armor'>('all');
-  const [customTag, setCustomTag] = useState<string>(() => extractCustomTagFromName(blueprint.name));
+  const [customTag, setCustomTag] = useState<string>(() =>
+    getEditableModelTagFromBlueprint(blueprint)
+  );
   const [selectedSlotId, setSelectedSlotId] = useState<string>(() =>
     savedMechs.some((m) => m.id === blueprint.id) ? blueprint.id : savedMechs[0]?.id ?? ''
   );
@@ -231,8 +241,8 @@ export function MechGarage({
   const noticeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    setCustomTag(extractCustomTagFromName(blueprint.name));
-  }, [blueprint.id, blueprint.name]);
+    setCustomTag(getEditableModelTagFromBlueprint(blueprint));
+  }, [blueprint.id]);
 
   useEffect(() => {
     return () => {
@@ -328,7 +338,7 @@ export function MechGarage({
 
   const romIssues = analyzeMechRomCompatibility(blueprint, allRoms, pilot);
   const userRomList = allRoms.filter((r) => !r.builtIn);
-  const builtInRomList = allRoms.filter((r) => r.builtIn);
+  const basicRomList = allRoms.filter((r) => isBasicBuiltInRom(r));
 
   const handleToggleBooster = () => {
     if (!chassis.hasJumpBoosterMount) return;
@@ -600,6 +610,7 @@ export function MechGarage({
     mobileSection !== 'all' && mobileSection !== sec ? 'is-mobile-hidden' : '';
 
   const isStarterMech = isStarterMechId(blueprint.id);
+  const basePrefix = getBaseMechPrefix(chassis.id);
   const normalizedGarageTag = normalizeCustomTag(customTag);
   const hasSameTagCustom =
     Boolean(normalizedGarageTag) &&
@@ -608,26 +619,40 @@ export function MechGarage({
   return (
     <section className="cm-panel cm-garage-panel">
       <div className="cm-panel-head cm-garage-head">
-        <h2 className="cm-panel-title">機体ガレージ — {blueprint.name}</h2>
+        <h2 className="cm-panel-title">
+          機体ガレージ — {formatMechDropdownLabel(chassis.id, blueprint.name)}
+        </h2>
 
         <div className="cm-garage-slot-bar">
           <div className={`cm-garage-save-group ${isStarterDirty ? 'is-attention' : ''}`}>
+            <span className="cm-tag-prefix">{basePrefix}-</span>
             <input
               type="text"
               className="cm-tag-input"
-              maxLength={3}
+              maxLength={MAX_CUSTOM_TAG_LEN}
               inputMode="text"
               value={customTag}
-              placeholder="半角3文字"
-              aria-label="カスタム識別名（半角英数3文字まで）"
-              onChange={(e) => setCustomTag(normalizeCustomTag(e.target.value))}
+              placeholder={getDefaultModelTagForBlueprint(blueprint)}
+              aria-label={`型式番号（${MAX_CUSTOM_TAG_LEN}文字まで）`}
+              onChange={(e) => {
+                const nextTag = normalizeCustomTag(e.target.value);
+                setCustomTag(nextTag);
+                onChange({
+                  ...blueprint,
+                  name: nextTag
+                    ? formatCustomMechName(getBaseMechName(chassis.id), nextTag)
+                    : getRevertMechName(blueprint),
+                });
+              }}
             />
-            <span className="cm-tag-count">{customTag.length}/3</span>
+            <span className="cm-tag-count">
+              {Array.from(customTag).length}/{MAX_CUSTOM_TAG_LEN}
+            </span>
             <button
               type="button"
               className={`cm-btn-primary-xs ${isStarterDirty ? 'is-attention' : ''}`}
               onClick={handleSaveSlot}
-              title="半角3文字までの識別名を CM-XX/ABC 形式で付けてユーザー機体として保存します"
+              title={`任意の文字列を ${basePrefix}-型式番号 として付けてユーザー機体を保存します`}
             >
               {isStarterMech ? '新規保存' : hasSameTagCustom ? '上書き保存' : '新規保存'}
             </button>
@@ -645,7 +670,7 @@ export function MechGarage({
                 <optgroup label="保存済みカスタム">
                   {savedMechs.map((m) => (
                     <option key={m.id} value={m.id}>
-                      {formatCustomMechName(m.baseName, m.tag)}
+                      {formatMechDropdownLabel(m.chassisId, formatCustomMechName(m.baseName, m.tag))}
                     </option>
                   ))}
                 </optgroup>
@@ -653,7 +678,7 @@ export function MechGarage({
               <optgroup label="標準プリセット">
                 {STARTER_MECHS.map((p) => (
                   <option key={p.id} value={`preset:${p.id}`}>
-                    標準: {p.name}
+                    {formatMechDropdownLabel(p.chassisId, p.name)}
                   </option>
                 ))}
               </optgroup>
@@ -683,7 +708,7 @@ export function MechGarage({
       {isStarterDirty && (
         <div className="cm-starter-save-guide">
           <span>
-            標準機体「{getBaseMechName(chassis.id)}」を編集中です。標準機体は上書きできません — 識別名（半角3文字以内）を付けて「新規保存」し、ユーザー機体として保存してください。
+            標準機体「{getBaseMechName(chassis.id)}」を編集中です。標準機体は上書きできません — 型式番号（{basePrefix}-任意の文字列）を付けて「新規保存」し、ユーザー機体として保存してください。
           </span>
           <button type="button" className="cm-btn-primary-xs is-attention" onClick={handleSaveSlot}>
             新規ユーザー機体として保存
@@ -773,11 +798,19 @@ export function MechGarage({
           <label className="cm-select-row">
             <span>機体フレーム</span>
             <select value={chassis.id} onChange={(e) => handleSelectChassis(e.target.value)}>
-              {MECH_CHASSIS_CATALOG.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} [{c.hasJumpBoosterMount ? 'ブースト可' : 'ブーストなし'}]
-                </option>
-              ))}
+              {(['light', 'medium', 'heavy', 'assault'] as const).map((wc) => {
+                const list = MECH_CHASSIS_CATALOG.filter((c) => c.weightClass === wc);
+                if (list.length === 0) return null;
+                return (
+                  <optgroup key={wc} label={WEIGHT_CLASS_LABEL[wc]}>
+                    {list.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                );
+              })}
             </select>
           </label>
 
@@ -956,32 +989,38 @@ export function MechGarage({
                         <optgroup label="自作ルーチン">
                           {userRomList.map((r) => {
                             const tags = getRomFeatureTags(r);
+                            const wtShort = formatRomWeightTagsShort(getRomWeightTags(r));
                             const cSpec = ROM_CATEGORY_SPECS.find(
                               (c) => c.id === getRomCategory(r)
                             );
                             return (
                               <option key={r.id} value={r.id}>
-                                [{cSpec?.short ?? '制'}] {formatRomLabel(r)} [{ROM_WEIGHT_4X4.toFixed(1)}t]
+                                [{cSpec?.short ?? '制'}
+                                {wtShort ? `/${wtShort}` : ''}] {formatRomLabel(r)} [{ROM_WEIGHT_4X4.toFixed(1)}t]
                                 {tags.length > 0 ? ` (${tags.join('/')})` : ''}
                               </option>
                             );
                           })}
                         </optgroup>
                       )}
-                      <optgroup label="標準ルーチン">
-                        {builtInRomList.map((r) => {
-                          const tags = getRomFeatureTags(r);
-                          const cSpec = ROM_CATEGORY_SPECS.find(
-                            (c) => c.id === getRomCategory(r)
-                          );
-                          return (
-                            <option key={r.id} value={r.id}>
-                              [{cSpec?.short ?? '制'}] {formatRomLabel(r)} [{ROM_WEIGHT_4X4.toFixed(1)}t]
-                              {tags.length > 0 ? ` (${tags.join('/')})` : ''}
-                            </option>
-                          );
-                        })}
-                      </optgroup>
+                      {basicRomList.length > 0 && (
+                        <optgroup label="基本ルーチン">
+                          {basicRomList.map((r) => {
+                            const tags = getRomFeatureTags(r);
+                            const wtShort = formatRomWeightTagsShort(getRomWeightTags(r));
+                            const cSpec = ROM_CATEGORY_SPECS.find(
+                              (c) => c.id === getRomCategory(r)
+                            );
+                            return (
+                              <option key={r.id} value={r.id}>
+                                [{cSpec?.short ?? '制'}
+                                {wtShort ? `/${wtShort}` : ''}] {formatRomLabel(r)} [{ROM_WEIGHT_4X4.toFixed(1)}t]
+                                {tags.length > 0 ? ` (${tags.join('/')})` : ''}
+                              </option>
+                            );
+                          })}
+                        </optgroup>
+                      )}
                     </select>
                     {issues.length > 0 && (
                       <div className="cm-rom-issue-list">

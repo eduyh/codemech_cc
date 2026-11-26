@@ -303,7 +303,8 @@ export function getWeaponReadyStatuses(
       const maxRange = getWeaponMaxRange(spec);
       const inRange =
         maxRange > spec.range ? target.distance < maxRange : target.distance <= spec.range;
-      if (!inRange) {
+      const belowMinRange = Boolean(spec.minRange && target.distance < spec.minRange);
+      if (!inRange || belowMinRange) {
         result[slot] = 'out_of_range';
         continue;
       }
@@ -351,6 +352,7 @@ function isWeaponSlotReadyForBranch(
     const inRange =
       maxRange > spec.range ? target.distance < maxRange : target.distance <= spec.range;
     if (!inRange) return false;
+    if (spec.minRange && target.distance < spec.minRange) return false;
 
     const targetEntity = state.mechs.find((m) => m.id === target.id && m.alive);
     if (targetEntity) {
@@ -376,7 +378,7 @@ function isWeaponSlotReadyForBranch(
           (target.allySpotted && !(ecmProt && target.distance > 400));
         if (!hasIndirectLink) return false;
         if (!mech.lockComplete || mech.lockTargetId !== target.id) return false;
-      } else if (spec.kind === 'lrm_homing' && target.distance > (spec.minRange ?? 120)) {
+      } else if (spec.kind === 'lrm_homing') {
         if (!mech.lockComplete || mech.lockTargetId !== target.id) return false;
       }
     }

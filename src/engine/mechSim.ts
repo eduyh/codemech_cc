@@ -92,7 +92,7 @@ function getJumpDirectionVectors(dirMode: JumpDirectionMode): {
 export const ECM_BUBBLE_RADIUS = 130;
 export const ECM_PROXIMITY_BREAK = 120;
 export const BAP_COUNTER_RADIUS = 240;
-export const AMS_DEFAULT_RANGE = 80;
+export const AMS_DEFAULT_RANGE = 105;
 export const PPC_ECM_DISRUPT_TICKS = 120; // 4.0s at 30 TPS
 
 export const DEFAULT_MATCH_RULES: MatchRules = {
@@ -770,6 +770,7 @@ function spawnSingleProjectile(params: {
   homingTurnDegPerSec: number;
   hp: number;
   loftTicksRemaining: number;
+  isIndirect?: boolean;
 }): void {
   const {
     state,
@@ -785,6 +786,7 @@ function spawnSingleProjectile(params: {
     homingTurnDegPerSec,
     hp,
     loftTicksRemaining,
+    isIndirect,
   } = params;
   const spreadYaw = (nextMechRand(mech) - 0.5) * 2 * totalSpread;
   const spreadPitch = (nextMechRand(mech) - 0.5) * 2 * totalSpread;
@@ -825,6 +827,8 @@ function spawnSingleProjectile(params: {
     distanceTraveled: 0,
     optimalRange: spec.range,
     maxRange,
+    minRange: spec.minRange,
+    isIndirect: Boolean(isIndirect),
     ttlTicks,
     hp,
     loftTicksRemaining,
@@ -953,7 +957,8 @@ function stepSalvoQueue(
       ? state.mechs.find((m) => m.id === item.targetId && m.alive && m.teamId !== mech.teamId)
       : undefined;
 
-    const guided = Boolean(target && item.guided);
+    const hasLiveLock = Boolean(target && mech.lockComplete && mech.lockTargetId === target.id);
+    const guided = Boolean(item.guided && hasLiveLock);
     let aimYaw = torsoWorldYaw;
     let aimPitch = clamp(control.targetPitch ?? mech.pitchDeg, -60, 75);
     let rawHoriz = 600;
@@ -974,7 +979,7 @@ function stepSalvoQueue(
       aimPitch = loft.loftPitchDeg;
     }
 
-    const minRangeMult = spec.minRange && rawHoriz < spec.minRange ? 0.25 : 1.0;
+    const minRangeMult = spec.minRange && rawHoriz < spec.minRange ? 0 : 1.0;
     const headPenaltySpread = mech.parts.head.destroyed ? 3.5 : 0;
     const totalSpread = (spec.spreadDeg + headPenaltySpread + (item.isIndirect ? 2.0 : 0)) * 0.75;
 
@@ -992,6 +997,7 @@ function stepSalvoQueue(
       homingTurnDegPerSec: guided ? spec.homingTurnDegPerSec : 0,
       hp: 1,
       loftTicksRemaining: loft.loftTicks,
+      isIndirect: item.isIndirect,
     });
 
     item.remainingShots -= 1;
@@ -1236,7 +1242,7 @@ function tryFireWeaponSlot(
   const totalSpread = spec.spreadDeg + headPenaltySpread + indirectExtraSpread;
   const isMissileKind =
     spec.kind === 'lrm_homing' || spec.kind === 'srm_homing' || spec.kind === 'srm_rocket';
-  const minRangeMult = spec.minRange && rawHoriz < spec.minRange ? 0.25 : 1.0;
+  const minRangeMult = spec.minRange && rawHoriz < spec.minRange ? 0 : 1.0;
   const effectiveDamage = spec.damage * minRangeMult;
 
   if (spec.kind === 'lrm_homing') {
@@ -1263,6 +1269,7 @@ function tryFireWeaponSlot(
         homingTurnDegPerSec: guided ? spec.homingTurnDegPerSec : 0,
         hp: 1,
         loftTicksRemaining: loft.loftTicks,
+        isIndirect,
       });
     }
 
@@ -1950,6 +1957,22 @@ export function stepSimulation(
     proj.ttlTicks -= 1;
     if (proj.ttlTicks <= 0) continue;
 
+    // C. Lock-loss cuts in-flight LRM guidance (synced with shooter's 0.8s lock decay grace)
+    if (proj.kind === 'lrm_homing' && proj.homingTurnDegPerSec > 0 && proj.targetId) {
+      const owner = state.mechs.find((m) => m.id === proj.ownerId);
+      const ownerOverride = Boolean(controlsByMechId[proj.ownerId]?.overrideShutdown);
+      const ownerOperational = Boolean(
+        owner && owner.alive && (!owner.thermalShutdown || ownerOverride)
+      );
+      const ownerMaintainsLock = Boolean(
+        ownerOperational && owner!.lockComplete && owner!.lockTargetId === proj.targetId
+      );
+      if (!ownerMaintainsLock) {
+        proj.homingTurnDegPerSec = 0;
+        proj.loftTicksRemaining = 0;
+      }
+    }
+
     // Two-stage missile guidance (Stage 1: loft climb, Stage 2: terminal SLERP + lead homing)
     if (proj.loftTicksRemaining > 0) {
       proj.loftTicksRemaining -= 1;
@@ -1990,19 +2013,19 @@ export function stepSimulation(
         if (proj.kind === 'lrm_homing') {
           const h1 = (((proj.id * 2654435761) >>> 0) % 1000) / 1000 - 0.5;
           const h2 = (((proj.id * 1597334677) >>> 0) % 1000) / 1000 - 0.5;
-          const scatterScale = tgt.stats.sizeScale;
+          const indirectMult = proj.isIndirect ? 1.35 : 1.0;
           const toX = tgt.pos.x - proj.pos.x;
           const toY = tgt.pos.y - proj.pos.y;
           const hLen = Math.hypot(toX, toY) || 1;
           const perpX = -toY / hLen;
           const perpY = toX / hLen;
-          lateralX = perpX * h1 * 1.6 * scatterScale;
-          lateralY = perpY * h1 * 1.6 * scatterScale;
-          scatterZ = (h2 * 2.2 - 0.2) * scatterScale;
+          lateralX = perpX * h1 * 4.4 * indirectMult;
+          lateralY = perpY * h1 * 4.4 * indirectMult;
+          scatterZ = (h2 * 3.6 - 0.2) * indirectMult;
         }
 
-        const aimX = tgt.pos.x + tgt.vel.x * tGo * 0.85 + lateralX;
-        const aimY = tgt.pos.y + tgt.vel.y * tGo * 0.85 + lateralY;
+        const aimX = tgt.pos.x + tgt.vel.x * tGo * 0.55 + lateralX;
+        const aimY = tgt.pos.y + tgt.vel.y * tGo * 0.55 + lateralY;
         const rawAimZ =
           tgt.pos.z +
           getMechCenterZ(tgt.stats.sizeScale) +
@@ -2085,7 +2108,8 @@ export function stepSimulation(
         proj.optimalRange,
         effectiveMaxRange
       );
-      if (rangeMult > 0.01) {
+      const isUnarmedMinRange = Boolean(proj.minRange && proj.distanceTraveled < proj.minRange);
+      if (!isUnarmedMinRange && proj.damage > 0 && rangeMult > 0.01) {
         const landed = resolveHitOnMech(
           state,
           attacker,

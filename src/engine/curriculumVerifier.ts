@@ -263,11 +263,14 @@ export function verifyCurriculumMission(
       blueprint: makeTrainingTargetMech(PRESET_STRIKER, 0.4, '強襲機1号'),
       pilot: makeBasicTrainingPilot(140),
     });
+    const trainingSniper = makeTrainingTargetMech(PRESET_SNIPER, 0.3, '狙撃機2号');
+    trainingSniper.parts.rightArmWeapon = 'large_laser';
+    trainingSniper.weaponMountCounts = undefined;
     entries.push({
       id: 'enemy_2',
       name: '狙撃機2号',
       teamId: 'T_ENEMY',
-      blueprint: makeTrainingTargetMech(PRESET_SNIPER, 0.3, '狙撃機2号'),
+      blueprint: trainingSniper,
       pilot: makeBasicTrainingPilot(210),
     });
   }

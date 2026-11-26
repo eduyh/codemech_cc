@@ -687,6 +687,8 @@ export interface ProjectileState {
   distanceTraveled: number;
   optimalRange: number;
   maxRange: number;
+  minRange?: number;
+  isIndirect?: boolean;
   ttlTicks: number;
   hp: number;
   loftTicksRemaining: number;

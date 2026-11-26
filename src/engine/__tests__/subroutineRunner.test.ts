@@ -473,4 +473,38 @@ describe('subroutineRunner (6x6 & 4x4 Mech OS routines)', () => {
     expect(me.pos.z).toBeGreaterThan(5);
     expect(sawFireAfterJump).toBe(true);
   });
+
+  it('propagates subroutine fire chip aimPoint ("legs" / "arms") into control.aimPoint', () => {
+    const bp = structuredClone(PRESET_ABC);
+    const sim = createSimulation({
+      seed: 912,
+      entries: [
+        { id: 'me', name: 'Me', teamId: 'A', blueprint: bp },
+        { id: 'enemy', name: 'Enemy', teamId: 'B', blueprint: structuredClone(PRESET_ABC) },
+      ],
+    });
+    const me = sim.mechs[0];
+    const enemy = sim.mechs[1];
+    me.pos = { x: 400, y: 500, z: 0 };
+    me.yawDeg = 0;
+    enemy.pos = { x: 400, y: 420, z: 0 };
+
+    const legHunterSub: MechSubroutine = {
+      slotId: 'S1',
+      name: 'LEG_HUNT',
+      category: 'attack',
+      gridSize: 4,
+      cells: [
+        { row: 0, col: 0, op: 'start', dir: 'E' },
+        { row: 0, col: 1, op: 'fire_group_1', dir: 'E', aimPoint: 'legs', durationSec: 0.4 },
+      ],
+    };
+
+    const exec = startSubroutineExec(legHunterSub, false, 4);
+    const sensor = buildMechSensorState(sim, me.id);
+    const ctrl = { ...EMPTY_CONTROL_INPUT };
+    stepSubroutineExecution(legHunterSub, exec, ctrl, sensor, me, sim, sensor.nearestEnemy, 1);
+    expect(ctrl.aimPoint).toBe('legs');
+    expect(ctrl.fireRightShoulder).toBe(true);
+  });
 });

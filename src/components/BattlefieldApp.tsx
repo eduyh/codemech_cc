@@ -6,6 +6,7 @@ import {
   Cpu,
   Download,
   Lock,
+  Maximize2,
   Pause,
   Play,
   RotateCcw,
@@ -14,6 +15,7 @@ import {
   Trash2,
   Trophy,
   Upload,
+  X,
 } from 'lucide-react';
 import { STARTER_MECHS, STARTER_PILOTS } from '../data/presets';
 import {
@@ -47,6 +49,7 @@ import {
 import { MechCanvas3D } from './MechCanvas3D';
 import { MechPartsHud } from './MechPartsHud';
 import { MvpArenaCanvas } from './MvpArenaCanvas';
+import { battleAudio } from '../utils/battleAudio';
 
 const RENDER_INTERVAL_MS = 1000 / SIM_TPS;
 
@@ -93,6 +96,7 @@ export function BattlefieldApp() {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<1 | 2 | 4>(1);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>('3d');
+  const [expanded2D, setExpanded2D] = useState(false);
   const [focusedMechId, setFocusedMechId] = useState('');
   const [renderTick, setRenderTick] = useState(0);
 
@@ -105,6 +109,7 @@ export function BattlefieldApp() {
   } | null>(null);
 
   const simRef = useRef<SimState | null>(null);
+  const slowMoUntilRef = useRef(0);
   const profilesRef = useRef<Record<string, PilotProfile>>({});
   const runtimesRef = useRef<Record<string, PilotRuntimeState>>({});
   const activeReplayRef = useRef<ReplayPackageData | null>(null);
@@ -112,6 +117,7 @@ export function BattlefieldApp() {
   const loadReplayIntoStage = useCallback((replay: ReplayPackageData, autoPlay = false) => {
     const built = createSimFromReplay(replay);
     simRef.current = built.sim;
+    slowMoUntilRef.current = 0;
     profilesRef.current = built.pilotProfiles;
     runtimesRef.current = built.pilotRuntimes;
     activeReplayRef.current = replay;
@@ -121,6 +127,7 @@ export function BattlefieldApp() {
   }, []);
 
   const startLiveMatch = useCallback(() => {
+    battleAudio.unlock();
     setErrorMsg(null);
     if (roster.length < 2) {
       setErrorMsg('対戦には最低 2 機のエントリーが必要です。');
@@ -175,11 +182,18 @@ export function BattlefieldApp() {
     let lastTime = performance.now();
 
     const loop = (now: number) => {
-      if (now - lastTime >= RENDER_INTERVAL_MS) {
-        lastTime = now - ((now - lastTime) % RENDER_INTERVAL_MS);
-        for (let i = 0; i < speed; i++) {
+      const inSlowMo = now < slowMoUntilRef.current;
+      const stepInterval = inSlowMo ? RENDER_INTERVAL_MS * 3.4 : RENDER_INTERVAL_MS;
+      if (now - lastTime >= stepInterval) {
+        lastTime = now - ((now - lastTime) % stepInterval);
+        const maxSteps = inSlowMo ? 1 : speed;
+        for (let i = 0; i < maxSteps; i++) {
           if (!simRef.current || simRef.current.finished) break;
           advanceOneTick();
+          if (simRef.current.lastTickEvents.some((ev) => ev.type === 'mech_destroyed')) {
+            slowMoUntilRef.current = Math.max(slowMoUntilRef.current, now + 650);
+            break;
+          }
         }
         setRenderTick((n) => n + 1);
         if (!simRef.current || simRef.current.finished) {
@@ -193,6 +207,15 @@ export function BattlefieldApp() {
     rafId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafId);
   }, [playing, speed, advanceOneTick]);
+
+  useEffect(() => {
+    if (!expanded2D) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpanded2D(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [expanded2D]);
 
   const handleBulkExtract = () => {
     setErrorMsg(null);
@@ -554,6 +577,7 @@ export function BattlefieldApp() {
                   type="button"
                   className="cm-btn-primary"
                   onClick={() => {
+                    battleAudio.unlock();
                     if (!playing && sim.finished && activeReplayRef.current) {
                       loadReplayIntoStage(activeReplayRef.current, true);
                       return;
@@ -604,14 +628,14 @@ export function BattlefieldApp() {
                     className={viewMode === '3d' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
                     onClick={() => setViewMode('3d')}
                   >
-                    3D
+                    3D ビュー
                   </button>
                   <button
                     type="button"
                     className={viewMode === '2d' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
                     onClick={() => setViewMode('2d')}
                   >
-                    2D
+                    2D 戦術図
                   </button>
                 </div>
               </div>
@@ -627,14 +651,26 @@ export function BattlefieldApp() {
                 renderTick={renderTick}
                 focusedMechId={focusedMechId}
                 onSelectMech={setFocusedMechId}
+                onSwitchTo2D={() => setViewMode('2d')}
               />
             ) : (
-              <MvpArenaCanvas
-                simState={sim}
-                renderTick={renderTick}
-                focusedMechId={focusedMechId}
-                onSelectMech={setFocusedMechId}
-              />
+              <div className="cm-2d-stage">
+                <button
+                  type="button"
+                  className="cm-2d-expand-btn"
+                  onClick={() => setExpanded2D(true)}
+                  title="2D戦術図を画面いっぱいに大きく表示"
+                >
+                  <Maximize2 size={13} /> 大きく表示
+                </button>
+                <MvpArenaCanvas
+                  simState={sim}
+                  renderTick={renderTick}
+                  focusedMechId={focusedMechId}
+                  onSelectMech={setFocusedMechId}
+                  className="cm-arena-canvas--large"
+                />
+              </div>
             )}
 
             <div className="cm-roster-strip" style={{ marginTop: '0.5rem' }}>
@@ -772,6 +808,78 @@ export function BattlefieldApp() {
           </section>
         </div>
       </main>
+      {expanded2D && (
+        <div
+          className="cm-2d-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="2D 戦術図 拡大表示"
+          onClick={() => setExpanded2D(false)}
+        >
+          <div className="cm-2d-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="cm-2d-modal-bar">
+              <div className="cm-sim-btns">
+                <button
+                  type="button"
+                  className="cm-btn-primary"
+                  onClick={() => {
+                    battleAudio.unlock();
+                    if (!playing && sim.finished && activeReplayRef.current) {
+                      loadReplayIntoStage(activeReplayRef.current, true);
+                      return;
+                    }
+                    setPlaying((p) => !p);
+                  }}
+                >
+                  {playing ? <Pause size={15} /> : <Play size={15} />}
+                  {playing ? '一時停止' : '再生'}
+                </button>
+                <button
+                  type="button"
+                  className="cm-btn-secondary"
+                  onClick={() => {
+                    if (activeReplayRef.current) {
+                      loadReplayIntoStage(activeReplayRef.current, false);
+                    }
+                  }}
+                >
+                  <RotateCcw size={15} /> 巻き戻し
+                </button>
+                <div className="cm-seg">
+                  {([1, 2, 4] as const).map((sp) => (
+                    <button
+                      key={sp}
+                      type="button"
+                      className={speed === sp ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
+                      onClick={() => setSpeed(sp)}
+                    >
+                      {sp}x
+                    </button>
+                  ))}
+                </div>
+                <div className="cm-sim-clock">
+                  T{sim.tick} ({sim.time.toFixed(1)}s)
+                  {sim.finished && <span className="cm-winner-pill">勝者: {sim.winnerTeamId}</span>}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="cm-btn-secondary"
+                onClick={() => setExpanded2D(false)}
+              >
+                <X size={15} /> 閉じる
+              </button>
+            </div>
+            <MvpArenaCanvas
+              simState={sim}
+              renderTick={renderTick}
+              focusedMechId={focusedMechId}
+              onSelectMech={setFocusedMechId}
+              className="cm-arena-canvas--modal"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

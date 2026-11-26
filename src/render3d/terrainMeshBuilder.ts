@@ -1,6 +1,106 @@
 import * as THREE from 'three';
 import { getGroundHeight } from '../engine/terrain';
-import { TerrainConfig } from '../types/mech';
+import { ArenaPresetId, TerrainConfig } from '../types/mech';
+
+export interface ArenaAtmosphereConfig {
+  skyTop: string;
+  skyHorizon: string;
+  skyBottom: string;
+  fogColor: string;
+  fogDensity: number;
+  sunColor: string;
+  sunIntensity: number;
+  hemiSky: string;
+  hemiGround: string;
+  rimColor: string;
+}
+
+export const ARENA_ATMOSPHERE: Record<ArenaPresetId, ArenaAtmosphereConfig> = {
+  plains_ridge: {
+    skyTop: '#070b1a',
+    skyHorizon: '#3b2038',
+    skyBottom: '#101426',
+    fogColor: '#161426',
+    fogDensity: 0.0002,
+    sunColor: '#ffd6a5',
+    sunIntensity: 1.45,
+    hemiSky: '#fde68a',
+    hemiGround: '#1e1b2e',
+    rimColor: '#f97316',
+  },
+  twin_mesas: {
+    skyTop: '#0a1428',
+    skyHorizon: '#4a2e22',
+    skyBottom: '#18141c',
+    fogColor: '#1c1822',
+    fogDensity: 0.00022,
+    sunColor: '#ffe4b5',
+    sunIntensity: 1.5,
+    hemiSky: '#fed7aa',
+    hemiGround: '#27201c',
+    rimColor: '#fbbf24',
+  },
+  urban_pillars: {
+    skyTop: '#030712',
+    skyHorizon: '#0e2942',
+    skyBottom: '#040914',
+    fogColor: '#060f1e',
+    fogDensity: 0.00024,
+    sunColor: '#bae6fd',
+    sunIntensity: 1.25,
+    hemiSky: '#7dd3fc',
+    hemiGround: '#0f172a',
+    rimColor: '#22d3ee',
+  },
+  valley_basin: {
+    skyTop: '#071326',
+    skyHorizon: '#1e4260',
+    skyBottom: '#0b1829',
+    fogColor: '#0c1b2e',
+    fogDensity: 0.00018,
+    sunColor: '#e0f2fe',
+    sunIntensity: 1.4,
+    hemiSky: '#bae6fd',
+    hemiGround: '#1e293b',
+    rimColor: '#38bdf8',
+  },
+};
+
+export function getArenaAtmosphere(presetId: ArenaPresetId): ArenaAtmosphereConfig {
+  return ARENA_ATMOSPHERE[presetId] ?? ARENA_ATMOSPHERE.plains_ridge;
+}
+
+function buildSkyDome(atmosphere: ArenaAtmosphereConfig): THREE.Mesh {
+  const skyGeo = new THREE.SphereGeometry(2800, 18, 12);
+  const posAttr = skyGeo.attributes.position as THREE.BufferAttribute;
+  const colors = new Float32Array(posAttr.count * 3);
+  const topCol = new THREE.Color(atmosphere.skyTop);
+  const horCol = new THREE.Color(atmosphere.skyHorizon);
+  const botCol = new THREE.Color(atmosphere.skyBottom);
+  const tmp = new THREE.Color();
+
+  for (let i = 0; i < posAttr.count; i++) {
+    const ny = posAttr.getY(i) / 2800;
+    if (ny >= 0) {
+      tmp.lerpColors(horCol, topCol, Math.min(1, Math.pow(ny, 0.72)));
+    } else {
+      tmp.lerpColors(horCol, botCol, Math.min(1, Math.abs(ny) * 2.5));
+    }
+    colors[i * 3] = tmp.r;
+    colors[i * 3 + 1] = tmp.g;
+    colors[i * 3 + 2] = tmp.b;
+  }
+  skyGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const skyMat = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    side: THREE.BackSide,
+    fog: false,
+    depthWrite: false,
+  });
+  const skyMesh = new THREE.Mesh(skyGeo, skyMat);
+  skyMesh.name = 'sky_dome';
+  return skyMesh;
+}
 
 function makeCompassLabelSprite(text: string, colorHex: string): THREE.Sprite | null {
   if (typeof document === 'undefined') return null;
@@ -73,6 +173,7 @@ function buildDrapedGridLines(
 export function buildTerrainGroup(terrain: TerrainConfig): THREE.Group {
   const group = new THREE.Group();
   group.name = `terrain_${terrain.id}`;
+  group.add(buildSkyDome(getArenaAtmosphere(terrain.id)));
 
   const segsX = 80;
   const segsZ = 80;

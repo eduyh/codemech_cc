@@ -6,7 +6,7 @@ import {
   getWeaponSlotMountCount,
 } from '../data/parts';
 import { getSurfaceHeight } from '../engine/terrain';
-import { MechPartId, MechRuntimeState, TerrainConfig } from '../types/mech';
+import { MechPartId, MechRuntimeState, SimCombatEvent, TerrainConfig } from '../types/mech';
 import { simToThreePos, simYawToThreeRotY } from './coords';
 
 export interface MechRig3D {
@@ -23,10 +23,17 @@ export interface MechRig3D {
   rightArmPivot: THREE.Group;
   leftArmPivot: THREE.Group;
   boosterFlames: THREE.Mesh[];
+  armorMat: THREE.MeshLambertMaterial;
+  heatVentMat: THREE.MeshBasicMaterial;
   altitudeLine: THREE.Line;
   groundShadow: THREE.Mesh;
   focusRing: THREE.Mesh;
   stridePhase: number;
+  recoilKick: number;
+  recoilArmSide: 'right' | 'left' | 'both';
+  hitFlashTicks: number;
+  lastSeenHitTick: number;
+  lastAnimTick: number;
 }
 
 function tagClickable(obj: THREE.Object3D, mechId: string): void {
@@ -302,6 +309,7 @@ export function buildProceduralMechRig(
   const glowMat = new THREE.MeshBasicMaterial({ color: '#38bdf8' });
   const bladeMat = new THREE.MeshBasicMaterial({ color: '#22d3ee' });
   const flameMat = new THREE.MeshBasicMaterial({ color: '#f97316', transparent: true, opacity: 0.9 });
+  const heatVentMat = new THREE.MeshBasicMaterial({ color: '#1e293b' });
   const shieldMat = new THREE.MeshLambertMaterial({ color: teamColor, flatShading: true });
 
   // 1. Center Torso (中央胴) + Pelvis + Waist Turntable
@@ -328,9 +336,14 @@ export function buildProceduralMechRig(
   upperGlacis.position.set(0, 1.55, -0.1);
   const rearPack = new THREE.Mesh(new THREE.BoxGeometry(ctW * 0.82, 2.35, 0.85), rearArmorMat);
   rearPack.position.set(0, 0.12, ctD * 0.5 + 0.35);
+  const ventGeo = new THREE.BoxGeometry(ctW * 0.24, 1.35, 0.12);
+  const leftVent = new THREE.Mesh(ventGeo, heatVentMat);
+  leftVent.position.set(-ctW * 0.24, 0.25, ctD * 0.5 + 0.78);
+  const rightVent = new THREE.Mesh(ventGeo, heatVentMat);
+  rightVent.position.set(ctW * 0.24, 0.25, ctD * 0.5 + 0.78);
   const waist = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.08, 0.72, 8), frameMat);
   waist.position.set(0, -1.92, 0);
-  torsoGroup.add(coreMesh, chestProw, upperGlacis, rearPack, waist);
+  torsoGroup.add(coreMesh, chestProw, upperGlacis, rearPack, leftVent, rightVent, waist);
 
   // Backpack booster flames angled downward-backward for ~60° upward-forward lift
   const boosterFlames: THREE.Mesh[] = [];
@@ -549,10 +562,17 @@ export function buildProceduralMechRig(
     rightArmPivot,
     leftArmPivot,
     boosterFlames,
+    armorMat,
+    heatVentMat,
     altitudeLine,
     groundShadow,
     focusRing,
     stridePhase: mech.slotIndex * 0.9,
+    recoilKick: 0,
+    recoilArmSide: 'both',
+    hitFlashTicks: 0,
+    lastSeenHitTick: -1,
+    lastAnimTick: -1,
   };
 }
 
@@ -561,11 +581,75 @@ export function updateMechRigAnimation(
   mech: MechRuntimeState,
   terrain: TerrainConfig,
   focused: boolean,
-  simTick: number
+  simTick: number,
+  events?: SimCombatEvent[]
 ): void {
+  const tickAdvanced = simTick !== rig.lastAnimTick;
+  if (simTick < rig.lastAnimTick) {
+    rig.recoilKick = 0;
+    rig.hitFlashTicks = 0;
+    rig.lastSeenHitTick = -1;
+  }
+  rig.lastAnimTick = simTick;
+
+  if (tickAdvanced) {
+    if (mech.lastHitTick > rig.lastSeenHitTick && simTick - mech.lastHitTick <= 6) {
+      rig.hitFlashTicks = 5;
+      rig.lastSeenHitTick = mech.lastHitTick;
+    } else if (rig.hitFlashTicks > 0) {
+      rig.hitFlashTicks -= 1;
+    }
+
+    rig.recoilKick *= 0.7;
+    if (rig.recoilKick < 0.02) rig.recoilKick = 0;
+
+    if (events) {
+      for (const ev of events) {
+        if (ev.type === 'fire' && ev.actorId === mech.id) {
+          const strength = ev.detail === 'laser' ? 0.25 : 0.72;
+          rig.recoilKick = Math.min(1, rig.recoilKick + strength);
+          rig.recoilArmSide =
+            ev.detail === 'rightArm'
+              ? 'right'
+              : ev.detail === 'leftArm'
+                ? 'left'
+                : 'both';
+        }
+      }
+    }
+  }
+
   simToThreePos(mech.pos, terrain, rig.root.position);
   rig.bodyGroup.rotation.set(0, simYawToThreeRotY(mech.yawDeg), 0);
   rig.upperBodyGroup.rotation.set(0, simYawToThreeRotY(mech.torsoYawOffsetDeg), 0);
+  rig.upperBodyGroup.position.set(0, 0, 0);
+
+  // Heat vent & armor emissive feedback (hit flash + overheat warning)
+  const heatRatio = mech.maxHeat > 0 ? mech.heat / mech.maxHeat : 0;
+  if (!mech.alive) {
+    rig.heatVentMat.color.set('#1e293b');
+    rig.armorMat.emissive.setHex(0x000000);
+  } else {
+    if (heatRatio < 0.5) {
+      rig.heatVentMat.color.set('#1e293b');
+    } else if (heatRatio < 0.85) {
+      const t = (heatRatio - 0.5) / 0.35;
+      rig.heatVentMat.color.set('#334155').lerp(new THREE.Color('#f97316'), t);
+    } else {
+      const pulse = 0.7 + Math.sin(simTick * 0.7) * 0.3;
+      rig.heatVentMat.color.set('#ea580c').lerp(new THREE.Color('#ff2a00'), pulse);
+    }
+
+    if (rig.hitFlashTicks > 0) {
+      const flashAlpha = rig.hitFlashTicks / 5;
+      rig.armorMat.emissive.setHex(0xfbbf24).multiplyScalar(0.55 * flashAlpha);
+    } else if (heatRatio >= 0.85) {
+      const glowPulse = (0.12 + Math.sin(simTick * 0.6) * 0.08) * Math.min(1, (heatRatio - 0.8) * 3);
+      rig.armorMat.emissive.setHex(0xef4444).multiplyScalar(glowPulse);
+    } else {
+      rig.armorMat.emissive.setHex(0x000000);
+    }
+  }
 
   // Part destruction visibility
   rig.partGroups.head.visible = !mech.parts.head.destroyed;
@@ -628,8 +712,14 @@ export function updateMechRigAnimation(
     rig.leftLegPivot.rotation.x = 0;
   }
 
-  rig.rightArmPivot.rotation.x = 0;
-  rig.leftArmPivot.rotation.x = 0;
+  const flinchTilt = rig.hitFlashTicks > 0 ? (rig.hitFlashTicks / 5) * 0.09 : 0;
+  rig.upperBodyGroup.rotation.x = flinchTilt + rig.recoilKick * 0.06;
+  rig.upperBodyGroup.position.z = rig.recoilKick * 0.38;
+
+  const armRecoilR = rig.recoilArmSide === 'right' || rig.recoilArmSide === 'both' ? rig.recoilKick * 0.28 : 0;
+  const armRecoilL = rig.recoilArmSide === 'left' || rig.recoilArmSide === 'both' ? rig.recoilKick * 0.28 : 0;
+  rig.rightArmPivot.rotation.x = armRecoilR;
+  rig.leftArmPivot.rotation.x = armRecoilL;
 
   // Booster flames when torso booster is active & jumping/lifting in ~60° forward arc
   const showFlame =

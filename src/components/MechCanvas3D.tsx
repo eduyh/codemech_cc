@@ -7,7 +7,8 @@ import {
   isMechBapActive,
   isMechEcmActive,
 } from '../engine/mechSim';
-import { clamp, degToRad } from '../engine/math';
+import { clamp, degToRad, distance2D } from '../engine/math';
+import { getSurfaceHeight } from '../engine/terrain';
 import {
   disposeObject3D,
   getTeamColorHex,
@@ -20,16 +21,20 @@ import {
   buildProceduralMechRig,
   updateMechRigAnimation,
 } from '../render3d/mechMeshBuilder';
-import { buildTerrainGroup } from '../render3d/terrainMeshBuilder';
-import { ArmorFace, MechPartId, SimState, Vec3 } from '../types/mech';
+import { buildTerrainGroup, getArenaAtmosphere } from '../render3d/terrainMeshBuilder';
+import { ArmorFace, MechPartId, MechRuntimeState, SimState, Vec3 } from '../types/mech';
+import { battleAudio } from '../utils/battleAudio';
+import { formatKillBanner, formatKillFeedLine } from '../utils/combatText';
+import { MvpArenaCanvas } from './MvpArenaCanvas';
 
-type CameraMode = 'overview' | 'follow' | 'orbit';
+type CameraMode = 'director' | 'overview' | 'follow' | 'orbit';
 
 interface MechCanvas3DProps {
   simState: SimState;
   renderTick?: number;
   focusedMechId: string;
   onSelectMech: (mechId: string) => void;
+  onSwitchTo2D?: () => void;
 }
 
 interface ProjectedMechTag {
@@ -60,6 +65,22 @@ interface ProjectedHitPopup {
   opacity: number;
 }
 
+interface BroadcastTeamRow {
+  teamId: string;
+  label: string;
+  color: string;
+  aliveCount: number;
+  totalCount: number;
+  hpPct: number;
+}
+
+interface KillFeedItem {
+  key: string;
+  text: string;
+  color: string;
+  createdTick: number;
+}
+
 const PART_LABEL_JA: Record<MechPartId, string> = {
   head: '頭',
   torso: '中央胴',
@@ -82,13 +103,19 @@ export function MechCanvas3D({
   renderTick,
   focusedMechId,
   onSelectMech,
+  onSwitchTo2D,
 }: MechCanvas3DProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const [cameraMode, setCameraMode] = useState<CameraMode>('overview');
+  const [cameraMode, setCameraMode] = useState<CameraMode>('director');
   const [showTacticalOverlay, setShowTacticalOverlay] = useState<boolean>(true);
+  const [showMinimap, setShowMinimap] = useState<boolean>(true);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => battleAudio.isEnabled());
   const [webglError, setWebglError] = useState<string | null>(null);
   const [tags, setTags] = useState<ProjectedMechTag[]>([]);
   const [popups, setPopups] = useState<ProjectedHitPopup[]>([]);
+  const [teamBars, setTeamBars] = useState<BroadcastTeamRow[]>([]);
+  const [killFeed, setKillFeed] = useState<KillFeedItem[]>([]);
+  const [killBanner, setKillBanner] = useState<{ headline: string; detail: string } | null>(null);
 
   const simRef = useRef(simState);
   simRef.current = simState;
@@ -105,6 +132,8 @@ export function MechCanvas3D({
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
+  const hemiLightRef = useRef<THREE.HemisphereLight | null>(null);
+  const rimLightRef = useRef<THREE.DirectionalLight | null>(null);
   const terrainGroupRef = useRef<THREE.Group | null>(null);
   const terrainKeyRef = useRef<string>('');
   const tacticalGroupRef = useRef<THREE.Group | null>(null);
@@ -113,6 +142,21 @@ export function MechCanvas3D({
   const effectsRef = useRef<EffectsManager3D | null>(null);
   const storedPopupsRef = useRef<StoredPopup[]>([]);
   const lastPopupTickRef = useRef<number>(-1);
+  const feedItemsRef = useRef<KillFeedItem[]>([]);
+  const killBannerRef = useRef<{ headline: string; detail: string; untilTick: number } | null>(null);
+  const directorStateRef = useRef({
+    primaryId: '',
+    secondaryId: '',
+    switchAfterTick: 0,
+    killFocusPos: null as Vec3 | null,
+    killFocusUntilTick: -1,
+    orbitAngle: 0.6,
+    shakeIntensity: 0,
+    lastTick: -1,
+    smoothCamPos: new THREE.Vector3(),
+    smoothLookAt: new THREE.Vector3(),
+    initialized: false,
+  });
 
   const orbitStateRef = useRef({
     yaw: 0.55,
@@ -151,8 +195,20 @@ export function MechCanvas3D({
       terrainKeyRef.current = tKey;
 
       orbitStateRef.current.overviewDist = Math.round(state.terrain.width * 0.68);
+      const atmo = getArenaAtmosphere(state.terrain.id);
+      renderer.setClearColor(atmo.skyBottom, 1);
+      scene.fog = new THREE.FogExp2(atmo.fogColor, atmo.fogDensity);
+      if (hemiLightRef.current) {
+        hemiLightRef.current.color.set(atmo.hemiSky);
+        hemiLightRef.current.groundColor.set(atmo.hemiGround);
+      }
+      if (rimLightRef.current) {
+        rimLightRef.current.color.set(atmo.rimColor);
+      }
       if (dirLightRef.current) {
         const dir = dirLightRef.current;
+        dir.color.set(atmo.sunColor);
+        dir.intensity = atmo.sunIntensity;
         const shadowBound = Math.max(380, state.terrain.width * 0.62);
         dir.position.set(
           state.terrain.width * 0.3,
@@ -199,13 +255,20 @@ export function MechCanvas3D({
         scene.add(rig.root);
         rigsRef.current.set(mech.id, rig);
       }
-      updateMechRigAnimation(rig, mech, state.terrain, mech.id === focusedId, state.tick);
+      updateMechRigAnimation(
+        rig,
+        mech,
+        state.terrain,
+        mech.id === focusedId,
+        state.tick,
+        state.lastTickEvents
+      );
     }
 
-    // 3. Effects, projectiles & continuous laser beams
+    // 3. Effects, projectiles, beams & Web Audio SFX
     if (effectsRef.current) {
-      effectsRef.current.syncProjectiles(state.projectiles, state.terrain);
-      effectsRef.current.syncActiveBeams(state.activeBeams, state.terrain);
+      effectsRef.current.syncProjectiles(state.projectiles, state.terrain, state.tick);
+      effectsRef.current.syncActiveBeams(state.activeBeams, state.terrain, state.tick);
       effectsRef.current.ingestEventsAndStep(
         state.lastTickEvents,
         state.mechs,
@@ -213,6 +276,7 @@ export function MechCanvas3D({
         state.tick
       );
     }
+    battleAudio.playSimEvents(state.lastTickEvents, state.mechs, state.tick);
 
     // 4. Collect hit-part popups (aggregate rapid continuous laser ticks into readable popups)
     if (state.tick < lastPopupTickRef.current) {
@@ -304,6 +368,108 @@ export function MechCanvas3D({
         (p) => state.tick - p.createdTick <= 26
       );
     }
+
+    // 4b. Director event impulses (shake, kill focus, kill feed & kill banner)
+    const dirState = directorStateRef.current;
+    const mechNameById = new Map(state.mechs.map((m) => [m.id, m.name]));
+    if (state.tick < dirState.lastTick) {
+      feedItemsRef.current = [];
+      killBannerRef.current = null;
+      dirState.killFocusPos = null;
+      dirState.killFocusUntilTick = -1;
+      dirState.primaryId = '';
+      dirState.secondaryId = '';
+      dirState.switchAfterTick = 0;
+      dirState.shakeIntensity = 0;
+      dirState.initialized = false;
+    }
+    if (state.tick !== dirState.lastTick) {
+      dirState.lastTick = state.tick;
+      dirState.shakeIntensity *= 0.82;
+      if (dirState.shakeIntensity < 0.04) dirState.shakeIntensity = 0;
+      dirState.orbitAngle += 0.0038;
+
+      for (const ev of state.lastTickEvents) {
+        if (ev.type === 'mech_destroyed') {
+          dirState.shakeIntensity = Math.min(3.0, dirState.shakeIntensity + 2.2);
+          dirState.killFocusPos = { ...ev.pos };
+          dirState.killFocusUntilTick = state.tick + 54;
+          const banner = formatKillBanner(ev, mechNameById);
+          killBannerRef.current = {
+            headline: banner.headline,
+            detail: banner.detail,
+            untilTick: state.tick + 85,
+          };
+          feedItemsRef.current.unshift({
+            key: `kill_${state.tick}_${ev.targetId ?? ev.actorId}`,
+            text: formatKillFeedLine(ev, mechNameById),
+            color: '#f87171',
+            createdTick: state.tick,
+          });
+        } else if (ev.type === 'part_destroyed' && ev.partId) {
+          dirState.shakeIntensity = Math.min(2.4, dirState.shakeIntensity + 0.9);
+          feedItemsRef.current.unshift({
+            key: `part_${state.tick}_${ev.targetId ?? ''}_${ev.partId}`,
+            text: formatKillFeedLine(ev, mechNameById),
+            color: '#fb923c',
+            createdTick: state.tick,
+          });
+          if (ev.targetId && ev.actorId) {
+            dirState.primaryId = ev.targetId;
+            dirState.secondaryId = ev.actorId;
+            dirState.switchAfterTick = Math.max(dirState.switchAfterTick, state.tick + 55);
+          }
+        } else if (ev.type === 'thermal_shutdown') {
+          feedItemsRef.current.unshift({
+            key: `heat_${state.tick}_${ev.actorId}`,
+            text: formatKillFeedLine(ev, mechNameById),
+            color: '#facc15',
+            createdTick: state.tick,
+          });
+        } else if (ev.type === 'hit' && (ev.damage ?? 0) >= 42) {
+          dirState.shakeIntensity = Math.min(2.0, dirState.shakeIntensity + 0.45);
+        }
+      }
+      feedItemsRef.current = feedItemsRef.current
+        .filter((f) => state.tick - f.createdTick <= 270)
+        .slice(0, 5);
+      if (killBannerRef.current && state.tick > killBannerRef.current.untilTick) {
+        killBannerRef.current = null;
+      }
+    }
+
+    const nextTeamBars: BroadcastTeamRow[] = teamOrder.map((tid) => {
+      const members = state.mechs.filter((m) => m.teamId === tid);
+      const aliveCount = members.filter((m) => m.alive).length;
+      const ratioSum = members.reduce(
+        (acc, m) => acc + (m.alive ? getMechTotalIntegrity(m).ratio : 0),
+        0
+      );
+      const hpPct = members.length > 0 ? Math.round((ratioSum / members.length) * 100) : 0;
+      const label =
+        teamOrder.length === 2
+          ? tid === 'T1'
+            ? '味方'
+            : tid === 'T2'
+              ? '敵'
+              : tid
+          : tid;
+      return {
+        teamId: tid,
+        label,
+        color: getTeamColorHex(teamOrder, tid),
+        aliveCount,
+        totalCount: members.length,
+        hpPct,
+      };
+    });
+    setTeamBars(nextTeamBars);
+    setKillFeed([...feedItemsRef.current]);
+    setKillBanner(
+      killBannerRef.current
+        ? { headline: killBannerRef.current.headline, detail: killBannerRef.current.detail }
+        : null
+    );
 
     // 5. Camera positioning & 3D tactical FOV/radar/aim overlay
     const orb = orbitStateRef.current;
@@ -418,14 +584,136 @@ export function MechCanvas3D({
       }
     }
 
-    if (mode === 'follow' && focusedMech) {
+    if (mode === 'director') {
+      const alive = state.mechs.filter((m) => m.alive);
+      let desiredCamPos: THREE.Vector3;
+      let desiredLookAt: THREE.Vector3;
+
+      if (dirState.killFocusPos && state.tick <= dirState.killFocusUntilTick) {
+        const kVec = new THREE.Vector3();
+        simToThreePos(dirState.killFocusPos, state.terrain, kVec);
+        desiredLookAt = new THREE.Vector3(kVec.x, kVec.y + 4, kVec.z);
+        const angle = dirState.orbitAngle * 1.4;
+        const dist = 54;
+        desiredCamPos = new THREE.Vector3(
+          kVec.x + Math.sin(angle) * dist,
+          kVec.y + 22,
+          kVec.z + Math.cos(angle) * dist
+        );
+      } else {
+        const findAlive = (id: string): MechRuntimeState | undefined =>
+          alive.find((m) => m.id === id);
+        let pMech = findAlive(dirState.primaryId);
+        let sMech = findAlive(dirState.secondaryId);
+
+        if (
+          !pMech ||
+          !sMech ||
+          pMech.teamId === sMech.teamId ||
+          state.tick >= dirState.switchAfterTick
+        ) {
+          let bestPair: [MechRuntimeState, MechRuntimeState] | null = null;
+          let bestScore = Infinity;
+          for (let i = 0; i < alive.length; i++) {
+            for (let j = i + 1; j < alive.length; j++) {
+              const mA = alive[i];
+              const mB = alive[j];
+              if (mA.teamId === mB.teamId) continue;
+              const d = distance2D(mA.pos.x, mA.pos.y, mB.pos.x, mB.pos.y);
+              const recentHitBonus =
+                state.tick - mA.lastHitTick < 30 || state.tick - mB.lastHitTick < 30 ? 90 : 0;
+              const score = d - recentHitBonus;
+              if (score < bestScore) {
+                bestScore = score;
+                bestPair = [mA, mB];
+              }
+            }
+          }
+          if (bestPair) {
+            pMech = bestPair[0];
+            sMech = bestPair[1];
+            dirState.primaryId = pMech.id;
+            dirState.secondaryId = sMech.id;
+            dirState.switchAfterTick = state.tick + 110;
+          } else {
+            pMech = focusedMech && focusedMech.alive ? focusedMech : alive[0] ?? focusedMech;
+            sMech = undefined;
+          }
+        }
+
+        if (pMech && sMech) {
+          const vA = new THREE.Vector3();
+          const vB = new THREE.Vector3();
+          simToThreePos(pMech.pos, state.terrain, vA);
+          simToThreePos(sMech.pos, state.terrain, vB);
+          const pairDist = vA.distanceTo(vB);
+          desiredLookAt = new THREE.Vector3().addVectors(vA, vB).multiplyScalar(0.5);
+          desiredLookAt.y += 5.5;
+
+          const baseYaw = Math.atan2(vB.x - vA.x, vB.z - vA.z) + Math.PI * 0.36;
+          const angle = baseYaw + Math.sin(dirState.orbitAngle * 0.7) * 0.45;
+          const dist = clamp(pairDist * 0.62 + 48, 56, 210);
+          desiredCamPos = new THREE.Vector3(
+            desiredLookAt.x + Math.sin(angle) * dist,
+            desiredLookAt.y + clamp(dist * 0.28, 16, 62),
+            desiredLookAt.z + Math.cos(angle) * dist
+          );
+        } else if (pMech) {
+          const vP = new THREE.Vector3();
+          simToThreePos(pMech.pos, state.terrain, vP);
+          desiredLookAt = new THREE.Vector3(vP.x, vP.y + 6, vP.z);
+          desiredCamPos = new THREE.Vector3(
+            vP.x + Math.sin(dirState.orbitAngle) * 64,
+            vP.y + 24,
+            vP.z + Math.cos(dirState.orbitAngle) * 64
+          );
+        } else {
+          desiredLookAt = new THREE.Vector3(0, 6, 0);
+          desiredCamPos = new THREE.Vector3(0, 120, 180);
+        }
+      }
+
+      // Prevent camera from clipping below local terrain / obstacle surface
+      const camSimX = desiredCamPos.x + state.terrain.width * 0.5;
+      const camSimY = desiredCamPos.z + state.terrain.depth * 0.5;
+      const minSurfaceY = getSurfaceHeight(state.terrain, camSimX, camSimY) + 12;
+      if (desiredCamPos.y < minSurfaceY) {
+        desiredCamPos.y = minSurfaceY;
+      }
+
+      if (!dirState.initialized) {
+        dirState.smoothCamPos.copy(desiredCamPos);
+        dirState.smoothLookAt.copy(desiredLookAt);
+        dirState.initialized = true;
+      } else {
+        dirState.smoothCamPos.lerp(desiredCamPos, 0.13);
+        dirState.smoothLookAt.lerp(desiredLookAt, 0.16);
+      }
+
+      const shakeX =
+        dirState.shakeIntensity > 0 ? Math.sin(state.tick * 2.9) * dirState.shakeIntensity : 0;
+      const shakeY =
+        dirState.shakeIntensity > 0 ? Math.cos(state.tick * 3.7) * dirState.shakeIntensity * 0.8 : 0;
+      camera.position.set(
+        dirState.smoothCamPos.x + shakeX,
+        dirState.smoothCamPos.y + shakeY,
+        dirState.smoothCamPos.z
+      );
+      camera.lookAt(
+        dirState.smoothLookAt.x - shakeX * 0.5,
+        dirState.smoothLookAt.y - shakeY * 0.5,
+        dirState.smoothLookAt.z
+      );
+    } else if (mode === 'follow' && focusedMech) {
       simToThreePos(focusedMech.pos, state.terrain, targetVec);
       const yawRad = degToRad(focusedMech.yawDeg);
       const fwdX = Math.sin(yawRad);
       const fwdZ = -Math.cos(yawRad);
+      const shakeY =
+        dirState.shakeIntensity > 0 ? Math.cos(state.tick * 3.5) * dirState.shakeIntensity * 0.6 : 0;
       camera.position.set(
         targetVec.x - fwdX * 42,
-        targetVec.y + 22,
+        targetVec.y + 22 + shakeY,
         targetVec.z - fwdZ * 42
       );
       camera.lookAt(targetVec.x + fwdX * 26, targetVec.y + 6, targetVec.z + fwdZ * 26);
@@ -525,14 +813,16 @@ export function MechCanvas3D({
     const height = host.clientHeight || 420;
     renderer.setSize(width, height, false);
     renderer.domElement.className = 'cm-3d-canvas';
+    renderer.domElement.title = 'ドラッグ: 視点回転 / ホイール: ズーム / 機体クリック: 注目切替';
     host.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2('#070d1a', 0.00009);
+    scene.fog = new THREE.FogExp2('#070d1a', 0.00018);
 
     const camera = new THREE.PerspectiveCamera(48, width / height, 1, 6500);
     const ambient = new THREE.AmbientLight('#cbd5e1', 0.42);
     const hemi = new THREE.HemisphereLight('#dbeafe', '#1e293b', 0.9);
+    hemiLightRef.current = hemi;
     const dir = new THREE.DirectionalLight('#ffffff', 1.35);
     dir.position.set(180, 340, 160);
     dir.castShadow = true;
@@ -547,8 +837,9 @@ export function MechCanvas3D({
     dir.shadow.camera.bottom = -shadowBound;
     dir.shadow.bias = -0.0008;
     dirLightRef.current = dir;
-    const rim = new THREE.DirectionalLight('#38bdf8', 0.45);
+    const rim = new THREE.DirectionalLight('#38bdf8', 0.5);
     rim.position.set(-200, 140, -180);
+    rimLightRef.current = rim;
     scene.add(ambient, hemi, dir, rim);
 
     const tacticalGroup = new THREE.Group();
@@ -670,6 +961,8 @@ export function MechCanvas3D({
       cameraRef.current = null;
       rendererRef.current = null;
       dirLightRef.current = null;
+      hemiLightRef.current = null;
+      rimLightRef.current = null;
       effectsRef.current = null;
     };
   }, [renderFrame]);
@@ -688,27 +981,99 @@ export function MechCanvas3D({
 
   return (
     <div className="cm-3d-viewport" ref={hostRef}>
+      {teamBars.length > 0 && (
+        <div className="cm-3d-broadcast-bar" aria-hidden="true">
+          {teamBars.length === 2 ? (
+            <>
+              <div className="cm-3d-team-side is-left">
+                <span className="cm-3d-team-name" style={{ color: teamBars[0].color }}>
+                  {teamBars[0].label} ({teamBars[0].aliveCount}/{teamBars[0].totalCount})
+                </span>
+                <div className="cm-3d-team-track">
+                  <div
+                    className="cm-3d-team-fill"
+                    style={{
+                      width: `${teamBars[0].hpPct}%`,
+                      backgroundColor: teamBars[0].color,
+                    }}
+                  />
+                </div>
+              </div>
+              <span className="cm-3d-vs-badge">VS</span>
+              <div className="cm-3d-team-side is-right">
+                <div className="cm-3d-team-track">
+                  <div
+                    className="cm-3d-team-fill"
+                    style={{
+                      width: `${teamBars[1].hpPct}%`,
+                      backgroundColor: teamBars[1].color,
+                    }}
+                  />
+                </div>
+                <span className="cm-3d-team-name" style={{ color: teamBars[1].color }}>
+                  ({teamBars[1].aliveCount}/{teamBars[1].totalCount}) {teamBars[1].label}
+                </span>
+              </div>
+            </>
+          ) : (
+            teamBars.map((t) => (
+              <div key={t.teamId} className="cm-3d-team-chip">
+                <span className="cm-3d-dot" style={{ backgroundColor: t.color }} />
+                <span>
+                  {t.label}:{t.aliveCount}/{t.totalCount}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {killBanner && (
+        <div className="cm-3d-banner" aria-hidden="true">
+          <strong>{killBanner.headline}</strong>
+          <span>{killBanner.detail}</span>
+        </div>
+      )}
+
+      {killFeed.length > 0 && (
+        <div className="cm-3d-killfeed" aria-hidden="true">
+          {killFeed.map((item) => (
+            <div key={item.key} className="cm-3d-killfeed-item" style={{ borderLeftColor: item.color }}>
+              {item.text}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="cm-3d-cam-bar">
+        <button
+          type="button"
+          className={cameraMode === 'director' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
+          onClick={() => setCameraMode('director')}
+          title="交戦中の機体を自動で追う中継カメラ"
+        >
+          中継
+        </button>
         <button
           type="button"
           className={cameraMode === 'overview' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
           onClick={() => setCameraMode('overview')}
         >
-          全体俯瞰
+          俯瞰
         </button>
         <button
           type="button"
           className={cameraMode === 'follow' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
           onClick={() => setCameraMode('follow')}
         >
-          注目機追従
+          追従
         </button>
         <button
           type="button"
           className={cameraMode === 'orbit' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
           onClick={() => setCameraMode('orbit')}
         >
-          機体オービット
+          回転
         </button>
         <button
           type="button"
@@ -716,9 +1081,71 @@ export function MechCanvas3D({
           onClick={() => setShowTacticalOverlay((v) => !v)}
           title="注目機の光学視界コーン・360°レーダー・照準ラインの表示切替"
         >
-          視界・照準
+          視界
+        </button>
+        <button
+          type="button"
+          className={showMinimap ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
+          onClick={() => setShowMinimap((v) => !v)}
+          title="2D俯瞰ミニマップ (PiP) の表示切替"
+        >
+          ミニマップ
+        </button>
+        <button
+          type="button"
+          className={soundEnabled ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
+          onClick={() => {
+            const next = !soundEnabled;
+            battleAudio.setEnabled(next);
+            if (next) battleAudio.unlock();
+            setSoundEnabled(next);
+          }}
+          title="戦闘効果音 (Web Audio) の ON/OFF"
+        >
+          {soundEnabled ? 'SE ON' : 'SE OFF'}
         </button>
       </div>
+
+      {showMinimap && (
+        <div
+          className="cm-3d-pip"
+          onPointerDown={(e) => e.stopPropagation()}
+          onWheel={(e) => e.stopPropagation()}
+        >
+          <div className="cm-3d-pip-head">
+            <span>2D 俯瞰</span>
+            <div className="cm-3d-pip-actions">
+              {onSwitchTo2D && (
+                <button
+                  type="button"
+                  className="cm-3d-pip-btn"
+                  onClick={onSwitchTo2D}
+                  title="2D戦術図ビューへ切替"
+                >
+                  2D拡大
+                </button>
+              )}
+              <button
+                type="button"
+                className="cm-3d-pip-btn"
+                onClick={() => setShowMinimap(false)}
+                title="ミニマップを閉じる"
+                aria-label="ミニマップを閉じる"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+          <MvpArenaCanvas
+            simState={simState}
+            renderTick={renderTick}
+            focusedMechId={focusedMechId}
+            onSelectMech={onSelectMech}
+            compact
+            className="cm-arena-canvas--pip"
+          />
+        </div>
+      )}
 
       <div className="cm-3d-overlay" aria-hidden="true">
         {tags.map((tag) => (
@@ -763,10 +1190,6 @@ export function MechCanvas3D({
             {p.text}
           </div>
         ))}
-      </div>
-
-      <div className="cm-3d-hint">
-        ドラッグ: 視点回転 / ホイール: ズーム / 機体クリック: 注目切替
       </div>
     </div>
   );

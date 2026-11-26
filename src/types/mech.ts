@@ -204,6 +204,7 @@ export interface MechPartsSelection {
 export type GridDir = 'N' | 'E' | 'S' | 'W';
 export type PilotTargetMode = 'main' | 'nearest' | 'flank' | 'attacker' | 'weakest';
 export type JumpDirectionMode = 'forward' | 'vertical' | 'backward';
+export type AimPointMode = 'torso' | 'legs' | 'arms';
 
 export type MechSubroutineSlotId = 'S1' | 'S2' | 'S3' | 'S4' | 'S5' | 'S6';
 
@@ -289,6 +290,7 @@ export interface MechSubroutineCell {
   useArg?: boolean;
   direction?: 'left' | 'right' | 'auto';
   jumpDir?: JumpDirectionMode;
+  aimPoint?: AimPointMode;
   weaponSlot?: WeaponSlotId;
 }
 
@@ -560,6 +562,7 @@ export interface MechControlInput {
   emergencyCool: boolean;
   overrideShutdown?: boolean;
   lockTargetId?: string | null;
+  aimPoint?: AimPointMode;
 }
 
 export interface VisibleEnemyInfo {
@@ -625,6 +628,7 @@ export interface SalvoQueueItem {
   targetId: string | null;
   isIndirect: boolean;
   guided: boolean;
+  aimPoint?: AimPointMode;
 }
 
 export interface MechRuntimeState {
@@ -695,6 +699,7 @@ export interface ProjectileState {
   ttlTicks: number;
   hp: number;
   loftTicksRemaining: number;
+  aimPoint?: AimPointMode;
 }
 
 export interface ActiveBeamState {
@@ -704,6 +709,7 @@ export interface ActiveBeamState {
   slot: WeaponSlotId;
   weaponId: string;
   targetId: string | null;
+  aimPoint?: AimPointMode;
   originPos: Vec3;
   endPos: Vec3;
   damagePerTick: number;
@@ -713,6 +719,8 @@ export interface ActiveBeamState {
   totalTicks: number;
   spreadYawOffset: number;
   spreadPitchOffset: number;
+  driftYawPerTick?: number;
+  driftPitchPerTick?: number;
   color: string;
 }
 
@@ -739,6 +747,7 @@ export interface SimCombatEvent {
   damage?: number;
   pos: Vec3;
   endPos?: Vec3;
+  weaponId?: string;
   detail?: string;
 }
 

@@ -1,3 +1,4 @@
+import { getWeaponSpec } from '../data/parts';
 import {
   MAX_MECHS,
   MatchParticipantEntry,
@@ -162,9 +163,15 @@ export function buildBattleCommentary(
       if (ev.detail === 'heat_meltdown') {
         highlights.push(`[${(ev.tick / SIM_TPS).toFixed(1)}s] ${tgt} が過熱により熱融解（自壊）`);
       } else {
-        const reason = ev.detail === 'head_destroyed' ? '頭部貫通' : 'コア撃破';
+        const baseReason =
+          ev.detail === 'head_destroyed'
+            ? '頭部貫通'
+            : ev.face === 'rear'
+              ? '背面コア撃破'
+              : 'コア撃破';
+        const weaponLabel = ev.weaponId ? `${getWeaponSpec(ev.weaponId).name}・` : '';
         highlights.push(
-          `[${(ev.tick / SIM_TPS).toFixed(1)}s] ${atk} が ${tgt} を撃破（${reason}）`
+          `[${(ev.tick / SIM_TPS).toFixed(1)}s] ${atk} が ${tgt} を撃破（${weaponLabel}${baseReason}）`
         );
       }
     }

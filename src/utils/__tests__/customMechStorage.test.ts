@@ -3,6 +3,7 @@ import { PRESET_ABC, PRESET_ABH, PRESET_ABL } from '../../data/presets';
 import {
   deleteSavedCustomMech,
   extractCustomTagFromName,
+  formatBattleTeamUnitNames,
   formatCustomMechName,
   formatMechDropdownLabel,
   getBaseMechName,
@@ -117,5 +118,30 @@ describe('customMechStorage', () => {
     expect(formatMechDropdownLabel('chassis_abh', 'XHD-T1')).toBe('基本ヘビー XHD-T1');
     expect(formatMechDropdownLabel('chassis_fnt', 'FNT-改')).toBe('高機動ライト FNT-改');
     expect(formatMechDropdownLabel('chassis_abc', '基本ミドル ABC-T1')).toBe('基本ミドル ABC-T1');
+  });
+
+  it('formats battle roster unit names using model codes with duplicate disambiguation', () => {
+    expect(
+      formatBattleTeamUnitNames([
+        { isPlayer: true, modelName: 'ABC-T1' },
+        { modelName: 'LLB-T1' },
+        { modelName: 'XHD-T1' },
+      ])
+    ).toEqual(['★ABC-T1', 'LLB-T1', 'XHD-T1']);
+
+    expect(
+      formatBattleTeamUnitNames([
+        { modelName: 'LLB-T1' },
+        { modelName: 'LLB-T1' },
+        { modelName: 'XHD-T1' },
+      ])
+    ).toEqual(['LLB-T1 #1', 'LLB-T1 #2', 'XHD-T1']);
+
+    expect(
+      formatBattleTeamUnitNames([
+        { isPlayer: true, modelName: 'ABC-T1' },
+        { modelName: 'ABC-T1' },
+      ])
+    ).toEqual(['★ABC-T1', 'ABC-T1']);
   });
 });

@@ -239,6 +239,40 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(mech.parts.torso.frontArmor).toBe(frontBefore);
     expect(mech.alive).toBe(false);
     expect(mech.destroyedReason).toBe('torso_destroyed');
+
+    // Combat kill via simulation step records weaponId & face on mech_destroyed event
+    const simKill = createSimulation({
+      seed: 56,
+      entries: [
+        { id: 'killer', name: 'Killer', teamId: 'A', blueprint: STARTER_MECHS[2] },
+        { id: 'victim', name: 'Victim', teamId: 'B', blueprint: STARTER_MECHS[1] },
+      ],
+    });
+    simKill.terrain.obstacles = [];
+    simKill.terrain.heightAmplitude = 0;
+    simKill.mechs[0].pos = { x: 300, y: 360, z: 0 };
+    simKill.mechs[0].yawDeg = 0;
+    simKill.mechs[1].pos = { x: 300, y: 300, z: 0 };
+    simKill.mechs[1].yawDeg = 180;
+    simKill.mechs[1].parts.torso.frontArmor = 5;
+    simKill.mechs[1].parts.torso.structure = 5;
+    simKill.mechs[1].parts.leftShoulder.frontArmor = 5;
+    simKill.mechs[1].parts.leftShoulder.structure = 5;
+    simKill.mechs[1].parts.rightShoulder.frontArmor = 5;
+    simKill.mechs[1].parts.rightShoulder.structure = 5;
+    stepSimulation(simKill, {
+      killer: { ...EMPTY_CONTROL_INPUT, fireRightShoulder: true, lockTargetId: 'victim' },
+      victim: EMPTY_CONTROL_INPUT,
+    });
+    for (let t = 0; t < 25; t++) {
+      if (simKill.finished) break;
+      stepSimulation(simKill, {});
+    }
+    const killEv = simKill.events.find((e) => e.type === 'mech_destroyed');
+    expect(killEv).toBeDefined();
+    expect(killEv!.actorId).toBe('killer');
+    expect(killEv!.targetId).toBe('victim');
+    expect(killEv!.weaponId).toBe('ac20');
   });
 
   it('triggers EN overheat on depletion and recovers at 30% capacity', () => {
@@ -252,7 +286,8 @@ describe('deterministic 30 TPS mech simulator', () => {
     });
     const runner = sim.mechs[0];
     runner.pos = { x: 300, y: 300, z: 0 };
-    sim.mechs[1].pos = { x: 300, y: 200, z: 0 };
+    // Place dummy behind runner so dummy is not destroyed before overheat triggers
+    sim.mechs[1].pos = { x: 300, y: 750, z: 0 };
     runner.yawDeg = 0;
 
     let sawShutdown = false;
@@ -264,7 +299,6 @@ describe('deterministic 30 TPS mech simulator', () => {
           fireLeftArm: true,
           fireRightShoulder: true,
           jump: true,
-          lockTargetId: 'dummy',
         },
         dummy: EMPTY_CONTROL_INPUT,
       });
@@ -980,7 +1014,7 @@ describe('deterministic 30 TPS mech simulator', () => {
     }
     expect(streamHits).toBeGreaterThanOrEqual(3);
     expect(salvoHits).toBeGreaterThanOrEqual(3);
-    expect(directSim.mechs[2].damageTaken).toBeGreaterThan(40);
+    expect(directSim.mechs[2].damageTaken).toBeGreaterThan(30);
 
     // B. Indirect LRM-5 clears 28m obstacle wall at 260m and lands on covered target
     const indirectSim = createSimulation({
@@ -1120,7 +1154,7 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('burns laser damage over burnDurationSec, spreads across twisting target parts, and sweeps off when shooter twists away', () => {
-    // Single medium_laser (damage 40, range 280, maxRange 420, burnDurationSec 0.7 => 21 ticks)
+    // Single medium_laser (damage 28, range 280, maxRange 420, burnDurationSec 0.7 => 21 ticks)
     const singleLaserAbc = structuredClone(PRESET_ABC);
     singleLaserAbc.parts.leftArmWeapon = 'medium_laser';
     singleLaserAbc.weaponMountCounts = undefined;
@@ -1158,8 +1192,8 @@ describe('deterministic 30 TPS mech simulator', () => {
       });
     }
     expect(sim.activeBeams).toHaveLength(0);
-    expect(target.damageTaken).toBeGreaterThan(34);
-    expect(target.damageTaken).toBeLessThanOrEqual(40.5);
+    expect(target.damageTaken).toBeGreaterThan(23);
+    expect(target.damageTaken).toBeLessThanOrEqual(28.5);
 
     // Shooter twists sharply away right after firing -> beam sweeps off-target and deals reduced total damage
     const sim2 = createSimulation({
@@ -1189,7 +1223,7 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('applies linear optimal-to-max range damage falloff for ballistics and lasers', () => {
-    // 1. Laser falloff: medium_laser optimal=280, max=420 -> at 350m multiplier is 0.5 (~20 total dmg)
+    // 1. Laser falloff: medium_laser optimal=280, max=420 -> at 350m multiplier is 0.5 (~14 total dmg)
     const singleLaserBp = structuredClone(PRESET_ABC);
     singleLaserBp.parts.leftArmWeapon = 'medium_laser';
     singleLaserBp.weaponMountCounts = undefined;
@@ -1215,10 +1249,10 @@ describe('deterministic 30 TPS mech simulator', () => {
     for (let i = 0; i < 24; i++) {
       stepSimulation(laserSim, { s: EMPTY_CONTROL_INPUT, t: EMPTY_CONTROL_INPUT });
     }
-    expect(laserSim.mechs[1].damageTaken).toBeGreaterThan(15);
-    expect(laserSim.mechs[1].damageTaken).toBeLessThan(26);
+    expect(laserSim.mechs[1].damageTaken).toBeGreaterThan(10);
+    expect(laserSim.mechs[1].damageTaken).toBeLessThan(18);
 
-    // 2. Falloff curve + Ballistic falloff: gauss_rifle optimal=540, max=900 -> at 630m multiplier is 0.75 (~93.75 dmg vs 125 base)
+    // 2. Falloff curve + Ballistic falloff: gauss_rifle optimal=540, max=900 -> at 630m multiplier is 0.75 (~57 dmg vs 76 base)
     expect(computeRangeFalloffMultiplier(300, 380, 680)).toBe(1);
     expect(computeRangeFalloffMultiplier(530, 380, 680)).toBeCloseTo(0.5, 4);
     expect(computeRangeFalloffMultiplier(700, 380, 680)).toBe(0);
@@ -1248,8 +1282,8 @@ describe('deterministic 30 TPS mech simulator', () => {
       stepSimulation(gaussSim, { s: EMPTY_CONTROL_INPUT, t: EMPTY_CONTROL_INPUT });
       if (gaussSim.mechs[1].damageTaken > 0) break;
     }
-    expect(gaussSim.mechs[1].damageTaken).toBeGreaterThan(75);
-    expect(gaussSim.mechs[1].damageTaken).toBeLessThan(110);
+    expect(gaussSim.mechs[1].damageTaken).toBeGreaterThan(45);
+    expect(gaussSim.mechs[1].damageTaken).toBeLessThan(68);
   });
 
   it('supports multi-mount weapons (M-Laser x3 / AC5 x2), combined AMS+BAP pod, slot ECM destruction, and shared torso armor caps', () => {
@@ -1287,11 +1321,11 @@ describe('deterministic 30 TPS mech simulator', () => {
     stepSimulation(sim, {
       multi: { ...EMPTY_CONTROL_INPUT, fireRightArm: true, fireLeftArm: true, lockTargetId: 'target' },
     });
-    // AC/5 x2 spawns 2 projectiles & consumes 2 ammo; M-Laser x3 spawns 3 beams; total heat ~ 12 + 54 - diss
+    // AC/5 x2 spawns 2 projectiles & consumes 2 ammo; M-Laser x3 spawns 3 beams; total heat ~ 12 + 33 - diss
     expect(sim.mechs[0].weapons.rightArm.ammoRemaining).toBe(ammoBefore - 2);
     expect(sim.projectiles.filter((p) => p.ownerId === 'multi' && p.slot === 'rightArm')).toHaveLength(2);
     expect(sim.activeBeams.filter((b) => b.ownerId === 'multi' && b.slot === 'leftArm')).toHaveLength(3);
-    expect(sim.mechs[0].heat).toBeGreaterThan(55);
+    expect(sim.mechs[0].heat).toBeGreaterThan(40);
 
     // 2. ams_bap_pod provides both BAP (counters ECM) & AMS interception, and slot ECM stops when leftShoulder is destroyed
     const ecmMech = sim.mechs[1];
@@ -1527,5 +1561,204 @@ describe('deterministic 30 TPS mech simulator', () => {
       interceptedCount += amsTestSim.lastTickEvents.filter((e) => e.type === 'missile_intercepted').length;
     }
     expect(interceptedCount).toBeGreaterThanOrEqual(4);
+  });
+
+  it('keeps shared arm/shoulder weapons consistent, caps single-salvo damage <= 100, and scales base cooling monotonically', () => {
+    for (const armSpec of ARM_WEAPONS) {
+      if (armSpec.damage <= 0 || armSpec.burstCount <= 0) continue;
+      expect(armSpec.damage * armSpec.burstCount).toBeLessThanOrEqual(100);
+      const shoulderSpec = SHOULDER_WEAPONS.find((w) => w.id === armSpec.id);
+      if (shoulderSpec) {
+        expect(shoulderSpec.damage).toBe(armSpec.damage);
+        expect(shoulderSpec.cooldownSec).toBe(armSpec.cooldownSec);
+        expect(shoulderSpec.heatCost).toBe(armSpec.heatCost);
+        expect(shoulderSpec.range).toBe(armSpec.range);
+        expect(shoulderSpec.maxRange).toBe(armSpec.maxRange);
+      }
+    }
+    for (const shoulderSpec of SHOULDER_WEAPONS) {
+      if (shoulderSpec.damage <= 0 || shoulderSpec.burstCount <= 0) continue;
+      expect(shoulderSpec.damage * shoulderSpec.burstCount).toBeLessThanOrEqual(100);
+    }
+
+    for (let i = 1; i < MECH_CHASSIS_CATALOG.length; i++) {
+      expect(MECH_CHASSIS_CATALOG[i].baseHeatDissipation).toBeGreaterThan(
+        MECH_CHASSIS_CATALOG[i - 1].baseHeatDissipation
+      );
+    }
+  });
+
+  it('disperses 15% shock damage to adjacent parts on AC20/PPC hits, drifts lasers across parts, and supports legs/arms aimPoints', () => {
+    // 1. Direct hitbox splash dispersion (15% split to intact adjacent parts, total damage preserved)
+    const targetOnly = createSimulation({
+      seed: 101,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 800, arenaDepth: 800 },
+      entries: [{ id: 'tgt', name: 'Target', teamId: 'B', blueprint: structuredClone(PRESET_ABC) }],
+    }).mechs[0];
+    const torsoBefore = targetOnly.parts.torso.frontArmor;
+    const rShdBefore = targetOnly.parts.rightShoulder.frontArmor;
+    const lShdBefore = targetOnly.parts.leftShoulder.frontArmor;
+    const directTorsoHit = testProjectileHitMech(
+      { x: targetOnly.pos.x, y: targetOnly.pos.y - 20, z: targetOnly.pos.z + 6.7 },
+      { x: targetOnly.pos.x, y: targetOnly.pos.y + 5, z: targetOnly.pos.z + 6.7 },
+      targetOnly.pos,
+      0,
+      0,
+      targetOnly.stats.sizeScale
+    );
+    expect(directTorsoHit?.partId).toBe('torso');
+    const splashRes = applyDamageToMechParts(targetOnly, directTorsoHit!, 100, DEFAULT_MATCH_RULES, 0.15);
+    expect(splashRes.appliedDamage).toBeCloseTo(100, 4);
+    expect(torsoBefore - targetOnly.parts.torso.frontArmor).toBeCloseTo(85, 4);
+    expect(rShdBefore - targetOnly.parts.rightShoulder.frontArmor).toBeCloseTo(7.5, 4);
+    expect(lShdBefore - targetOnly.parts.leftShoulder.frontArmor).toBeCloseTo(7.5, 4);
+
+    // 2. AC20 & PPC in live simulation trigger adjacent splash dispersion on impact
+    const ac20Bp = structuredClone(PRESET_ABC);
+    ac20Bp.parts.rightArmWeapon = 'ac20';
+    ac20Bp.parts.leftArmWeapon = 'ppc';
+    ac20Bp.parts.rightShoulderWeapon = 'shd_none';
+    ac20Bp.parts.leftShoulderWeapon = 'shd_none';
+    const heavySim = createSimulation({
+      seed: 202,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 800, arenaDepth: 800 },
+      entries: [
+        { id: 'heavy', name: 'Heavy', teamId: 'A', blueprint: ac20Bp },
+        { id: 'dummy', name: 'Dummy', teamId: 'B', blueprint: structuredClone(PRESET_ABC) },
+      ],
+    });
+    heavySim.terrain.obstacles = [];
+    heavySim.terrain.heightAmplitude = 0;
+    heavySim.mechs[0].pos = { x: 400, y: 460, z: 0 };
+    heavySim.mechs[0].yawDeg = 0;
+    heavySim.mechs[1].pos = { x: 400, y: 400, z: 0 }; // 60m North
+    heavySim.mechs[1].yawDeg = 180;
+
+    stepSimulation(heavySim, {
+      heavy: { ...EMPTY_CONTROL_INPUT, fireRightArm: true, lockTargetId: 'dummy' },
+    });
+    for (let t = 0; t < 20; t++) {
+      stepSimulation(heavySim, { heavy: EMPTY_CONTROL_INPUT, dummy: EMPTY_CONTROL_INPUT });
+    }
+    const dParts = heavySim.mechs[1].parts;
+    const damagedUpperCount = ['torso', 'rightShoulder', 'leftShoulder', 'rightArm', 'leftArm'].filter(
+      (p) => {
+        const ps = dParts[p as keyof typeof dParts];
+        return ps.kind === 'dual'
+          ? ps.frontArmor < ps.maxFrontArmor
+          : ps.armor < ps.maxArmor;
+      }
+    ).length;
+    expect(damagedUpperCount).toBeGreaterThanOrEqual(2);
+
+    // 3. Laser burn drift spreads damage across >1 part when firing while moving/against strafing target
+    const laserBp = structuredClone(PRESET_ABC);
+    laserBp.parts.rightArmWeapon = 'large_laser';
+    laserBp.parts.leftArmWeapon = 'arm_none';
+    laserBp.parts.rightShoulderWeapon = 'shd_none';
+    laserBp.parts.leftShoulderWeapon = 'shd_none';
+    const driftSim = createSimulation({
+      seed: 303,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 1000, arenaDepth: 1000 },
+      entries: [
+        { id: 'las', name: 'Laser', teamId: 'A', blueprint: laserBp },
+        { id: 'tgt', name: 'Target', teamId: 'B', blueprint: structuredClone(PRESET_ABC) },
+      ],
+    });
+    driftSim.terrain.obstacles = [];
+    driftSim.terrain.heightAmplitude = 0;
+    driftSim.mechs[0].pos = { x: 500, y: 550, z: 0 };
+    driftSim.mechs[0].yawDeg = 0;
+    driftSim.mechs[1].pos = { x: 500, y: 400, z: 0 }; // 150m North
+    driftSim.mechs[1].yawDeg = 180;
+
+    const hitPartsSeen = new Set<string>();
+    for (let volley = 0; volley < 3; volley++) {
+      driftSim.mechs[0].weapons.rightArm.cooldownRemaining = 0;
+      driftSim.mechs[0].heat = 0;
+      stepSimulation(driftSim, {
+        las: {
+          ...EMPTY_CONTROL_INPUT,
+          moveForward: 1,
+          fireRightArm: true,
+          lockTargetId: 'tgt',
+        },
+        tgt: { ...EMPTY_CONTROL_INPUT, moveForward: 1, turnYaw: 0.4 },
+      });
+      for (const ev of driftSim.lastTickEvents) {
+        if (ev.type === 'hit' && ev.partId) hitPartsSeen.add(ev.partId);
+      }
+      for (let t = 0; t < 30; t++) {
+        stepSimulation(driftSim, {
+          las: { ...EMPTY_CONTROL_INPUT, moveForward: 1, lockTargetId: 'tgt' },
+          tgt: { ...EMPTY_CONTROL_INPUT, moveForward: 1, turnYaw: 0.4 },
+        });
+        for (const ev of driftSim.lastTickEvents) {
+          if (ev.type === 'hit' && ev.partId) hitPartsSeen.add(ev.partId);
+        }
+      }
+    }
+    expect(hitPartsSeen.size).toBeGreaterThanOrEqual(2);
+
+    // 4. aimPoint: 'legs' hits target legs, aimPoint: 'arms' hits target arms/shoulders
+    const sniperBp = structuredClone(PRESET_ABC);
+    sniperBp.parts.rightArmWeapon = 'medium_laser';
+    sniperBp.parts.leftArmWeapon = 'arm_none';
+    sniperBp.parts.rightShoulderWeapon = 'shd_none';
+    sniperBp.parts.leftShoulderWeapon = 'shd_none';
+    const aimSim = createSimulation({
+      seed: 404,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 800, arenaDepth: 800 },
+      entries: [
+        { id: 'sniper', name: 'Sniper', teamId: 'A', blueprint: sniperBp },
+        { id: 'dummy', name: 'Dummy', teamId: 'B', blueprint: structuredClone(PRESET_ABC) },
+      ],
+    });
+    aimSim.terrain.obstacles = [];
+    aimSim.terrain.heightAmplitude = 0;
+    aimSim.mechs[0].pos = { x: 400, y: 500, z: 0 };
+    aimSim.mechs[0].yawDeg = 0;
+    aimSim.mechs[1].pos = { x: 400, y: 410, z: 0 }; // 90m North
+    aimSim.mechs[1].yawDeg = 180;
+
+    stepSimulation(aimSim, {
+      sniper: {
+        ...EMPTY_CONTROL_INPUT,
+        fireRightArm: true,
+        lockTargetId: 'dummy',
+        aimPoint: 'legs',
+      },
+    });
+    const legHits: string[] = [];
+    for (let t = 0; t < 25; t++) {
+      for (const ev of aimSim.lastTickEvents) {
+        if (ev.type === 'hit' && ev.partId) legHits.push(ev.partId);
+      }
+      stepSimulation(aimSim, { sniper: { ...EMPTY_CONTROL_INPUT, lockTargetId: 'dummy' } });
+    }
+    expect(legHits.some((p) => p === 'rightLeg' || p === 'leftLeg')).toBe(true);
+
+    aimSim.mechs[0].weapons.rightArm.cooldownRemaining = 0;
+    aimSim.mechs[0].heat = 0;
+    stepSimulation(aimSim, {
+      sniper: {
+        ...EMPTY_CONTROL_INPUT,
+        fireRightArm: true,
+        lockTargetId: 'dummy',
+        aimPoint: 'arms',
+      },
+    });
+    const armHits: string[] = [];
+    for (let t = 0; t < 25; t++) {
+      for (const ev of aimSim.lastTickEvents) {
+        if (ev.type === 'hit' && ev.partId) armHits.push(ev.partId);
+      }
+      stepSimulation(aimSim, { sniper: { ...EMPTY_CONTROL_INPUT, lockTargetId: 'dummy' } });
+    }
+    expect(
+      armHits.some(
+        (p) => p === 'rightArm' || p === 'leftArm' || p === 'rightShoulder' || p === 'leftShoulder'
+      )
+    ).toBe(true);
   });
 });

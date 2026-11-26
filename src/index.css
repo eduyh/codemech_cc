@@ -593,6 +593,87 @@ body.cm-body {
   cursor: crosshair;
 }
 
+.cm-arena-canvas--large {
+  max-width: 720px;
+}
+
+.cm-arena-canvas--pip {
+  width: 176px;
+  height: 176px;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+}
+
+.cm-arena-canvas--modal {
+  width: min(80vh, 88vw);
+  height: min(80vh, 88vw);
+  max-width: none;
+}
+
+.cm-2d-stage {
+  position: relative;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.cm-2d-expand-btn {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.28rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.cm-2d-expand-btn:hover {
+  background: rgba(14, 165, 233, 0.25);
+  color: #ffffff;
+}
+
+.cm-2d-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(2, 6, 23, 0.82);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.85rem;
+}
+
+.cm-2d-modal {
+  background: #0b1220;
+  border: 1px solid var(--cm-border);
+  border-radius: 0.75rem;
+  padding: 0.65rem 0.8rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  max-width: 96vw;
+  max-height: 96vh;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+}
+
+.cm-2d-modal-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .cm-roster-strip {
   display: flex;
   flex-wrap: wrap;
@@ -894,15 +975,137 @@ body.cm-body {
 
 .cm-3d-cam-bar {
   position: absolute;
-  top: 0.55rem;
-  left: 0.55rem;
-  z-index: 4;
+  bottom: 0.5rem;
+  left: 0.5rem;
+  z-index: 5;
   display: inline-flex;
+  flex-wrap: wrap;
+  max-width: calc(100% - 196px);
   border: 1px solid var(--cm-border);
   border-radius: 0.45rem;
   overflow: hidden;
   background: rgba(15, 23, 42, 0.85);
   backdrop-filter: blur(4px);
+}
+
+.cm-3d-broadcast-bar {
+  position: absolute;
+  top: 0.45rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.22rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: rgba(7, 13, 25, 0.82);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+  max-width: calc(100% - 1rem);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.cm-3d-team-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.cm-3d-team-name {
+  font-size: 0.7rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.cm-3d-team-track {
+  width: 72px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(30, 41, 59, 0.9);
+  overflow: hidden;
+}
+
+.cm-3d-team-side.is-right .cm-3d-team-track {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cm-3d-team-fill {
+  height: 100%;
+  transition: width 0.14s ease-out;
+}
+
+.cm-3d-vs-badge {
+  font-size: 0.64rem;
+  font-weight: 900;
+  color: #94a3b8;
+  letter-spacing: 0.06em;
+}
+
+.cm-3d-team-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.cm-3d-banner {
+  position: absolute;
+  top: 2.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.08rem;
+  padding: 0.3rem 0.85rem;
+  border-radius: 0.45rem;
+  border: 1px solid rgba(248, 113, 113, 0.8);
+  background: rgba(127, 29, 29, 0.9);
+  color: #fef2f2;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+}
+
+.cm-3d-banner > span {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #fecaca;
+}
+
+.cm-3d-killfeed {
+  position: absolute;
+  top: 2.55rem;
+  right: 0.5rem;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  pointer-events: none;
+  max-width: 260px;
+}
+
+.cm-3d-killfeed-item {
+  padding: 0.16rem 0.42rem;
+  border-left: 3px solid #f87171;
+  border-radius: 0.25rem;
+  background: rgba(7, 13, 25, 0.78);
+  color: #e2e8f0;
+  font-size: 0.66rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cm-3d-overlay {
@@ -989,6 +1192,55 @@ body.cm-body {
   pointer-events: none;
 }
 
+.cm-3d-pip {
+  position: absolute;
+  bottom: 0.55rem;
+  right: 0.55rem;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  background: rgba(7, 13, 26, 0.92);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  border-radius: 0.45rem;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+.cm-3d-pip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+  padding: 0.14rem 0.35rem;
+  font-size: 0.64rem;
+  font-weight: 700;
+  color: #93c5fd;
+  background: rgba(15, 23, 42, 0.92);
+  border-bottom: 1px solid rgba(56, 189, 248, 0.28);
+}
+
+.cm-3d-pip-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+}
+
+.cm-3d-pip-btn {
+  border: 0;
+  background: rgba(51, 65, 85, 0.65);
+  color: #e2e8f0;
+  font-size: 0.62rem;
+  line-height: 1.2;
+  padding: 0.08rem 0.3rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+}
+
+.cm-3d-pip-btn:hover {
+  background: rgba(14, 165, 233, 0.45);
+  color: #ffffff;
+}
+
 .cm-3d-fallback {
   padding: 2rem 1rem;
   text-align: center;
@@ -1025,6 +1277,11 @@ body.cm-body {
 
   .cm-silhouette-svg {
     width: 150px;
+  }
+
+  .cm-arena-canvas--pip {
+    width: 128px;
+    height: 128px;
   }
 }
 
@@ -1129,6 +1386,28 @@ body.cm-body {
 .cm-battle-cfg-bar .cm-ctl input {
   font-size: 0.74rem;
   padding: 0.16rem 0.3rem;
+}
+
+.cm-battle-roster-row {
+  gap: 0.35rem;
+}
+
+.cm-battle-cfg-bar .cm-ctl--ally {
+  border-color: rgba(56, 189, 248, 0.4);
+  background: rgba(14, 116, 144, 0.14);
+}
+
+.cm-battle-cfg-bar .cm-ctl--ally > span {
+  color: #7dd3fc;
+}
+
+.cm-battle-cfg-bar .cm-ctl--enemy {
+  border-color: rgba(248, 113, 113, 0.42);
+  background: rgba(153, 27, 27, 0.14);
+}
+
+.cm-battle-cfg-bar .cm-ctl--enemy > span {
+  color: #fca5a5;
 }
 
 .cm-stance-bar {

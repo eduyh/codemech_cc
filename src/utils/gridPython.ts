@@ -194,23 +194,33 @@ function subStmt(cell: MechSubroutineCell): string {
     case 'torso_center':
       return 'torso.center()';
     case 'fire_group_1':
-      return `fire_group("G1", max_wait=${dur})`;
     case 'fire_group_2':
-      return `fire_group("G2", max_wait=${dur})`;
     case 'fire_group_3':
-      return `fire_group("G3", max_wait=${dur})`;
-    case 'fire_group_4':
-      return `fire_group("G4", max_wait=${dur})`;
-    case 'fire_right_arm':
-      return `fire("rightArm", max_wait=${dur})`;
-    case 'fire_left_arm':
-      return `fire("leftArm", max_wait=${dur})`;
-    case 'fire_right_shoulder':
-      return `fire("rightShoulder", max_wait=${dur})`;
-    case 'fire_left_shoulder':
-      return `fire("leftShoulder", max_wait=${dur})`;
-    case 'fire_alpha':
-      return `fire_all(max_wait=${dur})`;
+    case 'fire_group_4': {
+      const grp = `G${cell.op.slice(-1)}`;
+      const aimArg = cell.aimPoint && cell.aimPoint !== 'torso' ? `, aim="${cell.aimPoint}"` : '';
+      return `fire_group("${grp}", max_wait=${dur}${aimArg})`;
+    }
+    case 'fire_right_arm': {
+      const aimArg = cell.aimPoint && cell.aimPoint !== 'torso' ? `, aim="${cell.aimPoint}"` : '';
+      return `fire("rightArm", max_wait=${dur}${aimArg})`;
+    }
+    case 'fire_left_arm': {
+      const aimArg = cell.aimPoint && cell.aimPoint !== 'torso' ? `, aim="${cell.aimPoint}"` : '';
+      return `fire("leftArm", max_wait=${dur}${aimArg})`;
+    }
+    case 'fire_right_shoulder': {
+      const aimArg = cell.aimPoint && cell.aimPoint !== 'torso' ? `, aim="${cell.aimPoint}"` : '';
+      return `fire("rightShoulder", max_wait=${dur}${aimArg})`;
+    }
+    case 'fire_left_shoulder': {
+      const aimArg = cell.aimPoint && cell.aimPoint !== 'torso' ? `, aim="${cell.aimPoint}"` : '';
+      return `fire("leftShoulder", max_wait=${dur}${aimArg})`;
+    }
+    case 'fire_alpha': {
+      const aimArg = cell.aimPoint && cell.aimPoint !== 'torso' ? `, aim="${cell.aimPoint}"` : '';
+      return `fire_all(max_wait=${dur}${aimArg})`;
+    }
     case 'emergency_cool':
       return `emergency_cool(${dur})`;
     case 'override_on':

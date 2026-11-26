@@ -5,6 +5,7 @@ import {
   isPassiveModuleSpec,
 } from '../data/parts';
 import {
+  AimPointMode,
   GridDir,
   JumpDirectionMode,
   MechControlInput,
@@ -77,6 +78,7 @@ export interface FiringWaitState {
   ticksRemaining: number;
   watchedSlots: WeaponSlotId[];
   prevCooldowns: Partial<Record<WeaponSlotId, number>>;
+  aimPoint?: AimPointMode;
 }
 
 export interface SubroutineExecState {
@@ -743,7 +745,8 @@ function applyLatchedTorsoToControl(
 function applyFireSlotsToControl(
   slots: WeaponSlotId[],
   control: MechControlInput,
-  target: VisibleEnemyInfo | null
+  target: VisibleEnemyInfo | null,
+  aimPoint?: AimPointMode
 ): void {
   if (target) {
     control.lockTargetId = target.id;
@@ -752,6 +755,7 @@ function applyFireSlotsToControl(
       control.targetYaw = target.bearingDeg;
     }
   }
+  control.aimPoint = aimPoint ?? 'torso';
   for (const s of slots) {
     if (s === 'rightArm') control.fireRightArm = true;
     else if (s === 'leftArm') control.fireLeftArm = true;
@@ -824,7 +828,7 @@ export function stepSubroutineExecution(
       fw.ticksRemaining -= 1;
       applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
       applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
-      applyFireSlotsToControl(getFireSlots(fw.op, mech), control, target);
+      applyFireSlotsToControl(getFireSlots(fw.op, mech), control, target, fw.aimPoint);
       control.overrideShutdown = exec.overrideLatched;
       if (fw.ticksRemaining <= 0) {
         exec.firingWait = null;
@@ -1063,6 +1067,7 @@ export function stepSubroutineExecution(
         prevCooldowns[s] = mech.weapons[s].cooldownRemaining;
       }
       const waitTicks = clamp(Math.round((cell.durationSec ?? 0.45) * SIM_TPS), 1, 30);
+      const aimPoint: AimPointMode = cell.aimPoint ?? 'torso';
       exec.firingWait = {
         row: curRow,
         col: curCol,
@@ -1071,10 +1076,11 @@ export function stepSubroutineExecution(
         ticksRemaining: waitTicks,
         watchedSlots: fireable,
         prevCooldowns,
+        aimPoint,
       };
       applyLatchedLegToControl(exec.latchedLeg, control, sensor, mech, state, target, evadeSign);
       applyLatchedTorsoToControl(exec.latchedTorso, control, sensor, mech, target);
-      applyFireSlotsToControl(candidateSlots, control, target);
+      applyFireSlotsToControl(candidateSlots, control, target, aimPoint);
       applyTriggeredJump();
       control.overrideShutdown = exec.overrideLatched;
       return { completed: false, activeCell: { row: curRow, col: curCol }, lastBranch };

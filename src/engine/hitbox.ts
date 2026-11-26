@@ -410,6 +410,17 @@ export interface DamageApplicationResult {
   mechKilled: boolean;
 }
 
+const ADJACENT_SPLASH_PARTS: Record<MechPartId, readonly MechPartId[]> = {
+  torso: ['leftShoulder', 'rightShoulder'],
+  rightShoulder: ['torso', 'rightArm'],
+  leftShoulder: ['torso', 'leftArm'],
+  rightArm: ['rightShoulder'],
+  leftArm: ['leftShoulder'],
+  rightLeg: ['torso'],
+  leftLeg: ['torso'],
+  head: ['torso'],
+};
+
 function applyDamageToSinglePart(
   parts: MechPartsRuntimeState,
   partId: MechPartId,
@@ -460,20 +471,39 @@ export function applyDamageToMechParts(
   mech: MechRuntimeState,
   hit: PartHitResult,
   damage: number,
-  rules: Pick<MatchRules, 'headDestructionKills'>
+  rules: Pick<MatchRules, 'headDestructionKills'>,
+  splashRatio = 0
 ): DamageApplicationResult {
   const newlyDestroyed: MechPartId[] = [];
   if (!mech.alive || damage <= 0) {
     return { appliedDamage: 0, newlyDestroyedParts: [], mechKilled: false };
   }
 
+  const clampedSplash = clamp(splashRatio, 0, 0.5);
+  const intactAdjacent =
+    clampedSplash > 0
+      ? ADJACENT_SPLASH_PARTS[hit.partId].filter((p) => !mech.parts[p].destroyed)
+      : [];
+  const directDamage = intactAdjacent.length > 0 ? damage * (1 - clampedSplash) : damage;
+  const splashDamage = intactAdjacent.length > 0 ? damage - directDamage : 0;
+
   const overflow = applyDamageToSinglePart(
     mech.parts,
     hit.partId,
     hit.face,
-    damage,
+    directDamage,
     newlyDestroyed
   );
+
+  if (splashDamage > 0 && intactAdjacent.length > 0) {
+    const splashEach = splashDamage / intactAdjacent.length;
+    const adjDualFace: ArmorFace = hit.face === 'rear' ? 'rear' : 'front';
+    for (const adjPart of intactAdjacent) {
+      const partState = mech.parts[adjPart];
+      const adjFace: ArmorFace = partState.kind === 'dual' ? adjDualFace : 'all';
+      applyDamageToSinglePart(mech.parts, adjPart, adjFace, splashEach, newlyDestroyed);
+    }
+  }
 
   // Part overflow transfer rules
   if (overflow > 0) {

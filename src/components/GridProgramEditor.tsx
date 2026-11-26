@@ -22,6 +22,7 @@ import {
   isPassiveModuleSpec,
 } from '../data/parts';
 import {
+  AimPointMode,
   GridDir,
   JumpDirectionMode,
   MechBlueprint,
@@ -139,6 +140,7 @@ interface SubChipMeta {
   paramStep?: number;
   hasDirChoice?: boolean;
   hasJumpDir?: boolean;
+  hasAimPoint?: boolean;
   timed?: boolean;
   defaultDur?: number;
   hasWeaponSlot?: boolean;
@@ -704,6 +706,7 @@ const SUB_CHIPS: readonly SubChipMeta[] = [
     tip: 'G1 に割り当てた武装（1〜4枠同時も可）の照準を待って発射します。ガレージまたは「武装G設定」で割当を変更できます。',
     timed: true,
     defaultDur: 0.45,
+    hasAimPoint: true,
     weaponGroupKey: 'G1',
   },
   {
@@ -716,6 +719,7 @@ const SUB_CHIPS: readonly SubChipMeta[] = [
     tip: 'G2 に割り当てた武装を発射します。遠距離ミサイル等を含めるとレーダー範囲内の敵へ遮蔽越し曲射も行えます。',
     timed: true,
     defaultDur: 0.45,
+    hasAimPoint: true,
     weaponGroupKey: 'G2',
   },
   {
@@ -728,6 +732,7 @@ const SUB_CHIPS: readonly SubChipMeta[] = [
     tip: 'G3 に割り当てた武装を発射します。片腕のみ・近接専用など状況別グループに便利です。',
     timed: true,
     defaultDur: 0.4,
+    hasAimPoint: true,
     weaponGroupKey: 'G3',
   },
   {
@@ -740,6 +745,7 @@ const SUB_CHIPS: readonly SubChipMeta[] = [
     tip: 'G4 に割り当てた武装を発射します。副武装や連続射撃グループとして活用できます。',
     timed: true,
     defaultDur: 0.4,
+    hasAimPoint: true,
     weaponGroupKey: 'G4',
   },
   {
@@ -752,6 +758,7 @@ const SUB_CHIPS: readonly SubChipMeta[] = [
     tip: '発射可能な全武器を同時に撃ちます。瞬間火力は最大ですが熱も一気に上がるため、熱確認とセットで使います。',
     timed: true,
     defaultDur: 0.45,
+    hasAimPoint: true,
   },
   {
     op: 'emergency_cool',
@@ -1108,6 +1115,11 @@ function formatCellParamSummary(
     const deg = Math.round(sCell.param ?? 55);
     return `${deg > 0 ? `+${deg}` : deg}°`;
   }
+  if (sCell.op.startsWith('fire_')) {
+    if (sCell.aimPoint === 'legs') return '狙:脚';
+    if (sCell.aimPoint === 'arms') return '狙:腕';
+    return '';
+  }
   if (sCell.op === 'wait' || sCell.op === 'emergency_cool') {
     return `${(sCell.durationSec ?? 0.4).toFixed(2)}s`;
   }
@@ -1146,6 +1158,7 @@ const LEGACY_SUB_CHIPS: readonly SubChipMeta[] = [
     tip: '旧形式の個別枠発射チップです。新規作成時は武装グループ「撃:G1〜G4」がおすすめです。',
     timed: true,
     defaultDur: 0.45,
+    hasAimPoint: true,
     weaponSlotKey: 'rightArm',
   },
   {
@@ -1158,6 +1171,7 @@ const LEGACY_SUB_CHIPS: readonly SubChipMeta[] = [
     tip: '旧形式の個別枠発射チップです。新規作成時は武装グループ「撃:G1〜G4」がおすすめです。',
     timed: true,
     defaultDur: 0.4,
+    hasAimPoint: true,
     weaponSlotKey: 'leftArm',
   },
   {
@@ -1170,6 +1184,7 @@ const LEGACY_SUB_CHIPS: readonly SubChipMeta[] = [
     tip: '旧形式の個別枠発射チップです。新規作成時は武装グループ「撃:G1〜G4」がおすすめです。',
     timed: true,
     defaultDur: 0.45,
+    hasAimPoint: true,
     weaponSlotKey: 'rightShoulder',
   },
   {
@@ -1182,6 +1197,7 @@ const LEGACY_SUB_CHIPS: readonly SubChipMeta[] = [
     tip: '旧形式の個別枠発射チップです。新規作成時は武装グループ「撃:G1〜G4」がおすすめです。',
     timed: true,
     defaultDur: 0.45,
+    hasAimPoint: true,
     weaponSlotKey: 'leftShoulder',
   },
   {
@@ -1700,6 +1716,7 @@ export function GridProgramEditor({
       useArg: meta.hasParam ? existing?.useArg : undefined,
       durationSec: meta.timed ? (existing?.durationSec ?? meta.defaultDur) : undefined,
       jumpDir: meta.hasJumpDir ? (existing?.jumpDir ?? 'forward') : undefined,
+      aimPoint: meta.hasAimPoint ? (existing?.aimPoint ?? 'torso') : undefined,
       direction: meta.hasDirChoice
         ? existing?.direction === 'left'
           ? 'left'
@@ -1920,6 +1937,7 @@ export function GridProgramEditor({
             param: meta.defaultParam,
             durationSec: meta.defaultDur,
             jumpDir: meta.hasJumpDir ? 'forward' : undefined,
+            aimPoint: meta.hasAimPoint ? 'torso' : undefined,
             direction: meta.hasDirChoice ? 'auto' : undefined,
           };
           return {
@@ -3368,6 +3386,23 @@ export function GridProgramEditor({
                         <option value="forward">前進 (60°・突破/登頂)</option>
                         <option value="vertical">垂直 (82°・飛出狙撃)</option>
                         <option value="backward">後退 (55°・離脱)</option>
+                      </select>
+                    </label>
+                  )}
+                  {!isMain && selectedSubMeta?.hasAimPoint && (
+                    <label className="cm-field">
+                      <span>狙点</span>
+                      <select
+                        value={(selectedCell as MechSubroutineCell).aimPoint ?? 'torso'}
+                        onChange={(e) =>
+                          updateSubCell({
+                            aimPoint: e.target.value as AimPointMode,
+                          })
+                        }
+                      >
+                        <option value="torso">胴 (標準・中央胴狙い)</option>
+                        <option value="legs">脚 (足止め・機動破壊)</option>
+                        <option value="arms">腕 (武装破壊狙い)</option>
                       </select>
                     </label>
                   )}

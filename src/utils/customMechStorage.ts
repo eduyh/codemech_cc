@@ -83,6 +83,37 @@ export function formatMechDropdownLabel(chassisId: string | undefined, modelName
 }
 
 /**
+ * Formats battle roster unit names per team using model code + suffix ("型番-枝番").
+ * The player unit is prefixed with "★", and duplicate non-player models on the same team
+ * receive "#1", "#2", ... disambiguators so every mech remains distinguishable.
+ */
+export function formatBattleTeamUnitNames(
+  units: Array<{ isPlayer?: boolean; modelName: string }>
+): string[] {
+  const nonPlayerCounts = new Map<string, number>();
+  for (const unit of units) {
+    if (unit.isPlayer) continue;
+    const key = unit.modelName.trim();
+    nonPlayerCounts.set(key, (nonPlayerCounts.get(key) ?? 0) + 1);
+  }
+
+  const nonPlayerSeen = new Map<string, number>();
+  return units.map((unit) => {
+    const trimmed = unit.modelName.trim();
+    if (unit.isPlayer) {
+      return `★${trimmed}`;
+    }
+    const total = nonPlayerCounts.get(trimmed) ?? 0;
+    if (total <= 1) {
+      return trimmed;
+    }
+    const seq = (nonPlayerSeen.get(trimmed) ?? 0) + 1;
+    nonPlayerSeen.set(trimmed, seq);
+    return `${trimmed} #${seq}`;
+  });
+}
+
+/**
  * Formats a mech display name by replacing the model suffix ("ABC-T1" + "X2" -> "ABC-X2")
  * while keeping legacy "CM-01 ヴァンガード" -> "CM-01/TAG ヴァンガード" compatibility.
  */

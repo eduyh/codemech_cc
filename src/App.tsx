@@ -4,6 +4,7 @@ import {
   Award,
   Cpu,
   Grid2X2,
+  Maximize2,
   Pause,
   Play,
   RotateCcw,
@@ -12,6 +13,7 @@ import {
   StepForward,
   Swords,
   Wrench,
+  X,
 } from 'lucide-react';
 import { CurriculumPanel } from './components/CurriculumPanel';
 import { GridProgramEditor } from './components/GridProgramEditor';
@@ -20,6 +22,8 @@ import { MechGarage } from './components/MechGarage';
 import { MechPartsHud } from './components/MechPartsHud';
 import { MvpArenaCanvas } from './components/MvpArenaCanvas';
 import { ShareModal } from './components/ShareModal';
+import { battleAudio } from './utils/battleAudio';
+import { formatKillFeedLine } from './utils/combatText';
 import { CURRICULUM_MISSIONS } from './data/curriculum';
 import {
   computeMechStats,
@@ -34,6 +38,7 @@ import {
   MAX_CUSTOM_TAG_LEN,
   SavedCustomMech,
   deleteSavedCustomMech,
+  formatBattleTeamUnitNames,
   formatCustomMechName,
   formatMechDropdownLabel,
   getBaseMechName,
@@ -94,17 +99,26 @@ import {
   WeaponSlotId,
 } from './types/mech';
 
-type FormatId = '1v1' | '3x3' | '2x6' | '3x4' | '4x3' | '6x2' | 'br12';
+type FormatId = '1v1' | '1v2' | '2v2' | '1v3' | '2v3' | '3v3';
 
-const FORMAT_OPTIONS: Array<{ id: FormatId; label: string; teams: number; perTeam: number }> = [
-  { id: '1v1', label: '1v1 (2機・学習向け)', teams: 2, perTeam: 1 },
-  { id: '3x3', label: '3機×3チーム (9機)', teams: 3, perTeam: 3 },
-  { id: '2x6', label: '2機×6チーム (12機)', teams: 6, perTeam: 2 },
-  { id: '3x4', label: '3機×4チーム (12機)', teams: 4, perTeam: 3 },
-  { id: '4x3', label: '4機×3チーム (12機)', teams: 3, perTeam: 4 },
-  { id: '6x2', label: '6機×2チーム (12機)', teams: 2, perTeam: 6 },
-  { id: 'br12', label: '12機バトロワ', teams: 12, perTeam: 1 },
+const FORMAT_OPTIONS: Array<{
+  id: FormatId;
+  label: string;
+  allyCount: number;
+  enemyCount: number;
+}> = [
+  { id: '1v1', label: '1vs1', allyCount: 1, enemyCount: 1 },
+  { id: '1v2', label: '1vs2', allyCount: 1, enemyCount: 2 },
+  { id: '2v2', label: '2vs2', allyCount: 2, enemyCount: 2 },
+  { id: '1v3', label: '1vs3', allyCount: 1, enemyCount: 3 },
+  { id: '2v3', label: '2vs3', allyCount: 2, enemyCount: 3 },
+  { id: '3v3', label: '3vs3', allyCount: 3, enemyCount: 3 },
 ];
+
+export interface BattleSlotParticipant {
+  blueprint: MechBlueprint;
+  pilot?: PilotProfile;
+}
 
 const ARENA_OPTIONS: Array<{ id: ArenaPresetId; label: string }> = [
   { id: 'plains_ridge', label: '中央稜線 (ハルダウン)' },
@@ -115,13 +129,25 @@ const ARENA_OPTIONS: Array<{ id: ArenaPresetId; label: string }> = [
 
 const RENDER_INTERVAL_MS = 1000 / SIM_TPS;
 
+function resolveFallbackStarterParticipant(index: number): BattleSlotParticipant {
+  const mechBp = STARTER_MECHS[index % STARTER_MECHS.length];
+  const pilot =
+    STARTER_PILOTS.find((p) => p.id === mechBp.defaultPilotId) ??
+    STARTER_PILOTS[index % STARTER_PILOTS.length];
+  return {
+    blueprint: structuredClone(mechBp),
+    pilot: pilot ? structuredClone(pilot) : undefined,
+  };
+}
+
 function buildMatchSetup(
   formatId: FormatId,
   arenaPreset: ArenaPresetId,
   playerMech: MechBlueprint,
   seed: number,
   playerPilot: PilotProfile,
-  opponentOverride?: { blueprint: MechBlueprint; pilot?: PilotProfile }
+  allyParticipants: BattleSlotParticipant[] = [],
+  enemyParticipants: BattleSlotParticipant[] = []
 ): {
   sim: SimState;
   pilotProfiles: Record<string, PilotProfile>;
@@ -132,38 +158,61 @@ function buildMatchSetup(
   const pilotProfiles: Record<string, PilotProfile> = {};
   const pilotRuntimes: Record<string, PilotRuntimeState> = {};
 
-  for (let t = 0; t < fmt.teams; t++) {
-    for (let m = 0; m < fmt.perTeam; m++) {
-      const id = `mech_${t}_${m}`;
-      const isPlayer = t === 0 && m === 0;
-      const useOpponentOverride = !isPlayer && formatId === '1v1' && Boolean(opponentOverride);
-      const mechBp = isPlayer
-        ? playerMech
-        : useOpponentOverride
-          ? opponentOverride!.blueprint
-          : STARTER_MECHS[(t * fmt.perTeam + m + 1) % STARTER_MECHS.length];
-      const pilot = isPlayer
-        ? playerPilot
-        : useOpponentOverride && opponentOverride!.pilot
-          ? opponentOverride!.pilot
-          : STARTER_PILOTS.find((p) => p.id === mechBp.defaultPilotId) ??
-            STARTER_PILOTS[(t + m) % STARTER_PILOTS.length];
+  const resolveAiPilot = (bp: MechBlueprint, customPilot: PilotProfile | undefined, idx: number) =>
+    customPilot ??
+    STARTER_PILOTS.find((p) => p.id === bp.defaultPilotId) ??
+    STARTER_PILOTS[idx % STARTER_PILOTS.length];
 
-      entries.push({
-        id,
-        name: isPlayer
-          ? `★${mechBp.name}`
-          : useOpponentOverride
-            ? mechBp.name
-            : `T${t + 1}-${m + 1}`,
-        teamId: `T${t + 1}`,
-        blueprint: mechBp,
-        pilot,
-      });
-      pilotProfiles[id] = pilot;
-      pilotRuntimes[id] = createPilotRuntimeState(pilot);
-    }
+  const team1Raw: Array<{ id: string; isPlayer: boolean; bp: MechBlueprint; pilot: PilotProfile }> = [
+    { id: 'mech_0_0', isPlayer: true, bp: playerMech, pilot: playerPilot },
+  ];
+  for (let m = 1; m < fmt.allyCount; m++) {
+    const slot = allyParticipants[m - 1] ?? resolveFallbackStarterParticipant(m);
+    team1Raw.push({
+      id: `mech_0_${m}`,
+      isPlayer: false,
+      bp: slot.blueprint,
+      pilot: resolveAiPilot(slot.blueprint, slot.pilot, m),
+    });
   }
+  const team1Names = formatBattleTeamUnitNames(
+    team1Raw.map((u) => ({ isPlayer: u.isPlayer, modelName: u.bp.name }))
+  );
+  team1Raw.forEach((u, idx) => {
+    entries.push({
+      id: u.id,
+      name: team1Names[idx],
+      teamId: 'T1',
+      blueprint: u.bp,
+      pilot: u.pilot,
+    });
+    pilotProfiles[u.id] = u.pilot;
+    pilotRuntimes[u.id] = createPilotRuntimeState(u.pilot);
+  });
+
+  const team2Raw: Array<{ id: string; bp: MechBlueprint; pilot: PilotProfile }> = [];
+  for (let m = 0; m < fmt.enemyCount; m++) {
+    const slot = enemyParticipants[m] ?? resolveFallbackStarterParticipant(m + 1);
+    team2Raw.push({
+      id: `mech_1_${m}`,
+      bp: slot.blueprint,
+      pilot: resolveAiPilot(slot.blueprint, slot.pilot, m + 1),
+    });
+  }
+  const team2Names = formatBattleTeamUnitNames(
+    team2Raw.map((u) => ({ isPlayer: false, modelName: u.bp.name }))
+  );
+  team2Raw.forEach((u, idx) => {
+    entries.push({
+      id: u.id,
+      name: team2Names[idx],
+      teamId: 'T2',
+      blueprint: u.bp,
+      pilot: u.pilot,
+    });
+    pilotProfiles[u.id] = u.pilot;
+    pilotRuntimes[u.id] = createPilotRuntimeState(u.pilot);
+  });
 
   const sim = createSimulation({
     seed,
@@ -200,10 +249,17 @@ export default function App() {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<1 | 2 | 4>(1);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>('3d');
+  const [expanded2D, setExpanded2D] = useState(false);
   const [focusedMechId, setFocusedMechId] = useState('mech_0_0');
-  const [opponentMechId, setOpponentMechId] = useState<string>(
-    () => STARTER_MECHS[1]?.id ?? STARTER_MECHS[0].id
-  );
+  const [allyMechIds, setAllyMechIds] = useState<string[]>(() => [
+    STARTER_MECHS[1]?.id ?? STARTER_MECHS[0].id,
+    STARTER_MECHS[2]?.id ?? STARTER_MECHS[0].id,
+  ]);
+  const [enemyMechIds, setEnemyMechIds] = useState<string[]>(() => [
+    STARTER_MECHS[1]?.id ?? STARTER_MECHS[0].id,
+    STARTER_MECHS[0].id,
+    STARTER_MECHS[2]?.id ?? STARTER_MECHS[0].id,
+  ]);
 
   const initialSetup = useRef(
     (() => {
@@ -211,16 +267,19 @@ export default function App() {
       const oppPilot = oppStarter.defaultPilotId
         ? STARTER_PILOTS.find((p) => p.id === oppStarter.defaultPilotId)
         : undefined;
-      return buildMatchSetup('1v1', 'plains_ridge', PRESET_ABC, 2026, DEFAULT_PILOT_PROFILE, {
-        blueprint: resolveMechBlueprintRoms(
-          structuredClone(oppStarter),
-          getAllRoms(loadUserRoms())
-        ),
-        pilot: oppPilot ? structuredClone(oppPilot) : undefined,
-      });
+      return buildMatchSetup('1v1', 'plains_ridge', PRESET_ABC, 2026, DEFAULT_PILOT_PROFILE, [], [
+        {
+          blueprint: resolveMechBlueprintRoms(
+            structuredClone(oppStarter),
+            getAllRoms(loadUserRoms())
+          ),
+          pilot: oppPilot ? structuredClone(oppPilot) : undefined,
+        },
+      ]);
     })()
   );
   const simRef = useRef<SimState>(initialSetup.current.sim);
+  const slowMoUntilRef = useRef(0);
   const pilotProfilesRef = useRef<Record<string, PilotProfile>>(initialSetup.current.pilotProfiles);
   const pilotRuntimesRef = useRef<Record<string, PilotRuntimeState>>(
     initialSetup.current.pilotRuntimes
@@ -229,8 +288,10 @@ export default function App() {
   playerPilotRef.current = playerPilot;
   const playerMechRef = useRef<MechBlueprint>(playerMech);
   playerMechRef.current = playerMech;
-  const opponentMechIdRef = useRef<string>(opponentMechId);
-  opponentMechIdRef.current = opponentMechId;
+  const allyMechIdsRef = useRef<string[]>(allyMechIds);
+  allyMechIdsRef.current = allyMechIds;
+  const enemyMechIdsRef = useRef<string[]>(enemyMechIds);
+  enemyMechIdsRef.current = enemyMechIds;
 
   const [renderTick, setRenderTick] = useState(0);
   const [playerDebugTrace, setPlayerDebugTrace] = useState<PilotDebugTrace | null>(null);
@@ -247,6 +308,15 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!expanded2D) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpanded2D(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [expanded2D]);
+
   const flashSetupNotice = useCallback((msg: string) => {
     setSetupSaveNotice(msg);
     if (setupNoticeTimerRef.current !== null) {
@@ -258,9 +328,22 @@ export default function App() {
     }, 2800);
   }, []);
 
-  const resolveOpponentOverride = useCallback(
-    (oppId: string): { blueprint: MechBlueprint; pilot?: PilotProfile } => {
-      const custom = savedMechs.find((m) => m.id === oppId);
+  const resolveValidMechId = useCallback(
+    (mechId: string | undefined, fallbackIndex: number): string => {
+      if (
+        mechId &&
+        (savedMechs.some((m) => m.id === mechId) || STARTER_MECHS.some((m) => m.id === mechId))
+      ) {
+        return mechId;
+      }
+      return STARTER_MECHS[fallbackIndex % STARTER_MECHS.length].id;
+    },
+    [savedMechs]
+  );
+
+  const resolveSlotParticipant = useCallback(
+    (mechId: string | undefined, fallbackIndex: number): BattleSlotParticipant => {
+      const custom = mechId ? savedMechs.find((m) => m.id === mechId) : undefined;
       if (custom) {
         const bp = resolveMechBlueprintRoms(structuredClone(custom.blueprint), allRoms);
         const pId = custom.pilotId ?? custom.blueprint.defaultPilotId;
@@ -271,7 +354,8 @@ export default function App() {
         };
       }
       const starter =
-        STARTER_MECHS.find((m) => m.id === oppId) ?? STARTER_MECHS[1] ?? STARTER_MECHS[0];
+        (mechId ? STARTER_MECHS.find((m) => m.id === mechId) : undefined) ??
+        STARTER_MECHS[fallbackIndex % STARTER_MECHS.length];
       const starterPilot = starter.defaultPilotId
         ? allPilots.find((p) => p.id === starter.defaultPilotId)
         : undefined;
@@ -291,19 +375,29 @@ export default function App() {
       nextSeed = seed,
       autoPlay = false,
       nextPilot = playerPilotRef.current,
-      nextOpponentId = opponentMechIdRef.current
+      nextAllyIds = allyMechIdsRef.current,
+      nextEnemyIds = enemyMechIdsRef.current
     ) => {
-      const oppOverride =
-        nextFormat === '1v1' ? resolveOpponentOverride(nextOpponentId) : undefined;
+      const fmt = FORMAT_OPTIONS.find((f) => f.id === nextFormat) ?? FORMAT_OPTIONS[0];
+      const allyParticipants: BattleSlotParticipant[] = [];
+      for (let i = 0; i < Math.max(0, fmt.allyCount - 1); i++) {
+        allyParticipants.push(resolveSlotParticipant(nextAllyIds[i], i + 1));
+      }
+      const enemyParticipants: BattleSlotParticipant[] = [];
+      for (let i = 0; i < fmt.enemyCount; i++) {
+        enemyParticipants.push(resolveSlotParticipant(nextEnemyIds[i], i + 1));
+      }
       const setup = buildMatchSetup(
         nextFormat,
         nextArena,
         nextMech,
         nextSeed,
         nextPilot,
-        oppOverride
+        allyParticipants,
+        enemyParticipants
       );
       simRef.current = setup.sim;
+      slowMoUntilRef.current = 0;
       pilotProfilesRef.current = setup.pilotProfiles;
       pilotRuntimesRef.current = setup.pilotRuntimes;
       setFocusedMechId('mech_0_0');
@@ -311,7 +405,7 @@ export default function App() {
       setPlaying(autoPlay);
       setRenderTick((n) => n + 1);
     },
-    [formatId, arenaPreset, seed, resolveOpponentOverride]
+    [formatId, arenaPreset, seed, resolveSlotParticipant]
   );
 
   const handleUpdatePlayerMech = useCallback(
@@ -527,11 +621,18 @@ export default function App() {
     let lastFrameTime = performance.now();
 
     const loop = (now: number) => {
-      if (now - lastFrameTime >= RENDER_INTERVAL_MS) {
-        lastFrameTime = now - ((now - lastFrameTime) % RENDER_INTERVAL_MS);
-        for (let i = 0; i < speed; i++) {
+      const inSlowMo = now < slowMoUntilRef.current;
+      const stepInterval = inSlowMo ? RENDER_INTERVAL_MS * 3.4 : RENDER_INTERVAL_MS;
+      if (now - lastFrameTime >= stepInterval) {
+        lastFrameTime = now - ((now - lastFrameTime) % stepInterval);
+        const maxSteps = inSlowMo ? 1 : speed;
+        for (let i = 0; i < maxSteps; i++) {
           if (simRef.current.finished) break;
           advanceOneTick();
+          if (simRef.current.lastTickEvents.some((ev) => ev.type === 'mech_destroyed')) {
+            slowMoUntilRef.current = Math.max(slowMoUntilRef.current, now + 650);
+            break;
+          }
         }
         setRenderTick((n) => n + 1);
         if (simRef.current.finished) {
@@ -585,11 +686,11 @@ export default function App() {
   const isStarterMech = isStarterMechId(playerMech.id);
   const isStarterDirty = isStarterMech && starterEdited;
   const isGarageFull = studioTab === 'garage';
-  const effectiveOpponentMechId =
-    savedMechs.some((m) => m.id === opponentMechId) ||
-    STARTER_MECHS.some((m) => m.id === opponentMechId)
-      ? opponentMechId
-      : STARTER_MECHS[1]?.id ?? STARTER_MECHS[0].id;
+  const currentFormatSpec = FORMAT_OPTIONS.find((f) => f.id === formatId) ?? FORMAT_OPTIONS[0];
+  const mechNameById = useMemo(
+    () => new Map(sim.mechs.map((m) => [m.id, m.name])),
+    [sim.mechs]
+  );
 
   return (
     <div className="cm-studio">
@@ -1018,6 +1119,7 @@ export default function App() {
                   <label className="cm-ctl">
                     <span>対戦形式</span>
                     <select
+                      aria-label="対戦形式"
                       value={formatId}
                       onChange={(e) => {
                         const v = e.target.value as FormatId;
@@ -1033,48 +1135,6 @@ export default function App() {
                     </select>
                   </label>
 
-                  {formatId === '1v1' && (
-                    <label className="cm-ctl" title="1v1 の対戦相手機体を選択します">
-                      <span>相手機体</span>
-                      <select
-                        aria-label="対戦相手機体選択"
-                        value={effectiveOpponentMechId}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setOpponentMechId(v);
-                          resetMatch(
-                            formatId,
-                            arenaPreset,
-                            playerMech,
-                            seed,
-                            false,
-                            playerPilot,
-                            v
-                          );
-                        }}
-                      >
-                        {savedMechs.length > 0 && (
-                          <optgroup label="ユーザー機体">
-                            {savedMechs.map((m) => (
-                              <option key={m.id} value={m.id}>
-                                {formatMechDropdownLabel(m.chassisId, formatCustomMechName(m.baseName, m.tag))}
-                              </option>
-                            ))}
-                          </optgroup>
-                        )}
-                        <optgroup label="標準機体">
-                          {STARTER_MECHS.map((bp) => (
-                            <option key={bp.id} value={bp.id}>
-                              {formatMechDropdownLabel(bp.chassisId, bp.name)}
-                            </option>
-                          ))}
-                        </optgroup>
-                      </select>
-                    </label>
-                  )}
-                </div>
-
-                <div className="cm-battle-cfg-row">
                   <label className="cm-ctl">
                     <span>マップ</span>
                     <select
@@ -1118,6 +1178,118 @@ export default function App() {
                     </button>
                   </label>
                 </div>
+
+                <div className="cm-battle-cfg-row cm-battle-roster-row">
+                  {Array.from({ length: Math.max(0, currentFormatSpec.allyCount - 1) }).map(
+                    (_, idx) => {
+                      const effectiveId = resolveValidMechId(allyMechIds[idx], idx + 1);
+                      return (
+                        <label
+                          key={`ally_${idx}`}
+                          className="cm-ctl cm-ctl--ally"
+                          title={`味方${idx + 2} の機体を選択します`}
+                        >
+                          <span>味方{idx + 2}</span>
+                          <select
+                            aria-label={`味方${idx + 2}機体選択`}
+                            value={effectiveId}
+                            onChange={(e) => {
+                              const nextAllies = [...allyMechIdsRef.current];
+                              nextAllies[idx] = e.target.value;
+                              allyMechIdsRef.current = nextAllies;
+                              setAllyMechIds(nextAllies);
+                              resetMatch(
+                                formatId,
+                                arenaPreset,
+                                playerMech,
+                                seed,
+                                false,
+                                playerPilot,
+                                nextAllies,
+                                enemyMechIdsRef.current
+                              );
+                            }}
+                          >
+                            {savedMechs.length > 0 && (
+                              <optgroup label="ユーザー機体">
+                                {savedMechs.map((m) => (
+                                  <option key={m.id} value={m.id}>
+                                    {formatMechDropdownLabel(
+                                      m.chassisId,
+                                      formatCustomMechName(m.baseName, m.tag)
+                                    )}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                            <optgroup label="標準機体">
+                              {STARTER_MECHS.map((bp) => (
+                                <option key={bp.id} value={bp.id}>
+                                  {formatMechDropdownLabel(bp.chassisId, bp.name)}
+                                </option>
+                              ))}
+                            </optgroup>
+                          </select>
+                        </label>
+                      );
+                    }
+                  )}
+
+                  {Array.from({ length: currentFormatSpec.enemyCount }).map((_, idx) => {
+                    const effectiveId = resolveValidMechId(enemyMechIds[idx], idx + 1);
+                    const enemyLabel =
+                      currentFormatSpec.enemyCount === 1 ? '敵機' : `敵${idx + 1}`;
+                    return (
+                      <label
+                        key={`enemy_${idx}`}
+                        className="cm-ctl cm-ctl--enemy"
+                        title={`${enemyLabel}の機体を選択します`}
+                      >
+                        <span>{enemyLabel}</span>
+                        <select
+                          aria-label={`${enemyLabel}機体選択`}
+                          value={effectiveId}
+                          onChange={(e) => {
+                            const nextEnemies = [...enemyMechIdsRef.current];
+                            nextEnemies[idx] = e.target.value;
+                            enemyMechIdsRef.current = nextEnemies;
+                            setEnemyMechIds(nextEnemies);
+                            resetMatch(
+                              formatId,
+                              arenaPreset,
+                              playerMech,
+                              seed,
+                              false,
+                              playerPilot,
+                              allyMechIdsRef.current,
+                              nextEnemies
+                            );
+                          }}
+                        >
+                          {savedMechs.length > 0 && (
+                            <optgroup label="ユーザー機体">
+                              {savedMechs.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {formatMechDropdownLabel(
+                                    m.chassisId,
+                                    formatCustomMechName(m.baseName, m.tag)
+                                  )}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          <optgroup label="標準機体">
+                            {STARTER_MECHS.map((bp) => (
+                              <option key={bp.id} value={bp.id}>
+                                {formatMechDropdownLabel(bp.chassisId, bp.name)}
+                              </option>
+                            ))}
+                          </optgroup>
+                        </select>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="cm-sim-bar">
@@ -1126,6 +1298,7 @@ export default function App() {
                     type="button"
                     className="cm-btn-primary"
                     onClick={() => {
+                      battleAudio.unlock();
                       if (!playing && sim.finished) {
                         resetMatch(formatId, arenaPreset, playerMechRef.current, seed, true);
                         return;
@@ -1189,7 +1362,12 @@ export default function App() {
                     {sim.terrain.width}×{sim.terrain.depth}m ・ Tick {sim.tick} / {sim.time.toFixed(1)}s
                     {sim.finished && (
                       <span className="cm-winner-pill">
-                        勝者: {sim.winnerTeamId}
+                        勝者:{' '}
+                        {sim.winnerTeamId === 'T1'
+                          ? '味方 (T1)'
+                          : sim.winnerTeamId === 'T2'
+                            ? '敵 (T2)'
+                            : sim.winnerTeamId}
                       </span>
                     )}
                   </div>
@@ -1204,14 +1382,26 @@ export default function App() {
                     renderTick={renderTick}
                     focusedMechId={focusedMechId}
                     onSelectMech={setFocusedMechId}
+                    onSwitchTo2D={() => setViewMode('2d')}
                   />
                 ) : (
-                  <MvpArenaCanvas
-                    simState={sim}
-                    renderTick={renderTick}
-                    focusedMechId={focusedMechId}
-                    onSelectMech={setFocusedMechId}
-                  />
+                  <div className="cm-2d-stage">
+                    <button
+                      type="button"
+                      className="cm-2d-expand-btn"
+                      onClick={() => setExpanded2D(true)}
+                      title="2D戦術図を画面いっぱいに大きく表示"
+                    >
+                      <Maximize2 size={13} /> 大きく表示
+                    </button>
+                    <MvpArenaCanvas
+                      simState={sim}
+                      renderTick={renderTick}
+                      focusedMechId={focusedMechId}
+                      onSelectMech={setFocusedMechId}
+                      className="cm-arena-canvas--large"
+                    />
+                  </div>
                 )}
 
                 <div className="cm-roster-strip">
@@ -1225,7 +1415,7 @@ export default function App() {
                       } ${!m.alive ? 'is-dead' : ''}`}
                     >
                       <span>{m.name}</span>
-                      <small>{m.teamId}</small>
+                      <small>{m.teamId === 'T1' ? '味方' : '敵'}</small>
                     </button>
                   ))}
                 </div>
@@ -1238,17 +1428,33 @@ export default function App() {
                 {recentEvents.length === 0 ? (
                   <div className="cm-event-empty">再生ボタンを押すと模擬戦ログが表示されます</div>
                 ) : (
-                  recentEvents.map((ev, i) => (
-                    <div key={`${ev.tick}-${i}`} className="cm-event-row">
-                      <span>T{ev.tick}</span>
-                      <span>{ev.type}</span>
-                      <span>
-                        {ev.actorId} {ev.targetId ? `→ ${ev.targetId}` : ''}{' '}
-                        {ev.partId ? `[${ev.partId}${ev.face && ev.face !== 'all' ? `:${ev.face}` : ''}]` : ''}{' '}
-                        {ev.damage ? `${Math.round(ev.damage)}dmg` : ''}
-                      </span>
-                    </div>
-                  ))
+                  recentEvents.map((ev, i) => {
+                    const actorLabel = mechNameById.get(ev.actorId) ?? ev.actorId;
+                    const targetLabel = ev.targetId
+                      ? mechNameById.get(ev.targetId) ?? ev.targetId
+                      : '';
+                    const isMajorEvent =
+                      ev.type === 'mech_destroyed' ||
+                      ev.type === 'part_destroyed' ||
+                      ev.type === 'thermal_shutdown';
+                    return (
+                      <div key={`${ev.tick}-${i}`} className="cm-event-row">
+                        <span>T{ev.tick}</span>
+                        <span>{ev.type}</span>
+                        <span>
+                          {isMajorEvent ? (
+                            formatKillFeedLine(ev, mechNameById)
+                          ) : (
+                            <>
+                              {actorLabel} {targetLabel ? `→ ${targetLabel}` : ''}{' '}
+                              {ev.partId ? `[${ev.partId}${ev.face && ev.face !== 'all' ? `:${ev.face}` : ''}]` : ''}{' '}
+                              {ev.damage ? `${Math.round(ev.damage)}dmg` : ''}
+                            </>
+                          )}
+                        </span>
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </section>
@@ -1274,6 +1480,83 @@ export default function App() {
           resetMatch(formatId, arenaPreset, playerMechRef.current, seed, false, nextPilot);
         }}
       />
+
+      {expanded2D && (
+        <div
+          className="cm-2d-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="2D 戦術図 拡大表示"
+          onClick={() => setExpanded2D(false)}
+        >
+          <div className="cm-2d-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="cm-2d-modal-bar">
+              <div className="cm-sim-btns">
+                <button
+                  type="button"
+                  className="cm-btn-primary"
+                  onClick={() => {
+                    if (!playing && sim.finished) {
+                      resetMatch(formatId, arenaPreset, playerMechRef.current, seed, true);
+                      return;
+                    }
+                    setPlaying((p) => !p);
+                  }}
+                >
+                  {playing ? <Pause size={15} /> : <Play size={15} />}
+                  {playing ? '一時停止' : '模擬戦再生'}
+                </button>
+                <button
+                  type="button"
+                  className="cm-btn-secondary"
+                  onClick={() => resetMatch()}
+                >
+                  <RotateCcw size={15} /> リセット
+                </button>
+                <div className="cm-seg">
+                  {([1, 2, 4] as const).map((sp) => (
+                    <button
+                      key={sp}
+                      type="button"
+                      className={speed === sp ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
+                      onClick={() => setSpeed(sp)}
+                    >
+                      {sp}x
+                    </button>
+                  ))}
+                </div>
+                <div className="cm-sim-clock">
+                  {sim.terrain.width}×{sim.terrain.depth}m ・ T{sim.tick} ({sim.time.toFixed(1)}s)
+                  {sim.finished && (
+                    <span className="cm-winner-pill">
+                      勝者:{' '}
+                      {sim.winnerTeamId === 'T1'
+                        ? '味方 (T1)'
+                        : sim.winnerTeamId === 'T2'
+                          ? '敵 (T2)'
+                          : sim.winnerTeamId}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="cm-btn-secondary"
+                onClick={() => setExpanded2D(false)}
+              >
+                <X size={15} /> 閉じる
+              </button>
+            </div>
+            <MvpArenaCanvas
+              simState={sim}
+              renderTick={renderTick}
+              focusedMechId={focusedMechId}
+              onSelectMech={setFocusedMechId}
+              className="cm-arena-canvas--modal"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

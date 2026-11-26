@@ -8,6 +8,8 @@ interface MvpArenaCanvasProps {
   renderTick?: number;
   focusedMechId: string;
   onSelectMech: (mechId: string) => void;
+  compact?: boolean;
+  className?: string;
 }
 
 interface FloatingMarker {
@@ -47,6 +49,8 @@ export function MvpArenaCanvas({
   renderTick,
   focusedMechId,
   onSelectMech,
+  compact = false,
+  className,
 }: MvpArenaCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const terrainLayerRef = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
@@ -329,7 +333,7 @@ export function MvpArenaCanvas({
         continue;
       }
 
-      const ms = mech.stats.sizeScale;
+      const ms = mech.stats.sizeScale * (compact ? 1.55 : 1);
 
       if (radarOnlyIds.has(mech.id)) {
         ctx.save();
@@ -390,22 +394,24 @@ export function MvpArenaCanvas({
 
       // Name & altitude
       ctx.fillStyle = '#e2e8f0';
-      ctx.font = '10px sans-serif';
+      ctx.font = compact ? 'bold 13px sans-serif' : '10px sans-serif';
       const alt = Math.round(mech.pos.z);
-      const label = alt > 2 ? `${mech.name} (+${alt}m)` : mech.name;
-      ctx.fillText(label, mx + 11, my - 4);
+      const label = !compact && alt > 2 ? `${mech.name} (+${alt}m)` : mech.name;
+      ctx.fillText(label, mx + (compact ? 14 : 11), my - 4);
     }
 
-    // Floating combat markers
-    ctx.font = 'bold 10px sans-serif';
-    for (const mk of markersRef.current) {
-      const age = simState.tick - mk.createdTick;
-      ctx.globalAlpha = Math.max(0.15, 1 - age / 24);
-      ctx.fillStyle = mk.color;
-      ctx.fillText(mk.text, sx(mk.x) + 4, sy(mk.y) - age * 0.6);
+    // Floating combat markers (omitted in compact PiP minimap)
+    if (!compact) {
+      ctx.font = 'bold 10px sans-serif';
+      for (const mk of markersRef.current) {
+        const age = simState.tick - mk.createdTick;
+        ctx.globalAlpha = Math.max(0.15, 1 - age / 24);
+        ctx.fillStyle = mk.color;
+        ctx.fillText(mk.text, sx(mk.x) + 4, sy(mk.y) - age * 0.6);
+      }
+      ctx.globalAlpha = 1;
     }
-    ctx.globalAlpha = 1;
-  }, [simState, simState.tick, renderTick, focusedMechId]);
+  }, [simState, simState.tick, renderTick, focusedMechId, compact]);
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -431,7 +437,7 @@ export function MvpArenaCanvas({
       ref={canvasRef}
       width={600}
       height={600}
-      className="cm-arena-canvas"
+      className={className ? `cm-arena-canvas ${className}` : 'cm-arena-canvas'}
       onClick={handleCanvasClick}
       title="クリックで注目機体を切り替え"
     />

@@ -15,6 +15,7 @@ import {
 } from '../data/parts';
 import {
   ActiveBeamState,
+  AimPointMode,
   JumpDirectionMode,
   MAX_MECHS,
   MatchConfig,
@@ -32,6 +33,7 @@ import {
   SimState,
   Vec3,
   VisibleEnemyInfo,
+  WeaponPartSpec,
   WeaponSlotId,
 } from '../types/mech';
 import {
@@ -56,6 +58,7 @@ import {
   normalizeAngle180,
   normalizeAngle360,
   normalizeMatchSeed,
+  radToDeg,
   vectorToAngle2D,
 } from './math';
 import {
@@ -71,7 +74,7 @@ import {
 const GRAVITY_Z = 22;
 const MAX_STORED_EVENTS = 2500;
 const SHUTDOWN_RECOVERY_RATIO = 0.7;
-const JUMP_TAKEOFF_HEAT_COST = 5;
+const JUMP_TAKEOFF_HEAT_COST = 4;
 
 function getJumpDirectionVectors(dirMode: JumpDirectionMode): {
   sinP: number;
@@ -756,6 +759,116 @@ function getScaledMuzzleLocal(slot: WeaponSlotId, sizeScale: number): Vec3 {
   };
 }
 
+function resolveTargetAimPointWorld(
+  target: MechRuntimeState,
+  shooterPos: Vec3,
+  aimPoint: AimPointMode = 'torso'
+): Vec3 {
+  const scale = target.stats.sizeScale;
+  const torsoPos: Vec3 = {
+    x: target.pos.x,
+    y: target.pos.y,
+    z: target.pos.z + getMechCenterZ(scale),
+  };
+  if (aimPoint === 'torso') {
+    return torsoPos;
+  }
+
+  if (aimPoint === 'legs') {
+    const legDefs: Array<{ slot: 'rightLeg' | 'leftLeg'; local: Vec3 }> = [
+      { slot: 'rightLeg', local: { x: 0.85 * scale, y: 0, z: 2.35 * scale } },
+      { slot: 'leftLeg', local: { x: -0.85 * scale, y: 0, z: 2.35 * scale } },
+    ];
+    const intact = legDefs
+      .filter((d) => !target.parts[d.slot].destroyed)
+      .map((d) => {
+        const worldPos = mechLocalToWorld(d.local, target.pos, target.yawDeg);
+        const dist = distance3D(shooterPos.x, shooterPos.y, shooterPos.z, worldPos.x, worldPos.y, worldPos.z);
+        const hp = target.parts[d.slot].armor + target.parts[d.slot].structure;
+        return { worldPos, dist, hp };
+      });
+    if (intact.length === 0) return torsoPos;
+    if (intact.length === 1) return intact[0].worldPos;
+    if (Math.abs(intact[0].dist - intact[1].dist) <= 0.5) {
+      return intact[0].hp <= intact[1].hp ? intact[0].worldPos : intact[1].worldPos;
+    }
+    return intact[0].dist <= intact[1].dist ? intact[0].worldPos : intact[1].worldPos;
+  }
+
+  // 'arms': prioritize intact weapon-bearing arms, then intact arms, then intact shoulders
+  const torsoYaw = getMechTorsoWorldYaw(target);
+  const pickBestUpperLimb = (
+    defs: Array<{ slot: WeaponSlotId; local: Vec3 }>
+  ): Vec3 | null => {
+    const intact = defs
+      .filter((d) => !target.parts[d.slot].destroyed)
+      .map((d) => {
+        const spec = getWeaponSpec(target.weapons[d.slot].weaponId);
+        const hasWeapon = !isPassiveModuleSpec(spec) && spec.burstCount > 0 && spec.damage > 0;
+        const worldPos = mechLocalToWorld(d.local, target.pos, torsoYaw);
+        const dist = distance3D(shooterPos.x, shooterPos.y, shooterPos.z, worldPos.x, worldPos.y, worldPos.z);
+        return { worldPos, dist, hasWeapon };
+      });
+    if (intact.length === 0) return null;
+    const armed = intact.filter((c) => c.hasWeapon);
+    const pool = armed.length > 0 ? armed : intact;
+    pool.sort((a, b) => a.dist - b.dist);
+    return pool[0].worldPos;
+  };
+
+  const armHit = pickBestUpperLimb([
+    { slot: 'rightArm', local: { x: 2.25 * scale, y: 0.15 * scale, z: 6.0 * scale } },
+    { slot: 'leftArm', local: { x: -2.25 * scale, y: 0.15 * scale, z: 6.0 * scale } },
+  ]);
+  if (armHit) return armHit;
+
+  const shoulderHit = pickBestUpperLimb([
+    { slot: 'rightShoulder', local: { x: 1.45 * scale, y: 0, z: 7.0 * scale } },
+    { slot: 'leftShoulder', local: { x: -1.45 * scale, y: 0, z: 7.0 * scale } },
+  ]);
+  return shoulderHit ?? torsoPos;
+}
+
+function computeTargetTransversalSpeed(
+  shooterPos: Vec3,
+  target: MechRuntimeState | undefined
+): number {
+  if (!target) return 0;
+  const dx = target.pos.x - shooterPos.x;
+  const dy = target.pos.y - shooterPos.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1e-4) return 0;
+  const ux = dx / dist;
+  const uy = dy / dist;
+  // Cross product gives perpendicular horizontal velocity component
+  return Math.abs(target.vel.x * -uy + target.vel.y * ux);
+}
+
+function computeDynamicSpreadDeg(
+  shooter: MechRuntimeState,
+  target: MechRuntimeState | undefined,
+  spec: WeaponPartSpec
+): number {
+  const shooterSpeedRatio = clamp(
+    Math.hypot(shooter.vel.x, shooter.vel.y) / Math.max(1, shooter.stats.walkSpeed),
+    0,
+    1.4
+  );
+  const movePenalty = shooterSpeedRatio * 0.48;
+  const airPenalty = shooter.grounded ? 0 : 0.85;
+  const transversalSpeed = computeTargetTransversalSpeed(shooter.pos, target);
+  const transversalPenalty = clamp(transversalSpeed / 22, 0, 1.0) * 0.45;
+  const classMult =
+    spec.id === 'gauss_rifle'
+      ? 0.65
+      : spec.kind === 'laser'
+        ? 0.85
+        : spec.kind === 'lrm_homing' || spec.kind === 'srm_homing' || spec.kind === 'srm_rocket'
+          ? 0.5
+          : 1.0;
+  return (movePenalty + airPenalty + transversalPenalty) * classMult;
+}
+
 function spawnSingleProjectile(params: {
   state: SimState;
   mech: MechRuntimeState;
@@ -771,6 +884,7 @@ function spawnSingleProjectile(params: {
   hp: number;
   loftTicksRemaining: number;
   isIndirect?: boolean;
+  aimPoint?: AimPointMode;
 }): void {
   const {
     state,
@@ -787,9 +901,11 @@ function spawnSingleProjectile(params: {
     hp,
     loftTicksRemaining,
     isIndirect,
+    aimPoint,
   } = params;
-  const spreadYaw = (nextMechRand(mech) - 0.5) * 2 * totalSpread;
-  const spreadPitch = (nextMechRand(mech) - 0.5) * 2 * totalSpread;
+  // Triangular distribution clusters naturally over torso/adjacent parts rather than box-uniform edges
+  const spreadYaw = (nextMechRand(mech) + nextMechRand(mech) - 1) * totalSpread;
+  const spreadPitch = (nextMechRand(mech) + nextMechRand(mech) - 1) * totalSpread;
   const finalYaw = normalizeAngle360(aimYaw + spreadYaw);
   const finalPitch = clamp(aimPitch + spreadPitch, -60, 75);
 
@@ -832,6 +948,7 @@ function spawnSingleProjectile(params: {
     ttlTicks,
     hp,
     loftTicksRemaining,
+    ...(aimPoint ? { aimPoint } : {}),
   });
 }
 
@@ -959,20 +1076,24 @@ function stepSalvoQueue(
 
     const hasLiveLock = Boolean(target && mech.lockComplete && mech.lockTargetId === target.id);
     const guided = Boolean(item.guided && hasLiveLock);
+    const aimPoint: AimPointMode = item.aimPoint ?? 'torso';
     let aimYaw = torsoWorldYaw;
     let aimPitch = clamp(control.targetPitch ?? mech.pitchDeg, -60, 75);
     let rawHoriz = 600;
+    let aimZ = muzzlePos.z;
     if (target) {
-      const dx = target.pos.x - muzzlePos.x;
-      const dy = target.pos.y - muzzlePos.y;
+      const aimPos = resolveTargetAimPointWorld(target, muzzlePos, aimPoint);
+      const dx = aimPos.x - muzzlePos.x;
+      const dy = aimPos.y - muzzlePos.y;
       rawHoriz = Math.hypot(dx, dy);
+      aimZ = aimPos.z;
       if (rawHoriz > 1e-4) {
         aimYaw = vectorToAngle2D(dx, dy);
       }
     }
     const loft = computeLrmLoftParams(rawHoriz, item.isIndirect, guided);
     if (target && !guided) {
-      const dz = target.pos.z + getMechCenterZ(target.stats.sizeScale) - muzzlePos.z;
+      const dz = aimZ - muzzlePos.z;
       const hDist = Math.max(1e-4, rawHoriz);
       aimPitch = (Math.atan2(dz, hDist) * 180) / Math.PI;
     } else if (guided && loft.loftPitchDeg !== null) {
@@ -998,6 +1119,7 @@ function stepSalvoQueue(
       hp: 1,
       loftTicksRemaining: loft.loftTicks,
       isIndirect: item.isIndirect,
+      aimPoint,
     });
 
     item.remainingShots -= 1;
@@ -1056,6 +1178,7 @@ function tryFireWeaponSlot(
           ? 40
           : 30;
 
+  const aimPoint: AimPointMode = control.aimPoint ?? 'torso';
   let aimYaw = torsoWorldYaw;
   let aimPitch = control.targetPitch ?? mech.pitchDeg;
   let rawHoriz = 999;
@@ -1063,8 +1186,9 @@ function tryFireWeaponSlot(
   let hasDirectLos = true;
 
   if (target) {
-    const rawDx = target.pos.x - muzzlePos.x;
-    const rawDy = target.pos.y - muzzlePos.y;
+    const baseAimPos = resolveTargetAimPointWorld(target, muzzlePos, aimPoint);
+    const rawDx = baseAimPos.x - muzzlePos.x;
+    const rawDy = baseAimPos.y - muzzlePos.y;
     rawHoriz = Math.hypot(rawDx, rawDy);
     const isInstantBeam = spec.kind === 'laser' || spec.kind === 'melee';
     const flightTime =
@@ -1073,11 +1197,10 @@ function tryFireWeaponSlot(
         : 0;
     const leadWeight = !isInstantBeam && spec.projectileSpeed > 0 ? 1.0 : 0;
     const aimTarget: Vec3 = {
-      x: target.pos.x + target.vel.x * flightTime * leadWeight,
-      y: target.pos.y + target.vel.y * flightTime * leadWeight,
+      x: baseAimPos.x + target.vel.x * flightTime * leadWeight,
+      y: baseAimPos.y + target.vel.y * flightTime * leadWeight,
       z:
-        target.pos.z +
-        getMechCenterZ(target.stats.sizeScale) +
+        baseAimPos.z +
         target.vel.z * flightTime * 0.5 +
         0.5 * spec.projectileGravity * flightTime * flightTime,
     };
@@ -1156,10 +1279,12 @@ function tryFireWeaponSlot(
     }
   }
 
-  // Continuous burn beam weapon (Laser): spawns ActiveBeamState(s) stepped per tick
+  const dynamicSpread = computeDynamicSpreadDeg(mech, target, spec);
+
+  // Continuous burn beam weapon (Laser): spawns ActiveBeamState(s) with in-burn sweep drift
   if (spec.kind === 'laser') {
     const headPenaltySpread = mech.parts.head.destroyed ? 3.5 : 0;
-    const totalSpread = spec.spreadDeg + headPenaltySpread;
+    const totalSpread = spec.spreadDeg + dynamicSpread + headPenaltySpread;
     const burnTicks = Math.max(1, Math.round((spec.burnDurationSec ?? 0.6) * SIM_TPS));
     const maxRange = getWeaponMaxRange(spec);
     const beamColor =
@@ -1171,10 +1296,27 @@ function tryFireWeaponSlot(
             ? '#38bdf8'
             : '#22d3ee';
 
+    const targetDist = clamp(rawHoriz, 45, 450);
+    const shooterSpeedRatio = clamp(
+      Math.hypot(mech.vel.x, mech.vel.y) / Math.max(1, mech.stats.walkSpeed),
+      0,
+      1.4
+    );
+    const targetTransversal = computeTargetTransversalSpeed(muzzlePos, target);
+    const sweepMeters =
+      (1.5 + (spec.burnDurationSec ?? 0.6) * 1.4) *
+      (1 + shooterSpeedRatio * 0.45 + (mech.grounded ? 0 : 0.55) + clamp(targetTransversal / 20, 0, 1) * 0.4);
+    const totalSweepDeg = clamp(radToDeg(Math.atan2(sweepMeters, targetDist)), 0.25, 2.4);
+
     for (let m = 0; m < actualCount; m++) {
       const mountYawOffset = actualCount > 1 ? (m - (actualCount - 1) * 0.5) * 0.28 : 0;
-      const spreadYawOffset = (nextMechRand(mech) - 0.5) * 2 * totalSpread + mountYawOffset;
-      const spreadPitchOffset = (nextMechRand(mech) - 0.5) * 2 * totalSpread;
+      const driftAngle = nextMechRand(mech) * Math.PI * 2;
+      const sweepYaw = Math.cos(driftAngle) * totalSweepDeg;
+      const sweepPitch = Math.sin(driftAngle) * totalSweepDeg * 0.45;
+      const spreadYawOffset =
+        (nextMechRand(mech) + nextMechRand(mech) - 1) * totalSpread + mountYawOffset - sweepYaw * 0.5;
+      const spreadPitchOffset =
+        (nextMechRand(mech) + nextMechRand(mech) - 1) * totalSpread * 0.7 - sweepPitch * 0.5;
 
       state.activeBeams.push({
         id: state.nextBeamId++,
@@ -1183,6 +1325,7 @@ function tryFireWeaponSlot(
         slot,
         weaponId: spec.id,
         targetId: target?.id ?? null,
+        aimPoint,
         originPos: { ...muzzlePos },
         endPos: { ...muzzlePos },
         damagePerTick: spec.damage / burnTicks,
@@ -1192,6 +1335,8 @@ function tryFireWeaponSlot(
         totalTicks: burnTicks,
         spreadYawOffset,
         spreadPitchOffset,
+        driftYawPerTick: sweepYaw / burnTicks,
+        driftPitchPerTick: sweepPitch / burnTicks,
         color: beamColor,
       });
     }
@@ -1212,8 +1357,8 @@ function tryFireWeaponSlot(
     for (const other of state.mechs) {
       if (!other.alive || other.id === mech.id) continue;
       if (!state.rules.friendlyFire && other.teamId === mech.teamId) continue;
-      const otherCenterZ = other.pos.z + getMechCenterZ(other.stats.sizeScale);
-      const dist = distance3D(muzzlePos.x, muzzlePos.y, muzzlePos.z, other.pos.x, other.pos.y, otherCenterZ);
+      const meleeAimPos = resolveTargetAimPointWorld(other, muzzlePos, aimPoint);
+      const dist = distance3D(muzzlePos.x, muzzlePos.y, muzzlePos.z, meleeAimPos.x, meleeAimPos.y, meleeAimPos.z);
       if (dist > spec.range) continue;
       const toOtherX = other.pos.x - mech.pos.x;
       const toOtherY = other.pos.y - mech.pos.y;
@@ -1223,14 +1368,14 @@ function tryFireWeaponSlot(
 
       const hit = testProjectileHitMech(
         muzzlePos,
-        { x: other.pos.x, y: other.pos.y, z: otherCenterZ },
+        meleeAimPos,
         other.pos,
         other.yawDeg,
         getMechTorsoWorldYaw(other),
         other.stats.sizeScale
       );
       if (hit) {
-        resolveHitOnMech(state, mech, other, hit, spec.damage * actualCount, false, 89, tickEvents);
+        resolveHitOnMech(state, mech, other, hit, spec.damage * actualCount, false, 89, tickEvents, spec.id);
         break;
       }
     }
@@ -1239,7 +1384,7 @@ function tryFireWeaponSlot(
 
   // Spawn projectile(s)
   const headPenaltySpread = mech.parts.head.destroyed ? 3.5 : 0;
-  const totalSpread = spec.spreadDeg + headPenaltySpread + indirectExtraSpread;
+  const totalSpread = spec.spreadDeg + dynamicSpread + headPenaltySpread + indirectExtraSpread;
   const isMissileKind =
     spec.kind === 'lrm_homing' || spec.kind === 'srm_homing' || spec.kind === 'srm_rocket';
   const minRangeMult = spec.minRange && rawHoriz < spec.minRange ? 0 : 1.0;
@@ -1270,6 +1415,7 @@ function tryFireWeaponSlot(
         hp: 1,
         loftTicksRemaining: loft.loftTicks,
         isIndirect,
+        aimPoint,
       });
     }
 
@@ -1282,6 +1428,7 @@ function tryFireWeaponSlot(
         targetId: target?.id ?? null,
         isIndirect,
         guided,
+        aimPoint,
       });
     }
     return;
@@ -1319,6 +1466,7 @@ function tryFireWeaponSlot(
         homingTurnDegPerSec: srmHoming,
         hp: missileHp,
         loftTicksRemaining: 0,
+        aimPoint,
       });
     }
   }
@@ -1332,7 +1480,8 @@ function resolveHitOnMech(
   rawDamage: number,
   canRicochet: boolean,
   ricochetAngleDeg: number,
-  tickEvents: SimCombatEvent[]
+  tickEvents: SimCombatEvent[],
+  weaponId?: string
 ): boolean {
   const evalResult = computeArmorDamageResult({
     rawDamage,
@@ -1352,11 +1501,13 @@ function resolveHitOnMech(
       face: hit.face,
       damage: 0,
       pos: { ...hit.hitWorldPos },
+      ...(weaponId ? { weaponId } : {}),
     });
     return false;
   }
 
-  const dmgResult = applyDamageToMechParts(target, hit, evalResult.finalDamage, state.rules);
+  const splashRatio = weaponId === 'ac10' || weaponId === 'ac20' || weaponId === 'ppc' ? 0.15 : 0;
+  const dmgResult = applyDamageToMechParts(target, hit, evalResult.finalDamage, state.rules, splashRatio);
 
   target.lastHitTick = state.tick;
   if (attacker) {
@@ -1375,6 +1526,7 @@ function resolveHitOnMech(
     face: hit.face,
     damage: dmgResult.appliedDamage,
     pos: { ...hit.hitWorldPos },
+    ...(weaponId ? { weaponId } : {}),
   });
 
   for (const brokenPart of dmgResult.newlyDestroyedParts) {
@@ -1385,6 +1537,7 @@ function resolveHitOnMech(
       targetId: target.id,
       partId: brokenPart,
       pos: { ...target.pos },
+      ...(weaponId ? { weaponId } : {}),
     });
   }
 
@@ -1397,7 +1550,10 @@ function resolveHitOnMech(
       type: 'mech_destroyed',
       actorId: attacker?.id ?? '',
       targetId: target.id,
+      partId: hit.partId,
+      face: hit.face,
       pos: { ...target.pos },
+      ...(weaponId ? { weaponId } : {}),
       detail: target.destroyedReason ?? undefined,
     });
   }
@@ -1750,9 +1906,10 @@ export function stepSimulation(
       ? state.mechs.find((m) => m.id === beam.targetId && m.alive && m.teamId !== shooter.teamId)
       : undefined;
     if (target) {
-      const dx = target.pos.x - muzzlePos.x;
-      const dy = target.pos.y - muzzlePos.y;
-      const dz = target.pos.z + getMechCenterZ(target.stats.sizeScale) - muzzlePos.z;
+      const beamTargetPos = resolveTargetAimPointWorld(target, muzzlePos, beam.aimPoint ?? 'torso');
+      const dx = beamTargetPos.x - muzzlePos.x;
+      const dy = beamTargetPos.y - muzzlePos.y;
+      const dz = beamTargetPos.z - muzzlePos.z;
       const horizDist = Math.hypot(dx, dy);
       if (horizDist > 1e-4) {
         desiredYaw = vectorToAngle2D(dx, dy);
@@ -1813,7 +1970,8 @@ export function stepSimulation(
           tickDmg,
           false,
           89,
-          tickEvents
+          tickEvents,
+          beam.weaponId
         );
       }
     } else if (terrainHit.hit && terrainHit.hitPos) {
@@ -1828,6 +1986,7 @@ export function stepSimulation(
         tick: state.tick,
         type: 'fire',
         actorId: shooter.id,
+        weaponId: beam.weaponId,
         pos: { ...muzzlePos },
         endPos: { ...visualEnd },
         detail: 'laser',
@@ -1836,6 +1995,8 @@ export function stepSimulation(
 
     beam.ticksRemaining -= 1;
     if (beam.ticksRemaining > 0) {
+      beam.spreadYawOffset += beam.driftYawPerTick ?? 0;
+      beam.spreadPitchOffset += beam.driftPitchPerTick ?? 0;
       remainingBeams.push(beam);
     }
   }
@@ -2024,15 +2185,15 @@ export function stepSimulation(
           scatterZ = (h2 * 3.6 - 0.2) * indirectMult;
         }
 
-        const aimX = tgt.pos.x + tgt.vel.x * tGo * 0.55 + lateralX;
-        const aimY = tgt.pos.y + tgt.vel.y * tGo * 0.55 + lateralY;
+        const baseAim = resolveTargetAimPointWorld(tgt, proj.pos, proj.aimPoint ?? 'torso');
+        const aimX = baseAim.x + tgt.vel.x * tGo * 0.55 + lateralX;
+        const aimY = baseAim.y + tgt.vel.y * tGo * 0.55 + lateralY;
         const rawAimZ =
-          tgt.pos.z +
-          getMechCenterZ(tgt.stats.sizeScale) +
+          baseAim.z +
           tgt.vel.z * tGo * 0.5 +
           scatterZ +
           0.5 * proj.gravity * tGo * tGo;
-        const aimZ = Math.max(tgt.pos.z + 1.5 * tgt.stats.sizeScale, rawAimZ);
+        const aimZ = Math.max(tgt.pos.z + 1.0 * tgt.stats.sizeScale, rawAimZ);
 
         const desired = {
           x: aimX - proj.pos.x,
@@ -2118,7 +2279,8 @@ export function stepSimulation(
           proj.damage * rangeMult,
           proj.canRicochet,
           proj.ricochetAngleDeg,
-          tickEvents
+          tickEvents,
+          proj.weaponId
         );
         if (
           landed &&

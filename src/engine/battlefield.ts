@@ -286,12 +286,16 @@ export function createSimFromReplay(replay: ReplayPackageData): {
     teamId: p.teamId,
     blueprint: p.mech,
     pilot: p.pilot,
+    ...(p.isBalloon ? { isBalloon: true } : {}),
+    ...(typeof p.balloonHp === 'number' ? { balloonHp: p.balloonHp } : {}),
+    ...(p.spawnOverride ? { spawnOverride: p.spawnOverride } : {}),
   }));
 
   const sim = createSimulation({
     seed: replay.matchSeed,
     rules: replay.rules,
     entries,
+    ...(replay.captureZones ? { captureZones: replay.captureZones } : {}),
   });
 
   const pilotProfiles: Record<string, PilotProfile> = {};

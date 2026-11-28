@@ -138,6 +138,8 @@ export function MechCanvas3D({
   const terrainKeyRef = useRef<string>('');
   const tacticalGroupRef = useRef<THREE.Group | null>(null);
   const tacticalSpecKeyRef = useRef<string>('');
+  const captureZonesGroupRef = useRef<THREE.Group | null>(null);
+  const captureZonesKeyRef = useRef<string>('');
   const rigsRef = useRef<Map<string, MechRig3D>>(new Map());
   const effectsRef = useRef<EffectsManager3D | null>(null);
   const storedPopupsRef = useRef<StoredPopup[]>([]);
@@ -244,7 +246,7 @@ export function MechCanvas3D({
       const mountsSig = Object.entries(mech.blueprint.weaponMountCounts ?? {})
         .map(([k, v]) => `${k}:${v}`)
         .join(',');
-      const sig = `${mech.blueprint.id}|${mech.blueprint.chassisId}|${mech.blueprint.boosterEnabled ? 1 : 0}|${mech.blueprint.color}|${Object.values(mech.blueprint.parts).join(',')}|${mountsSig}`;
+      const sig = `${mech.blueprint.id}|${mech.isBalloon ? 1 : 0}|${mech.blueprint.chassisId}|${mech.blueprint.boosterEnabled ? 1 : 0}|${mech.blueprint.color}|${Object.values(mech.blueprint.parts).join(',')}|${mountsSig}`;
       let rig = rigsRef.current.get(mech.id);
       if (!rig || rig.blueprintSignature !== sig || rig.teamColorHex !== teamHex) {
         if (rig) {
@@ -263,6 +265,52 @@ export function MechCanvas3D({
         state.tick,
         state.lastTickEvents
       );
+    }
+
+    // 2b. Sync training capture zones (if any)
+    if (captureZonesGroupRef.current) {
+      const czGroup = captureZonesGroupRef.current;
+      const zones = state.captureZones ?? [];
+      const czKey = zones
+        .map((z) => `${z.id}:${Math.round(z.x)}:${Math.round(z.y)}:${Math.round(z.radius)}:${z.captured ? 1 : 0}:${Math.round(z.progressSec * 10)}`)
+        .join('|');
+      if (captureZonesKeyRef.current !== czKey) {
+        while (czGroup.children.length > 0) {
+          const c = czGroup.children[0];
+          czGroup.remove(c);
+          disposeObject3D(c);
+        }
+        for (const zone of zones) {
+          const surfaceZ = zone.z ?? getSurfaceHeight(state.terrain, zone.x, zone.y);
+          const pos = new THREE.Vector3();
+          simToThreePos({ x: zone.x, y: zone.y, z: surfaceZ }, state.terrain, pos);
+          const color = zone.captured ? '#22c55e' : '#38bdf8';
+          const ringGeo = new THREE.RingGeometry(Math.max(1, zone.radius - 1.6), zone.radius, 36);
+          ringGeo.rotateX(-Math.PI / 2);
+          const ringMesh = new THREE.Mesh(
+            ringGeo,
+            new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.78 })
+          );
+          ringMesh.position.set(pos.x, pos.y + 0.35, pos.z);
+          czGroup.add(ringMesh);
+
+          const pct = zone.holdSec > 0 ? clamp(zone.progressSec / zone.holdSec, 0.06, 1) : 1;
+          const fillGeo = new THREE.CircleGeometry(zone.radius * pct, 28);
+          fillGeo.rotateX(-Math.PI / 2);
+          const fillMesh = new THREE.Mesh(
+            fillGeo,
+            new THREE.MeshBasicMaterial({
+              color: zone.captured ? '#22c55e' : '#fbbf24',
+              side: THREE.DoubleSide,
+              transparent: true,
+              opacity: zone.captured ? 0.28 : 0.18,
+            })
+          );
+          fillMesh.position.set(pos.x, pos.y + 0.25, pos.z);
+          czGroup.add(fillMesh);
+        }
+        captureZonesKeyRef.current = czKey;
+      }
     }
 
     // 3. Effects, projectiles, beams & Web Audio SFX
@@ -848,6 +896,12 @@ export function MechCanvas3D({
     tacticalGroupRef.current = tacticalGroup;
     tacticalSpecKeyRef.current = '';
 
+    const captureZonesGroup = new THREE.Group();
+    captureZonesGroup.name = 'capture_zones';
+    scene.add(captureZonesGroup);
+    captureZonesGroupRef.current = captureZonesGroup;
+    captureZonesKeyRef.current = '';
+
     const effects = new EffectsManager3D();
     scene.add(effects.group);
 
@@ -943,6 +997,12 @@ export function MechCanvas3D({
         terrainGroupRef.current = null;
       }
       terrainKeyRef.current = '';
+      if (captureZonesGroupRef.current) {
+        scene.remove(captureZonesGroupRef.current);
+        disposeObject3D(captureZonesGroupRef.current);
+        captureZonesGroupRef.current = null;
+      }
+      captureZonesKeyRef.current = '';
       if (tacticalGroupRef.current) {
         disposeObject3D(tacticalGroupRef.current);
         tacticalGroupRef.current = null;

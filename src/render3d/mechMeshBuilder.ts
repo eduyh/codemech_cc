@@ -285,10 +285,122 @@ function buildLegAssembly(
   return pivot;
 }
 
+function buildBalloonRig(mech: MechRuntimeState, teamColorHex: string): MechRig3D {
+  const root = new THREE.Group();
+  root.name = `balloon_${mech.id}`;
+
+  const bodyGroup = new THREE.Group();
+  root.add(bodyGroup);
+  const upperBodyGroup = new THREE.Group();
+  bodyGroup.add(upperBodyGroup);
+
+  const primaryColor = new THREE.Color(mech.blueprint.color || '#f43f5e');
+  const armorMat = new THREE.MeshLambertMaterial({ color: primaryColor, flatShading: false });
+  const heatVentMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
+  const cordMat = new THREE.MeshBasicMaterial({ color: '#cbd5e1' });
+  const baseMat = new THREE.MeshLambertMaterial({ color: '#334155', flatShading: true });
+
+  const sphere = new THREE.Mesh(new THREE.SphereGeometry(2.55, 16, 14), armorMat);
+  sphere.position.set(0, 6.2, 0);
+  const band = new THREE.Mesh(new THREE.TorusGeometry(2.58, 0.16, 8, 24), heatVentMat);
+  band.position.set(0, 6.2, 0);
+  band.rotation.x = Math.PI * 0.5;
+  const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 4.2, 6), cordMat);
+  cord.position.set(0, 2.2, 0);
+  const anchor = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 1.05, 0.5, 10), baseMat);
+  anchor.position.set(0, 0.25, 0);
+
+  const torsoGroup = new THREE.Group();
+  torsoGroup.add(sphere, band);
+  upperBodyGroup.add(torsoGroup);
+  bodyGroup.add(cord, anchor);
+
+  const sizeScale = mech.stats.sizeScale;
+  bodyGroup.scale.setScalar(sizeScale);
+  bodyGroup.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (mesh.isMesh) {
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+    }
+  });
+  tagClickable(bodyGroup, mech.id);
+
+  const shadowGeo = new THREE.CircleGeometry(2.4 * sizeScale, 16);
+  shadowGeo.rotateX(-Math.PI / 2);
+  const groundShadow = new THREE.Mesh(
+    shadowGeo,
+    new THREE.MeshBasicMaterial({ color: '#020617', transparent: true, opacity: 0.4 })
+  );
+  root.add(groundShadow);
+
+  const ringGeo = new THREE.RingGeometry(3.0 * sizeScale, 3.6 * sizeScale, 24);
+  ringGeo.rotateX(-Math.PI / 2);
+  const focusRing = new THREE.Mesh(
+    ringGeo,
+    new THREE.MeshBasicMaterial({ color: '#ffffff', side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+  );
+  focusRing.position.y = 0.2;
+  focusRing.visible = false;
+  root.add(focusRing);
+
+  const altGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, -1, 0),
+  ]);
+  const altitudeLine = new THREE.Line(
+    altGeo,
+    new THREE.LineBasicMaterial({ color: '#f43f5e', transparent: true, opacity: 0.55 })
+  );
+  altitudeLine.visible = false;
+  root.add(altitudeLine);
+
+  const emptyGroup = () => new THREE.Group();
+
+  return {
+    mechId: mech.id,
+    blueprintId: mech.blueprint.id,
+    blueprintSignature: `${mech.blueprint.id}|balloon|${mech.blueprint.color}`,
+    teamColorHex,
+    root,
+    bodyGroup,
+    upperBodyGroup,
+    partGroups: {
+      head: emptyGroup(),
+      torso: torsoGroup,
+      rightShoulder: emptyGroup(),
+      rightArm: emptyGroup(),
+      leftShoulder: emptyGroup(),
+      leftArm: emptyGroup(),
+      rightLeg: emptyGroup(),
+      leftLeg: emptyGroup(),
+    },
+    rightLegPivot: emptyGroup(),
+    leftLegPivot: emptyGroup(),
+    rightArmPivot: emptyGroup(),
+    leftArmPivot: emptyGroup(),
+    boosterFlames: [],
+    armorMat,
+    heatVentMat,
+    altitudeLine,
+    groundShadow,
+    focusRing,
+    stridePhase: 0,
+    recoilKick: 0,
+    recoilArmSide: 'both',
+    hitFlashTicks: 0,
+    lastSeenHitTick: -1,
+    lastAnimTick: -1,
+  };
+}
+
 export function buildProceduralMechRig(
   mech: MechRuntimeState,
   teamColorHex: string
 ): MechRig3D {
+  if (mech.isBalloon) {
+    return buildBalloonRig(mech, teamColorHex);
+  }
   const root = new THREE.Group();
   root.name = `mech_${mech.id}`;
 
@@ -695,7 +807,9 @@ export function updateMechRigAnimation(
   const horizSpeed = Math.hypot(mech.vel.x, mech.vel.y);
   const isHover = getChassisSpec(mech.blueprint.chassisId).legStyle === 'hover';
 
-  if (!mech.grounded) {
+  if (mech.isBalloon) {
+    rig.bodyGroup.position.y = Math.sin(simTick * 0.14 + mech.slotIndex) * 0.45 + 0.35;
+  } else if (!mech.grounded) {
     rig.rightLegPivot.rotation.x = 0.35;
     rig.leftLegPivot.rotation.x = -0.25;
   } else if (isHover) {

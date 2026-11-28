@@ -255,12 +255,54 @@ export function createSimulation(config: MatchConfig): SimState {
   const mechs: MechRuntimeState[] = config.entries.map((entry, slotIndex) => {
     const bp = entry.blueprint;
     const stats = computeMechStats(bp);
-    const spawn = spawns.get(entry.id) ?? { x: rules.arenaWidth * 0.5, y: rules.arenaDepth * 0.5, z: 0, yaw: 0 };
+    const defaultSpawn = spawns.get(entry.id) ?? {
+      x: rules.arenaWidth * 0.5,
+      y: rules.arenaDepth * 0.5,
+      z: 0,
+      yaw: 0,
+    };
+    const spawn = entry.spawnOverride
+      ? {
+          x: entry.spawnOverride.x,
+          y: entry.spawnOverride.y,
+          z:
+            entry.spawnOverride.z ??
+            getSurfaceHeight(terrain, entry.spawnOverride.x, entry.spawnOverride.y),
+          yaw: entry.spawnOverride.yaw ?? defaultSpawn.yaw,
+        }
+      : defaultSpawn;
 
     const rArm = getArmWeaponSpec(bp.parts.rightArmWeapon);
     const lArm = getArmWeaponSpec(bp.parts.leftArmWeapon);
     const rShd = getShoulderWeaponSpec(bp.parts.rightShoulderWeapon);
     const lShd = getShoulderWeaponSpec(bp.parts.leftShoulderWeapon);
+
+    const parts = createInitialPartsState(bp);
+    if (entry.isBalloon && typeof entry.balloonHp === 'number' && entry.balloonHp > 0) {
+      const hp = Math.max(4, Math.round(entry.balloonHp));
+      const frontA = Math.max(1, Math.round(hp * 0.35));
+      const struct = Math.max(2, hp - frontA);
+      parts.torso.frontArmor = frontA;
+      parts.torso.maxFrontArmor = frontA;
+      parts.torso.rearArmor = frontA;
+      parts.torso.maxRearArmor = frontA;
+      parts.torso.structure = struct;
+      parts.torso.maxStructure = struct;
+      for (const single of [parts.head, parts.rightArm, parts.leftArm, parts.rightLeg, parts.leftLeg]) {
+        single.armor = Math.max(1, Math.round(frontA * 0.6));
+        single.maxArmor = single.armor;
+        single.structure = Math.max(2, Math.round(struct * 0.6));
+        single.maxStructure = single.structure;
+      }
+      for (const dual of [parts.rightShoulder, parts.leftShoulder]) {
+        dual.frontArmor = Math.max(1, Math.round(frontA * 0.7));
+        dual.maxFrontArmor = dual.frontArmor;
+        dual.rearArmor = dual.frontArmor;
+        dual.maxRearArmor = dual.frontArmor;
+        dual.structure = Math.max(2, Math.round(struct * 0.7));
+        dual.maxStructure = dual.structure;
+      }
+    }
 
     return {
       id: entry.id,
@@ -268,6 +310,7 @@ export function createSimulation(config: MatchConfig): SimState {
       teamId: entry.teamId,
       slotIndex,
       color: bp.color,
+      ...(entry.isBalloon ? { isBalloon: true } : {}),
       blueprint: bp,
       stats,
       pos: { x: spawn.x, y: spawn.y, z: spawn.z },
@@ -287,7 +330,7 @@ export function createSimulation(config: MatchConfig): SimState {
       thermalShutdown: false,
       overrideShutdownActive: false,
       overheatDamageTaken: 0,
-      parts: createInitialPartsState(bp),
+      parts,
       weapons: {
         rightArm: {
           slot: 'rightArm',
@@ -340,6 +383,15 @@ export function createSimulation(config: MatchConfig): SimState {
     rules,
     terrain,
     mechs,
+    ...(config.captureZones && config.captureZones.length > 0
+      ? {
+          captureZones: config.captureZones.map((z) => ({
+            ...z,
+            progressSec: 0,
+            captured: false,
+          })),
+        }
+      : {}),
     projectiles: [],
     nextProjectileId: 1,
     activeBeams: [],
@@ -2350,7 +2402,47 @@ export function stepSimulation(
   state.projectiles = remainingProjectiles;
   state.lastTickEvents = tickEvents;
 
+  // 3b. Update training capture zones (if any)
+  if (state.captureZones && state.captureZones.length > 0) {
+    const defaultCapTeam = state.mechs[0]?.teamId ?? 'T1';
+    for (const zone of state.captureZones) {
+      if (zone.captured) continue;
+      const capTeam = zone.teamId ?? defaultCapTeam;
+      const inside = state.mechs.some(
+        (m) =>
+          m.alive &&
+          m.teamId === capTeam &&
+          distance2D(m.pos.x, m.pos.y, zone.x, zone.y) <= zone.radius &&
+          (zone.z === undefined || m.pos.z >= zone.z - 2.5)
+      );
+      if (inside) {
+        zone.progressSec = Math.min(zone.holdSec, zone.progressSec + SIM_DT);
+        if (zone.progressSec >= zone.holdSec) {
+          zone.captured = true;
+        }
+      }
+    }
+  }
+
   // 4. Check victory / timeout
+  if (state.captureZones && state.captureZones.length > 0) {
+    const capTeam = state.captureZones[0].teamId ?? state.mechs[0]?.teamId ?? 'T1';
+    const allyAlive = state.mechs.some((m) => m.alive && m.teamId === capTeam);
+    const livingEnemy = state.mechs.find((m) => m.alive && m.teamId !== capTeam);
+    const allZonesCaptured = state.captureZones.every((z) => z.captured);
+    if (!allyAlive) {
+      state.finished = true;
+      state.winnerTeamId = livingEnemy ? livingEnemy.teamId : 'draw';
+    } else if (allZonesCaptured && !livingEnemy) {
+      state.finished = true;
+      state.winnerTeamId = capTeam;
+    } else if (state.time >= state.rules.maxSeconds) {
+      state.finished = true;
+      state.winnerTeamId = 'draw';
+    }
+    return state;
+  }
+
   const aliveTeams = new Set<string>();
   for (const m of state.mechs) {
     if (m.alive) aliveTeams.add(m.teamId);

@@ -96,7 +96,7 @@ describe('userProfile, Commander + UUID & backup/restore', () => {
         },
       ])
     );
-    srcStore.setItem('codemech_curriculum_v2', JSON.stringify(['step0_robot_4x4']));
+    srcStore.setItem('codemech_curriculum_v2', JSON.stringify(['p1_1_capture_walk']));
 
     const backupJson = exportFullBackupJson('0.4.1', srcStore);
     const parsed = parseBackupJson(backupJson);

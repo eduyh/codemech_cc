@@ -17,6 +17,7 @@ import { DEFAULT_PILOT_PROFILE, PRESET_ABC } from '../data/presets';
 import { clamp, normalizeMatchSeed } from '../engine/math';
 import {
   ArenaPresetId,
+  CaptureZoneSpec,
   LrmFireMode,
   MECH_SUBROUTINE_SLOT_SPECS,
   MatchRules,
@@ -24,6 +25,7 @@ import {
   MechSubroutine,
   MechSubroutineSlotId,
   PilotProfile,
+  SpawnOverride,
   WeaponSlotId,
 } from '../types/mech';
 import {
@@ -113,6 +115,9 @@ export interface ReplayParticipantData {
   mech: MechBlueprint;
   pilot: PilotProfile;
   battleOnly?: boolean;
+  isBalloon?: boolean;
+  balloonHp?: number;
+  spawnOverride?: SpawnOverride;
 }
 
 export interface ReplayPackageData {
@@ -121,6 +126,7 @@ export interface ReplayPackageData {
   matchSeed: number;
   rules: MatchRules;
   participants: ReplayParticipantData[];
+  captureZones?: CaptureZoneSpec[];
 }
 
 export interface ExtractedMechCandidate {

@@ -18,7 +18,7 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import { CurriculumPanel } from './components/CurriculumPanel';
+import { CurriculumPanel, MissionArenaSyncPayload } from './components/CurriculumPanel';
 import { GridProgramEditor } from './components/GridProgramEditor';
 import { MechCanvas3D } from './components/MechCanvas3D';
 import { MechGarage } from './components/MechGarage';
@@ -89,6 +89,7 @@ import {
   loadUserProfile,
   saveUserProfile,
 } from './utils/userProfile';
+import { loadTeacherUnlockMode, saveTeacherUnlockMode } from './utils/curriculumProgress';
 import { createSimFromReplay } from './engine/battlefield';
 import { buildMechSensorState, createSimulation, stepSimulation } from './engine/mechSim';
 import {
@@ -256,6 +257,7 @@ export default function App() {
   const [savedMechs, setSavedMechs] = useState<SavedCustomMech[]>(() => loadSavedCustomMechs());
   const [savedTeams, setSavedTeams] = useState<SavedTeamEntry[]>(() => loadSavedTeams());
   const [userProfile, setUserProfile] = useState<UserProfile>(() => loadUserProfile());
+  const [teacherMode, setTeacherMode] = useState<boolean>(() => loadTeacherUnlockMode());
   const [menuOpen, setMenuOpen] = useState(false);
   const [starterEdited, setStarterEdited] = useState(false);
   const [setupTag, setSetupTag] = useState(() => getEditableModelTagFromBlueprint(playerMech));
@@ -266,6 +268,11 @@ export default function App() {
     structuredClone(DEFAULT_PILOT_PROFILE)
   );
   const [studioTab, setStudioTab] = useState<StudioTab>('program');
+  const [activeMissionArena, setActiveMissionArena] = useState<MissionArenaSyncPayload | null>(null);
+  const activeMissionArenaRef = useRef<MissionArenaSyncPayload | null>(null);
+  const curriculumRunTestRef = useRef<(() => void) | null>(null);
+  const studioTabRef = useRef<StudioTab>('program');
+  studioTabRef.current = studioTab;
   const [shareOpen, setShareOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<1 | 2 | 4>(1);
@@ -466,6 +473,53 @@ export default function App() {
     [allRoms, allPilots, formatId, arenaPreset, seed, resetMatch]
   );
 
+  const handleSyncMissionArena = useCallback(
+    (payload: MissionArenaSyncPayload, autoPlay: boolean) => {
+      activeMissionArenaRef.current = payload;
+      setActiveMissionArena(payload);
+      const built = createSimFromReplay(payload.replay);
+      simRef.current = built.sim;
+      slowMoUntilRef.current = 0;
+      pilotProfilesRef.current = built.pilotProfiles;
+      pilotRuntimesRef.current = built.pilotRuntimes;
+      setFocusedMechId(built.sim.mechs[0]?.id ?? 'player');
+      setPlayerDebugTrace(null);
+      setPlaying(autoPlay);
+      setRenderTick((n) => n + 1);
+    },
+    []
+  );
+
+  const handleRestartRightSim = useCallback(
+    (autoPlay: boolean) => {
+      if (studioTabRef.current === 'curriculum' && activeMissionArenaRef.current) {
+        handleSyncMissionArena(activeMissionArenaRef.current, autoPlay);
+        return;
+      }
+      resetMatch(formatId, arenaPreset, playerMechRef.current, seed, autoPlay);
+    },
+    [formatId, arenaPreset, seed, resetMatch, handleSyncMissionArena]
+  );
+
+  const handleSwitchStudioTab = useCallback(
+    (nextTab: StudioTab) => {
+      const prevTab = studioTabRef.current;
+      if (nextTab === 'garage' || nextTab === 'team') {
+        setPlaying(false);
+      }
+      if (
+        prevTab === 'curriculum' &&
+        nextTab !== 'curriculum' &&
+        nextTab !== 'garage' &&
+        nextTab !== 'team'
+      ) {
+        resetMatch(formatId, arenaPreset, playerMechRef.current, seed, false, playerPilotRef.current);
+      }
+      setStudioTab(nextTab);
+    },
+    [formatId, arenaPreset, seed, resetMatch]
+  );
+
   const handleSaveUserRom = useCallback(
     (input: {
       id?: string;
@@ -624,15 +678,16 @@ export default function App() {
 
     for (const mech of sim.mechs) {
       if (!mech.alive) continue;
-      const isPlayerMech = mech.id === 'mech_0_0' || mech.id === 'player';
-      const profile = isPlayerMech
+      const isPlayerFreePlay = mech.id === 'mech_0_0';
+      const isPlayerFocused = isPlayerFreePlay || mech.id === 'player';
+      const profile = isPlayerFreePlay
         ? playerPilotRef.current
         : pilotProfilesRef.current[mech.id] ?? DEFAULT_PILOT_PROFILE;
       const runtime = pilotRuntimesRef.current[mech.id];
       const sensor = buildMechSensorState(sim, mech.id);
       const out = evaluatePilotTick(profile, runtime, sensor, mech, sim);
       controls[mech.id] = out.control;
-      if (isPlayerMech) {
+      if (isPlayerFocused) {
         nextTrace = out.debugTrace;
       }
     }
@@ -734,6 +789,11 @@ export default function App() {
     return saved;
   }, []);
 
+  const handleChangeTeacherMode = useCallback((enabled: boolean) => {
+    saveTeacherUnlockMode(enabled);
+    setTeacherMode(enabled);
+  }, []);
+
   const handleBackupRestored = useCallback(() => {
     setUserProfile(loadUserProfile());
     setSavedMechs(loadSavedCustomMechs());
@@ -821,32 +881,23 @@ export default function App() {
             <button
               type="button"
               className={studioTab === 'program' ? 'cm-studio-tab is-active' : 'cm-studio-tab'}
-              onClick={() => setStudioTab('program')}
+              onClick={() => handleSwitchStudioTab('program')}
             >
-              <Grid2X2 size={15} />{' '}
-              {playerTierSpec.pilotEnabled
-                ? 'プログラム (6×6 / 4×4×6枠)'
-                : `プログラム (${playerTierSpec.shortLabel})`}
+              <Grid2X2 size={15} /> プログラミング
             </button>
             <button
               type="button"
               className={studioTab === 'garage' ? 'cm-studio-tab is-active' : 'cm-studio-tab'}
-              onClick={() => {
-                setPlaying(false);
-                setStudioTab('garage');
-              }}
+              onClick={() => handleSwitchStudioTab('garage')}
             >
               <Wrench size={15} /> 機体ガレージ
             </button>
             <button
               type="button"
               className={studioTab === 'team' ? 'cm-studio-tab is-active' : 'cm-studio-tab'}
-              onClick={() => {
-                setPlaying(false);
-                setStudioTab('team');
-              }}
+              onClick={() => handleSwitchStudioTab('team')}
             >
-              <Users size={15} /> チーム編成 (180t)
+              <Users size={15} /> チーム編成
             </button>
             <a className="cm-studio-tab cm-studio-tab--arena" href="?app=battlefield">
               <Swords size={15} /> バトルフィールド
@@ -854,7 +905,7 @@ export default function App() {
             <button
               type="button"
               className={studioTab === 'curriculum' ? 'cm-studio-tab is-active' : 'cm-studio-tab'}
-              onClick={() => setStudioTab('curriculum')}
+              onClick={() => handleSwitchStudioTab('curriculum')}
             >
               <Award size={15} /> 学習課題 ({CURRICULUM_MISSIONS.length}問)
             </button>
@@ -938,29 +989,13 @@ export default function App() {
 
           {studioTab === 'curriculum' && (
             <CurriculumPanel
-              playerMech={playerMech}
-              playerPilot={playerPilot}
-              onLoadBrokenStarter={(brokenMech, brokenPilot, mArena, mSeed) => {
-                setPlayerMech(brokenMech);
-                playerMechRef.current = brokenMech;
-                setPlayerPilot(brokenPilot);
-                playerPilotRef.current = brokenPilot;
-                setFormatId('1v1');
-                setArenaPreset(mArena);
-                setSeed(mSeed);
-                resetMatch('1v1', mArena, brokenMech, mSeed, false, brokenPilot);
-                setStudioTab('program');
-              }}
-              onPlayMissionReplay={(replay) => {
-                const built = createSimFromReplay(replay);
-                simRef.current = built.sim;
-                pilotProfilesRef.current = built.pilotProfiles;
-                pilotRuntimesRef.current = built.pilotRuntimes;
-                setFocusedMechId(built.sim.mechs[0]?.id ?? 'player');
-                setPlayerDebugTrace(null);
-                setPlaying(true);
-                setRenderTick((n) => n + 1);
-              }}
+              allRoms={allRoms}
+              userProfile={userProfile}
+              teacherMode={teacherMode}
+              debugTrace={playerDebugTrace}
+              liveSensor={livePlayerSensor}
+              onSyncMissionArena={handleSyncMissionArena}
+              runTestRef={curriculumRunTestRef}
             />
           )}
         </div>
@@ -968,6 +1003,41 @@ export default function App() {
         {!isGarageFull && (
           <div className="cm-col-right">
             <section className="cm-panel">
+              {studioTab === 'curriculum' && activeMissionArena ? (
+                <div className="cm-curr-arena-banner">
+                  <div className="cm-curr-arena-banner-head">
+                    <span className="cm-curr-arena-code">課題 {activeMissionArena.stageCode}</span>
+                    <strong>{activeMissionArena.title}</strong>
+                  </div>
+                  <div className="cm-curr-arena-banner-meta">
+                    <span>
+                      マップ:{' '}
+                      {ARENA_OPTIONS.find((a) => a.id === activeMissionArena.arenaPreset)?.label ??
+                        activeMissionArena.arenaPreset}
+                    </span>
+                    <span>Seed: {activeMissionArena.seed}</span>
+                    {sim.captureZones && sim.captureZones.length > 0 && (
+                      <span className="cm-curr-arena-tag">
+                        🏁 陣とりマス:{' '}
+                        {sim.captureZones
+                          .map((z) =>
+                            z.captured
+                              ? `${z.label} 完了`
+                              : `${z.label} ${Math.round((z.progressSec / Math.max(0.1, z.holdSec)) * 100)}%`
+                          )
+                          .join(', ')}
+                      </span>
+                    )}
+                    {sim.mechs.some((m) => m.isBalloon) && (
+                      <span className="cm-curr-arena-tag">
+                        🎈 標的バルーン:{' '}
+                        {sim.mechs.filter((m) => m.isBalloon && m.alive).length}/
+                        {sim.mechs.filter((m) => m.isBalloon).length}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ) : (
               <div className="cm-ai-setup-card">
                 <div className="cm-ai-setup-head">
                   <span>機体・AI・ルーチンセットアップ</span>
@@ -1259,8 +1329,10 @@ export default function App() {
                   })}
                 </div>
               </div>
+              )}
 
               <div className="cm-sim-control-card">
+                {studioTab !== 'curriculum' && (
                 <div className="cm-battle-cfg-bar">
                 <div className="cm-battle-cfg-row">
                   <label className="cm-ctl">
@@ -1438,6 +1510,7 @@ export default function App() {
                   })}
                 </div>
               </div>
+              )}
 
               <div className="cm-sim-bar">
                 <div className="cm-sim-btns">
@@ -1446,15 +1519,24 @@ export default function App() {
                     className="cm-btn-primary"
                     onClick={() => {
                       battleAudio.unlock();
+                      if (
+                        studioTab === 'curriculum' &&
+                        !playing &&
+                        (sim.tick === 0 || sim.finished) &&
+                        curriculumRunTestRef.current
+                      ) {
+                        curriculumRunTestRef.current();
+                        return;
+                      }
                       if (!playing && sim.finished) {
-                        resetMatch(formatId, arenaPreset, playerMechRef.current, seed, true);
+                        handleRestartRightSim(true);
                         return;
                       }
                       setPlaying((p) => !p);
                     }}
                   >
                     {playing ? <Pause size={15} /> : <Play size={15} />}
-                    {playing ? '一時停止' : '模擬戦再生'}
+                    {playing ? '一時停止' : studioTab === 'curriculum' ? '課題実行' : '模擬戦再生'}
                   </button>
                   <button
                     type="button"
@@ -1470,7 +1552,7 @@ export default function App() {
                   <button
                     type="button"
                     className="cm-btn-secondary"
-                    onClick={() => resetMatch()}
+                    onClick={() => handleRestartRightSim(false)}
                   >
                     <RotateCcw size={15} /> リセット
                   </button>
@@ -1512,9 +1594,15 @@ export default function App() {
                         勝者:{' '}
                         {sim.winnerTeamId === 'T1'
                           ? '味方 (T1)'
-                          : sim.winnerTeamId === 'T2'
-                            ? '敵 (T2)'
-                            : sim.winnerTeamId}
+                          : sim.winnerTeamId === 'T_PLAYER'
+                            ? 'プレイヤー側'
+                            : sim.winnerTeamId === 'T2'
+                              ? '敵 (T2)'
+                              : sim.winnerTeamId === 'T_ENEMY'
+                                ? '演習標的'
+                                : sim.winnerTeamId === 'draw'
+                                  ? '引き分け'
+                                  : sim.winnerTeamId}
                       </span>
                     )}
                   </div>
@@ -1562,13 +1650,19 @@ export default function App() {
                       } ${!m.alive ? 'is-dead' : ''}`}
                     >
                       <span>{m.name}</span>
-                      <small>{m.teamId === 'T1' ? '味方' : '敵'}</small>
+                      <small>
+                        {m.teamId === 'T1' || m.teamId === 'T_PLAYER'
+                          ? '味方'
+                          : m.isBalloon
+                            ? '風船'
+                            : '敵'}
+                      </small>
                     </button>
                   ))}
                 </div>
               </div>
 
-              {formatId === '1v1' && sim.mechs.length === 2 ? (
+              {sim.mechs.length === 2 ? (
                 <div className="cm-dual-parts-hud">
                   <MechPartsHud
                     mech={sim.mechs[0]}
@@ -1580,7 +1674,7 @@ export default function App() {
                   />
                   <MechPartsHud
                     mech={sim.mechs[1]}
-                    roleLabel="敵機"
+                    roleLabel={sim.mechs[1].isBalloon ? '標的バルーン' : '敵機'}
                     accent="enemy"
                     compact
                     selected={sim.mechs[1].id === focusedMechId}
@@ -1664,6 +1758,8 @@ export default function App() {
         }}
         onBackupRestored={handleBackupRestored}
         onOpenShareModal={() => setShareOpen(true)}
+        teacherMode={teacherMode}
+        onChangeTeacherMode={handleChangeTeacherMode}
       />
 
       {expanded2D && (
@@ -1681,20 +1777,30 @@ export default function App() {
                   type="button"
                   className="cm-btn-primary"
                   onClick={() => {
+                    battleAudio.unlock();
+                    if (
+                      studioTab === 'curriculum' &&
+                      !playing &&
+                      (sim.tick === 0 || sim.finished) &&
+                      curriculumRunTestRef.current
+                    ) {
+                      curriculumRunTestRef.current();
+                      return;
+                    }
                     if (!playing && sim.finished) {
-                      resetMatch(formatId, arenaPreset, playerMechRef.current, seed, true);
+                      handleRestartRightSim(true);
                       return;
                     }
                     setPlaying((p) => !p);
                   }}
                 >
                   {playing ? <Pause size={15} /> : <Play size={15} />}
-                  {playing ? '一時停止' : '模擬戦再生'}
+                  {playing ? '一時停止' : studioTab === 'curriculum' ? '課題実行' : '模擬戦再生'}
                 </button>
                 <button
                   type="button"
                   className="cm-btn-secondary"
-                  onClick={() => resetMatch()}
+                  onClick={() => handleRestartRightSim(false)}
                 >
                   <RotateCcw size={15} /> リセット
                 </button>
@@ -1717,9 +1823,15 @@ export default function App() {
                       勝者:{' '}
                       {sim.winnerTeamId === 'T1'
                         ? '味方 (T1)'
-                        : sim.winnerTeamId === 'T2'
-                          ? '敵 (T2)'
-                          : sim.winnerTeamId}
+                        : sim.winnerTeamId === 'T_PLAYER'
+                          ? 'プレイヤー側'
+                          : sim.winnerTeamId === 'T2'
+                            ? '敵 (T2)'
+                            : sim.winnerTeamId === 'T_ENEMY'
+                              ? '演習標的'
+                              : sim.winnerTeamId === 'draw'
+                                ? '引き分け'
+                                : sim.winnerTeamId}
                     </span>
                   )}
                 </div>

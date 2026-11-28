@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Check, Copy, Download, Share2, Upload, User, X } from 'lucide-react';
+import { Check, Copy, Download, Lock, Share2, ShieldCheck, Unlock, Upload, User, X } from 'lucide-react';
+import { CURRICULUM_MISSIONS } from '../data/curriculum';
+import { ClearCodePayload, decodeClearCode } from '../utils/clearCode';
+import { verifyTeacherUnlockCode } from '../utils/curriculumProgress';
 import {
   DEFAULT_USER_NAME,
   UserProfile,
@@ -25,6 +28,8 @@ interface StudioMenuDrawerProps {
   };
   onBackupRestored: () => void;
   onOpenShareModal?: () => void;
+  teacherMode?: boolean;
+  onChangeTeacherMode?: (enabled: boolean) => void;
 }
 
 function downloadJsonFile(filename: string, json: string): void {
@@ -46,12 +51,19 @@ export function StudioMenuDrawer({
   counts,
   onBackupRestored,
   onOpenShareModal,
+  teacherMode = false,
+  onChangeTeacherMode,
 }: StudioMenuDrawerProps) {
   const [nameDraft, setNameDraft] = useState(userProfile.userName);
   const [restoreMode, setRestoreMode] = useState<'merge' | 'overwrite'>('merge');
   const [copiedUuid, setCopiedUuid] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [clearVerifyInput, setClearVerifyInput] = useState('');
+  const [decodedClear, setDecodedClear] = useState<ClearCodePayload | null>(null);
+  const [clearVerifyErr, setClearVerifyErr] = useState<string | null>(null);
+  const [teacherKeyInput, setTeacherKeyInput] = useState('');
+  const [teacherKeyErr, setTeacherKeyErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -269,6 +281,142 @@ export function StudioMenuDrawer({
 
         {errorMsg && <div className="cm-error-box">{errorMsg}</div>}
         {notice && <div className="cm-ok-box">{notice}</div>}
+
+        <section className="cm-drawer-section">
+          <div className="cm-subhead">クリアコード復号テスト (CMK1-)</div>
+          <p className="cm-drawer-help">
+            提出された <code>CMK1-</code> クリアコードを貼り付けて、改ざんチェックと達成進捗を確認できます。
+          </p>
+          <div className="cm-drawer-input-row">
+            <input
+              type="text"
+              aria-label="クリアコード復号入力"
+              placeholder="CMK1-... を貼り付け"
+              value={clearVerifyInput}
+              onChange={(e) => setClearVerifyInput(e.target.value)}
+            />
+            <button
+              type="button"
+              className="cm-btn-xs"
+              onClick={() => {
+                setClearVerifyErr(null);
+                setDecodedClear(null);
+                try {
+                  setDecodedClear(decodeClearCode(clearVerifyInput));
+                } catch (err) {
+                  setClearVerifyErr(
+                    err instanceof Error ? err.message : 'クリアコードの復号に失敗しました。'
+                  );
+                }
+              }}
+            >
+              <ShieldCheck size={13} /> 確認
+            </button>
+          </div>
+          {clearVerifyErr && <div className="cm-error-box">{clearVerifyErr}</div>}
+          {decodedClear && (() => {
+            const total = decodedClear.totalStages ?? CURRICULUM_MISSIONS.length;
+            const stageCodeMap = new Map(CURRICULUM_MISSIONS.map((m) => [m.id, m.stageCode]));
+            const clearedLabels = decodedClear.clearedSteps.map((id) => stageCodeMap.get(id) ?? id);
+            const totalFailedAttempts = Object.values(decodedClear.attemptCounts ?? {}).reduce(
+              (acc, v) => acc + (v ?? 0),
+              0
+            );
+            return (
+              <div className="cm-ok-box cm-drawer-clearcode-res">
+                <div>
+                  提出者: <strong>{decodedClear.studentName}</strong>
+                  {decodedClear.userId ? ` (#${getShortUserId(decodedClear.userId)})` : ''}
+                </div>
+                <div>
+                  全体進捗: <strong>{decodedClear.clearedSteps.length} / {total}</strong>
+                  {typeof decodedClear.part1Cleared === 'number' &&
+                    typeof decodedClear.part2Cleared === 'number' &&
+                    ` （第1部 ${decodedClear.part1Cleared}/12 ・ 第2部 ${decodedClear.part2Cleared}/12）`}
+                </div>
+                <div>
+                  クリア済: {clearedLabels.length > 0 ? clearedLabels.join(', ') : 'なし'}
+                </div>
+                <div>
+                  ヒント閲覧: {decodedClear.hintViewedSteps?.length ?? 0}問 / 模範解答解放:{' '}
+                  {decodedClear.unlockedSolutionSteps?.length ?? 0}問 / 異なる誤試行計:{' '}
+                  {totalFailedAttempts}回
+                </div>
+                {decodedClear.issuedAt && (
+                  <div style={{ fontSize: '0.7rem', opacity: 0.8 }}>
+                    発行日時: {decodedClear.issuedAt}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </section>
+
+        {onChangeTeacherMode && (
+          <section className="cm-drawer-section">
+            <div className="cm-subhead">教員モード（全模範解答ロック解除）</div>
+            <p className="cm-drawer-help">
+              教員用キーを入力すると、学習課題のすべてのステージで即座に模範解答を閲覧・読み込みできます（当日中のみ有効・教員モード中の実行はクリア実績やクリアコードに記録されません）。
+            </p>
+            {teacherMode ? (
+              <div className="cm-ok-box" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                <span>教員モード有効中（クリア実績は記録されません）</span>
+                <button
+                  type="button"
+                  className="cm-btn-xs"
+                  onClick={() => {
+                    onChangeTeacherMode(false);
+                    setTeacherKeyInput('');
+                    setTeacherKeyErr(null);
+                  }}
+                >
+                  <Lock size={12} /> ロックに戻す
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="cm-drawer-input-row">
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={4}
+                    aria-label="教員ロック解除キー"
+                    placeholder="4桁キー"
+                    value={teacherKeyInput}
+                    onChange={(e) => setTeacherKeyInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        setTeacherKeyErr(null);
+                        if (verifyTeacherUnlockCode(teacherKeyInput)) {
+                          onChangeTeacherMode(true);
+                          setTeacherKeyInput('');
+                        } else {
+                          setTeacherKeyErr('解除キーが正しくありません。');
+                        }
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="cm-btn-primary-xs"
+                    onClick={() => {
+                      setTeacherKeyErr(null);
+                      if (verifyTeacherUnlockCode(teacherKeyInput)) {
+                        onChangeTeacherMode(true);
+                        setTeacherKeyInput('');
+                      } else {
+                        setTeacherKeyErr('解除キーが正しくありません。');
+                      }
+                    }}
+                  >
+                    <Unlock size={13} /> 解除
+                  </button>
+                </div>
+                {teacherKeyErr && <div className="cm-error-box">{teacherKeyErr}</div>}
+              </>
+            )}
+          </section>
+        )}
       </aside>
     </div>
   );

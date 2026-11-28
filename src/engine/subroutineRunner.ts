@@ -25,6 +25,7 @@ import {
 import {
   angleToVector2D,
   clamp,
+  distance2D,
   normalizeAngle180,
   normalizeAngle360,
   vectorToAngle2D,
@@ -504,6 +505,15 @@ function getFireSlots(op: FiringWaitState['op'], mech: MechRuntimeState): Weapon
   }
 }
 
+function getNextUncapturedZone(state: SimState, mech: MechRuntimeState) {
+  if (!state.captureZones || state.captureZones.length === 0) return null;
+  const defaultCapTeam = state.mechs[0]?.teamId ?? 'T1';
+  return (
+    state.captureZones.find((z) => !z.captured && (z.teamId ?? defaultCapTeam) === mech.teamId) ??
+    null
+  );
+}
+
 function applyLatchedLegToControl(
   leg: LatchedLegMode,
   control: MechControlInput,
@@ -537,14 +547,30 @@ function applyLatchedLegToControl(
         control.targetYaw = airborne ? heading : steerAroundObstacles(state, mech, heading);
         control.moveForward = 1;
       } else {
-        const patrol = findHighGroundDirection(state, mech);
-        control.targetYaw = patrol.yaw;
-        control.moveForward = 0.85;
-        if (patrol.climbJump) {
-          control.jump = true;
-          control.boost = true;
-          control.jumpDir = 'forward';
-          control.jumpBurnSec = 0.9;
+        const zone = getNextUncapturedZone(state, mech);
+        if (zone) {
+          const dist = distance2D(mech.pos.x, mech.pos.y, zone.x, zone.y);
+          const bearing = vectorToAngle2D(zone.x - mech.pos.x, zone.y - mech.pos.y);
+          const elevOk = zone.z === undefined || mech.pos.z >= zone.z - 2.5;
+          if (dist <= zone.radius * 0.45 && elevOk) {
+            control.moveForward = 0;
+            control.targetYaw = bearing;
+          } else {
+            control.moveForward = 1;
+            const highZone = zone.z !== undefined && zone.z > mech.pos.z + 3.0;
+            control.targetYaw =
+              airborne || highZone ? bearing : steerAroundObstacles(state, mech, bearing);
+          }
+        } else {
+          const patrol = findHighGroundDirection(state, mech);
+          control.targetYaw = patrol.yaw;
+          control.moveForward = 0.85;
+          if (patrol.climbJump) {
+            control.jump = true;
+            control.boost = true;
+            control.jumpDir = 'forward';
+            control.jumpBurnSec = 0.9;
+          }
         }
       }
       break;

@@ -93,6 +93,7 @@ interface GridProgramEditorProps {
     slotId?: MechSubroutineSlotId;
   }) => { saved: ProgramRomEntry; updated: boolean };
   onDeleteRom?: (romId: string) => void;
+  hideRomLibrary?: boolean;
 }
 
 type EditorSelection =
@@ -1275,6 +1276,7 @@ export function GridProgramEditor({
   onChangeMech,
   onSaveRom,
   onDeleteRom,
+  hideRomLibrary = false,
 }: GridProgramEditorProps) {
   const [selection, setSelection] = useState<EditorSelection>({ kind: 'pilot' });
   const [romDrafts, setRomDrafts] = useState<
@@ -2338,6 +2340,7 @@ export function GridProgramEditor({
         </div>
 
         {/* Collapsible Library Row with Source, Category, and Weight-Class Filters */}
+        {!hideRomLibrary && (
         <div className="cm-selector-row cm-selector-row--library">
           <div className="cm-library-header">
             <button
@@ -2519,6 +2522,7 @@ export function GridProgramEditor({
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* Live Execution Trace & Sensor Debug Bar */}

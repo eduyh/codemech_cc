@@ -276,7 +276,7 @@ describe('deterministic 30 TPS mech simulator', () => {
   });
 
   it('triggers EN overheat on depletion and recovers at 30% capacity', () => {
-    const hotLaserMech = CURRICULUM_MISSIONS.find((m) => m.id === 'step2_heat_hysteresis')!.buildBrokenStarter().mech;
+    const hotLaserMech = CURRICULUM_MISSIONS.find((m) => m.id === 'p1_8_heat_hysteresis')!.buildBrokenStarter().mech;
     const sim = createSimulation({
       seed: 12,
       entries: [
@@ -333,7 +333,7 @@ describe('deterministic 30 TPS mech simulator', () => {
     expect(sWith.totalWeight).toBeCloseTo(sNo.totalWeight + 3, 2);
     expect(sWith.heatDissipationPerSec).toBeGreaterThan(sNo.heatDissipationPerSec);
 
-    const hotLaserMech = CURRICULUM_MISSIONS.find((m) => m.id === 'step2_heat_hysteresis')!.buildBrokenStarter().mech;
+    const hotLaserMech = CURRICULUM_MISSIONS.find((m) => m.id === 'p1_8_heat_hysteresis')!.buildBrokenStarter().mech;
     const targetBp = structuredClone(PRESET_ABH);
     targetBp.parts.rightArmWeapon = 'ac10';
     const sim = createSimulation({

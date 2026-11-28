@@ -196,6 +196,47 @@ export function MvpArenaCanvas({
       ctx.drawImage(terrainLayerRef.current.canvas, 0, 0);
     }
 
+    // Capture Zones (Curriculum training gimmick)
+    if (simState.captureZones && simState.captureZones.length > 0) {
+      for (const zone of simState.captureZones) {
+        const zx = sx(zone.x);
+        const zy = sy(zone.y);
+        const zr = (zone.radius / simState.terrain.width) * 600;
+        const pct = zone.holdSec > 0 ? Math.min(1, zone.progressSec / zone.holdSec) : 0;
+
+        ctx.save();
+        ctx.fillStyle = zone.captured
+          ? 'rgba(34, 197, 94, 0.25)'
+          : 'rgba(56, 189, 248, 0.14)';
+        ctx.beginPath();
+        ctx.arc(zx, zy, zr, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = zone.captured ? '#22c55e' : '#38bdf8';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        ctx.arc(zx, zy, zr, 0, Math.PI * 2);
+        ctx.stroke();
+
+        if (pct > 0 && !zone.captured) {
+          ctx.setLineDash([]);
+          ctx.strokeStyle = '#fbbf24';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(zx, zy, Math.max(4, zr - 2), -Math.PI / 2, -Math.PI / 2 + pct * Math.PI * 2);
+          ctx.stroke();
+        }
+        if (!compact) {
+          ctx.fillStyle = zone.captured ? '#86efac' : '#bae6fd';
+          ctx.font = 'bold 10px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(`${zone.label} ${Math.round(pct * 100)}%`, zx, zy - zr - 4);
+        }
+        ctx.restore();
+      }
+    }
+
     // Projectiles
     for (const proj of simState.projectiles) {
       const px = sx(proj.pos.x);
@@ -352,6 +393,30 @@ export function MvpArenaCanvas({
         ctx.beginPath();
         ctx.arc(mx, my, 13 * ms, 0, Math.PI * 2);
         ctx.stroke();
+      }
+
+      if (mech.isBalloon) {
+        const br = 8 * ms;
+        ctx.save();
+        ctx.fillStyle = mech.color || '#f43f5e';
+        ctx.beginPath();
+        ctx.arc(mx, my, br, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(mx - br * 0.5, my);
+        ctx.lineTo(mx + br * 0.5, my);
+        ctx.moveTo(mx, my - br * 0.5);
+        ctx.lineTo(mx, my + br * 0.5);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.fillStyle = '#fecdd3';
+        ctx.font = compact ? 'bold 12px sans-serif' : '10px sans-serif';
+        ctx.fillText(mech.name, mx + (compact ? 12 : 10), my - 4);
+        continue;
       }
 
       // Lower-body leg orientation base

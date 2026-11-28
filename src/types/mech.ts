@@ -11,13 +11,30 @@ export const MAX_CHASSIS_TONNAGE = 100;
 export type MechWeightClass = 'light' | 'medium' | 'heavy' | 'assault';
 
 export type CurriculumStepId =
-  | 'step0_robot_4x4'
-  | 'step0b_robot_6x6'
-  | 'step1_pilot_routing'
-  | 'step2_heat_hysteresis'
-  | 'step3_subroutine_4x4'
-  | 'step4_assemble_and_6x6'
-  | 'step5_transfer_squad';
+  | 'p1_1_capture_walk'
+  | 'p1_2_balloon_pop'
+  | 'p1_3_debug_order'
+  | 'p1_4_range_branch'
+  | 'p1_5_jump_wall'
+  | 'p1_6_moving_balloons'
+  | 'p1_7_rapid_loop'
+  | 'p1_8_heat_hysteresis'
+  | 'p1_9_zone_and_pop'
+  | 'p1_10_pilot_6x6'
+  | 'p1_11_subroutine_arg'
+  | 'p1_12_part1_exam'
+  | 'p2_1_flank_rear'
+  | 'p2_2_leg_sweep'
+  | 'p2_3_arm_shield'
+  | 'p2_4_crit_combo'
+  | 'p2_5_garage_rebuild'
+  | 'p2_6_range_control'
+  | 'p2_7_indirect_lrm'
+  | 'p2_8_ams_defense'
+  | 'p2_9_ecm_hunter'
+  | 'p2_10_pilot_transfer'
+  | 'p2_11_squad_180t'
+  | 'p2_12_graduation_match';
 
 export type MechControlTier = 'direct_4x4' | 'direct_6x6' | 'pilot_full';
 
@@ -640,6 +657,7 @@ export interface MechRuntimeState {
   teamId: string;
   slotIndex: number;
   color: string;
+  isBalloon?: boolean;
   blueprint: MechBlueprint;
   stats: MechComputedStats;
   pos: Vec3;
@@ -763,18 +781,45 @@ export interface MatchRules {
   arenaDepth: number;
 }
 
+export interface SpawnOverride {
+  x: number;
+  y: number;
+  z?: number;
+  yaw?: number;
+}
+
+export interface CaptureZoneSpec {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  z?: number;
+  radius: number;
+  holdSec: number;
+  teamId?: string;
+}
+
+export interface CaptureZoneState extends CaptureZoneSpec {
+  progressSec: number;
+  captured: boolean;
+}
+
 export interface MatchParticipantEntry {
   id: string;
   name: string;
   teamId: string;
   blueprint: MechBlueprint;
   pilot?: PilotProfile;
+  isBalloon?: boolean;
+  balloonHp?: number;
+  spawnOverride?: SpawnOverride;
 }
 
 export interface MatchConfig {
   seed?: number;
   rules?: Partial<MatchRules>;
   entries: MatchParticipantEntry[];
+  captureZones?: CaptureZoneSpec[];
 }
 
 export interface SimState {
@@ -784,6 +829,7 @@ export interface SimState {
   rules: MatchRules;
   terrain: TerrainConfig;
   mechs: MechRuntimeState[];
+  captureZones?: CaptureZoneState[];
   projectiles: ProjectileState[];
   nextProjectileId: number;
   activeBeams: ActiveBeamState[];

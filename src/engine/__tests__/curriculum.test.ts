@@ -311,4 +311,26 @@ describe('24-stage 2-part curriculum, verified model solutions & unlock gate', (
     expect(tFail.countedAsFailedAttempt).toBe(false);
     expect(getMissionProgressEntry(tFail.nextProgress, s.id).failedHashes).toEqual([]);
   });
+
+  it('destroys all target balloons cleanly within time limits on stages 1-3, 2-1, 3-1, 3-2, and 4-2', () => {
+    const timedIds = [
+      'p1_3_debug_order',
+      'p1_4_range_branch',
+      'p1_7_rapid_loop',
+      'p1_8_heat_hysteresis',
+      'p1_11_subroutine_arg',
+    ] as const;
+
+    for (const id of timedIds) {
+      const spec = CURRICULUM_MISSIONS.find((m) => m.id === id)!;
+      const sol = spec.buildModelSolution();
+      const res = verifyCurriculumMission(id, sol.mech, sol.pilot);
+      expect(res.passed, `${spec.stageCode} failed`).toBe(true);
+      expect(res.durationSec, `${spec.stageCode} timed out`).toBeLessThan(spec.maxSeconds - 1);
+      const balloonCheck = res.checklist.find((c) =>
+        c.label.includes('すべての標的バルーンを時間内に撃破した')
+      );
+      expect(balloonCheck?.ok, `${spec.stageCode} missing/failed full balloon clear`).toBe(true);
+    }
+  });
 });

@@ -280,7 +280,7 @@ export function parseBackupJson(rawText: string): CodeMechBackupPayload {
   return {
     schema: BACKUP_SCHEMA,
     exportedAt: typeof parsed.exportedAt === 'string' ? parsed.exportedAt : new Date().toISOString(),
-    appVersion: typeof parsed.appVersion === 'string' ? parsed.appVersion : '0.5.1',
+    appVersion: typeof parsed.appVersion === 'string' ? parsed.appVersion : '0.5.2',
     userProfile: {
       userId: parsedId,
       userName: normalizeUserName(parsed.userProfile?.userName ?? '') || DEFAULT_USER_NAME,

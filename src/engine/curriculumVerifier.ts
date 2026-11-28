@@ -226,7 +226,7 @@ export function buildCurriculumMissionScenario(
         teamId: 'T_PLAYER',
         blueprint: playerMech,
         pilot: playerPilot,
-        spawnOverride: { x: 300, y: 450, yaw: 0 },
+        spawnOverride: { x: 525, y: 555, yaw: 0 },
       },
       {
         id: 'balloon_1',
@@ -235,8 +235,8 @@ export function buildCurriculumMissionScenario(
         blueprint: makeUnarmedBalloonBlueprint('バルーン1', '#f43f5e'),
         pilot: makeStationaryTargetPilot(),
         isBalloon: true,
-        balloonHp: 28,
-        spawnOverride: { x: 225, y: 235, yaw: 180 },
+        balloonHp: 26,
+        spawnOverride: { x: 505, y: 290, yaw: 180 },
       },
       {
         id: 'balloon_2',
@@ -245,8 +245,8 @@ export function buildCurriculumMissionScenario(
         blueprint: makeUnarmedBalloonBlueprint('バルーン2', '#f59e0b'),
         pilot: makeStationaryTargetPilot(),
         isBalloon: true,
-        balloonHp: 28,
-        spawnOverride: { x: 300, y: 255, yaw: 180 },
+        balloonHp: 26,
+        spawnOverride: { x: 525, y: 260, yaw: 180 },
       },
       {
         id: 'balloon_3',
@@ -255,8 +255,8 @@ export function buildCurriculumMissionScenario(
         blueprint: makeUnarmedBalloonBlueprint('バルーン3', '#a855f7'),
         pilot: makeStationaryTargetPilot(),
         isBalloon: true,
-        balloonHp: 28,
-        spawnOverride: { x: 375, y: 235, yaw: 180 },
+        balloonHp: 26,
+        spawnOverride: { x: 545, y: 290, yaw: 180 },
       }
     );
   } else if (missionId === 'p1_4_range_branch') {
@@ -267,7 +267,7 @@ export function buildCurriculumMissionScenario(
         teamId: 'T_PLAYER',
         blueprint: playerMech,
         pilot: playerPilot,
-        spawnOverride: { x: 300, y: 470, yaw: 0 },
+        spawnOverride: { x: 525, y: 515, yaw: 0 },
       },
       {
         id: 'balloon_near',
@@ -277,7 +277,7 @@ export function buildCurriculumMissionScenario(
         pilot: makeStationaryTargetPilot(),
         isBalloon: true,
         balloonHp: 25,
-        spawnOverride: { x: 300, y: 380, yaw: 180 },
+        spawnOverride: { x: 525, y: 425, yaw: 180 },
       },
       {
         id: 'balloon_far',
@@ -287,7 +287,7 @@ export function buildCurriculumMissionScenario(
         pilot: makeStationaryTargetPilot(),
         isBalloon: true,
         balloonHp: 35,
-        spawnOverride: { x: 300, y: 120, yaw: 180 },
+        spawnOverride: { x: 525, y: 165, yaw: 180 },
       }
     );
   } else if (missionId === 'p1_5_jump_wall') {
@@ -349,7 +349,7 @@ export function buildCurriculumMissionScenario(
         teamId: 'T_PLAYER',
         blueprint: playerMech,
         pilot: playerPilot,
-        spawnOverride: { x: 300, y: 430, yaw: 0 },
+        spawnOverride: { x: 525, y: 430, yaw: 0 },
       },
       {
         id: 'balloon_tough',
@@ -358,8 +358,8 @@ export function buildCurriculumMissionScenario(
         blueprint: makeUnarmedBalloonBlueprint('高耐久バルーン', '#f59e0b'),
         pilot: makeStationaryTargetPilot(),
         isBalloon: true,
-        balloonHp: 175,
-        spawnOverride: { x: 300, y: 245, yaw: 180 },
+        balloonHp: 230,
+        spawnOverride: { x: 525, y: 260, yaw: 180 },
       }
     );
   } else if (missionId === 'p1_8_heat_hysteresis') {
@@ -370,7 +370,7 @@ export function buildCurriculumMissionScenario(
         teamId: 'T_PLAYER',
         blueprint: playerMech,
         pilot: playerPilot,
-        spawnOverride: { x: 300, y: 470, yaw: 0 },
+        spawnOverride: { x: 300, y: 550, yaw: 0 },
       },
       {
         id: 'balloon_h1',
@@ -379,8 +379,8 @@ export function buildCurriculumMissionScenario(
         blueprint: makeUnarmedBalloonBlueprint('耐熱標的A', '#ef4444'),
         pilot: makeStationaryTargetPilot(),
         isBalloon: true,
-        balloonHp: 165,
-        spawnOverride: { x: 220, y: 210, yaw: 180 },
+        balloonHp: 110,
+        spawnOverride: { x: 260, y: 420, yaw: 180 },
       },
       {
         id: 'balloon_h2',
@@ -389,8 +389,8 @@ export function buildCurriculumMissionScenario(
         blueprint: makeUnarmedBalloonBlueprint('耐熱標的B', '#f97316'),
         pilot: makeStationaryTargetPilot(),
         isBalloon: true,
-        balloonHp: 165,
-        spawnOverride: { x: 380, y: 210, yaw: 180 },
+        balloonHp: 110,
+        spawnOverride: { x: 300, y: 410, yaw: 180 },
       },
       {
         id: 'balloon_h3',
@@ -399,8 +399,8 @@ export function buildCurriculumMissionScenario(
         blueprint: makeUnarmedBalloonBlueprint('耐熱標的C', '#eab308'),
         pilot: makeStationaryTargetPilot(),
         isBalloon: true,
-        balloonHp: 165,
-        spawnOverride: { x: 300, y: 145, yaw: 180 },
+        balloonHp: 110,
+        spawnOverride: { x: 340, y: 420, yaw: 180 },
       }
     );
   } else if (missionId === 'p1_9_zone_and_pop') {
@@ -458,7 +458,7 @@ export function buildCurriculumMissionScenario(
         teamId: 'T_PLAYER',
         blueprint: playerMech,
         pilot: playerPilot,
-        spawnOverride: { x: 300, y: 470, yaw: 0 },
+        spawnOverride: { x: 110, y: 490, yaw: 90 },
       },
       {
         id: 'balloon_arg_1',
@@ -467,8 +467,8 @@ export function buildCurriculumMissionScenario(
         blueprint: makeUnarmedBalloonBlueprint('近標バルーン', '#22c55e'),
         pilot: makeStationaryTargetPilot(),
         isBalloon: true,
-        balloonHp: 75,
-        spawnOverride: { x: 250, y: 290, yaw: 180 },
+        balloonHp: 65,
+        spawnOverride: { x: 270, y: 480, yaw: 270 },
       },
       {
         id: 'balloon_arg_2',
@@ -477,8 +477,8 @@ export function buildCurriculumMissionScenario(
         blueprint: makeUnarmedBalloonBlueprint('遠標バルーン', '#f59e0b'),
         pilot: makeStationaryTargetPilot(),
         isBalloon: true,
-        balloonHp: 90,
-        spawnOverride: { x: 350, y: 150, yaw: 180 },
+        balloonHp: 80,
+        spawnOverride: { x: 450, y: 495, yaw: 270 },
       }
     );
   } else if (missionId === 'p1_12_part1_exam') {
@@ -1254,6 +1254,14 @@ export function verifyCurriculumMission(
     checklist.push({
       label: '重量機 (XHD) への乗り換え戦でも勝利した',
       ok: heavySim.winnerTeamId === 'T_PLAYER',
+    });
+  }
+
+  if (entries.some((e) => e.isBalloon)) {
+    const allBalloonsCleared = !sim.mechs.some((m) => m.teamId !== 'T_PLAYER' && m.alive);
+    checklist.push({
+      label: 'すべての標的バルーンを時間内に撃破した',
+      ok: allBalloonsCleared,
     });
   }
 

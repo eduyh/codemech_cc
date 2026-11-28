@@ -245,7 +245,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     modelSolutionSummary: '腰を固定ひねりから「腰:敵追尾」へ、停止を「接近」へ直すことで、3つのバルーンを順にロックして撃破できます。',
     arenaPreset: 'urban_pillars',
     seed: 10103,
-    maxSeconds: 100,
+    maxSeconds: 45,
     recommendedCamera: 'follow',
     buildBrokenStarter: () => {
       const m = cloneWithS1(PRESET_ABC, 'バグ修理機 (1-3)', 'direct_4x4', [
@@ -292,12 +292,12 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     title: '2-1: 距離で武器を使い分けろ (if/else)',
     subtitle: '近距離用レーザー (G1) と長距離ミサイル (G2) を距離条件で切り替える',
     csConcept: '条件分岐 (if_enemy_dist_lt) としきい値設定',
-    goal: '4×4 (S1) に「敵距離<150?」等の条件分岐を組み、至近バルーン (90m) と遠距離バルーン (360m) を両方撃破する',
+    goal: '4×4 (S1) に「敵距離<150?」等の条件分岐を組み、至近バルーン (90m) と遠距離バルーン (350m) を両方撃破する',
     hint: 'G2 の遠距離ミサイルは 120m 未満だと不発になります！ 「敵距離<150?」で YES (↓) なら「撃:G1 (小レーザー)」、NO (→) なら「撃:G2 (LRM)」へつなぎ、どちらも配線 (wire) で「腰:敵追尾」へ戻しましょう。',
     modelSolutionSummary: '距離<150m判定で近距離バルーンをG1小レーザー、遠距離バルーンをG2 LRMで撃ち分け、2周目以降も配線で腰追尾へ戻します。',
-    arenaPreset: 'plains_ridge',
+    arenaPreset: 'urban_pillars',
     seed: 10201,
-    maxSeconds: 100,
+    maxSeconds: 50,
     recommendedCamera: 'follow',
     buildBrokenStarter: () => {
       const m = cloneWithS1(PRESET_ABC, '武器分岐訓練機 (2-1)', 'direct_4x4', [
@@ -434,17 +434,17 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     title: '3-1: 無駄待ちを削る連射判定ループ',
     subtitle: '固定 wait を消して「G1可? (if_group_1_ready)」の高速ポーリングに書き換えよう',
     csConcept: 'イベント駆動ポーリングとループ最適化',
-    goal: '待機 (wait) を使わず「G1可?」の判定ループを組み、制限時間 26秒以内に高耐久バルーンを撃破する',
-    hint: 'バグ機体は 1発撃つごとに 2.5秒の `待機 (wait)` を挟むため時間切れになります。待機マスの代わりに「G1可?」を置き、YES→撃:G1、NO→腰追尾へ戻すと最短間隔で連射できます！',
-    modelSolutionSummary: '無駄な固定 2.5秒ウェイトを削り、`if_group_1_ready` でクールダウン完了を即検知して中口径レーザーを最速回転させることで 26秒以内に撃破します。',
+    goal: '待機 (wait) を使わず「G1可?」の判定ループを組み、制限時間 20秒以内に定位置から高耐久バルーンを撃破する',
+    hint: 'バグ機体は 1発撃つごとに長い `待機 (wait)` を挟むため時間切れになります。待機マスの代わりに「G1可?」を置き、YES→撃:G1、NO→腰追尾へ戻すと最短間隔で連射できます！',
+    modelSolutionSummary: 'その場停止 (`move_stop`) のまま無駄な固定ウェイトを削り、`if_group_1_ready` でクールダウン完了を即検知して中口径レーザーを最速回転させることで 20秒以内に撃破します。',
     arenaPreset: 'urban_pillars',
     seed: 10301,
-    maxSeconds: 26,
+    maxSeconds: 20,
     recommendedCamera: 'follow',
     buildBrokenStarter: () => {
       const m = cloneWithS1(PRESET_ABC, '遅すぎ待機機 (3-1)', 'direct_4x4', [
         { row: 0, col: 0, op: 'start', dir: 'E' },
-        { row: 0, col: 1, op: 'move_approach', dir: 'E' },
+        { row: 0, col: 1, op: 'move_stop', dir: 'E' },
         { row: 0, col: 2, op: 'torso_track', dir: 'E' },
         { row: 0, col: 3, op: 'fire_group_1', dir: 'S', durationSec: 0.4 },
         { row: 1, col: 3, op: 'wait', dir: 'S', durationSec: 2.8 },
@@ -468,7 +468,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     buildModelSolution: () => {
       const m = cloneWithS1(PRESET_ABC, '高速連射ループ 模範 (3-1)', 'direct_4x4', [
         { row: 0, col: 0, op: 'start', dir: 'E' },
-        { row: 0, col: 1, op: 'move_approach', dir: 'E' },
+        { row: 0, col: 1, op: 'move_stop', dir: 'E' },
         { row: 0, col: 2, op: 'torso_track', dir: 'E' },
         { row: 0, col: 3, op: 'if_group_1_ready', dir: 'S', elseDir: 'W' },
         { row: 1, col: 3, op: 'fire_group_1', dir: 'S', durationSec: 0.35 },
@@ -505,13 +505,13 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     modelSolutionSummary: '1射の発熱量を見越して熱>50%で早めに冷却ループへ入り、熱<25%まで `emergency_cool` を繰り返すヒステリシスにより、一度も停止せず3標的を撃破します。',
     arenaPreset: 'twin_mesas',
     seed: 10302,
-    maxSeconds: 140,
+    maxSeconds: 65,
     recommendedCamera: 'follow',
     buildBrokenStarter: () => {
       const m = cloneWithS1(PRESET_ABC, 'ABC (高発熱仕様)', 'direct_4x4', [
         { row: 0, col: 0, op: 'start', dir: 'E' },
         { row: 0, col: 1, op: 'override_on', dir: 'E' },
-        { row: 0, col: 2, op: 'move_approach', dir: 'E' },
+        { row: 0, col: 2, op: 'move_stop', dir: 'E' },
         { row: 0, col: 3, op: 'torso_track', dir: 'S' },
         { row: 1, col: 3, op: 'fire_group_1', dir: 'N', durationSec: 0.55 },
       ]);
@@ -539,7 +539,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
       const m = cloneWithS1(PRESET_ABC, 'ABC 高発熱冷却 模範 (3-2)', 'direct_4x4', [
         { row: 0, col: 0, op: 'start', dir: 'E' },
         { row: 0, col: 1, op: 'if_heat_above', dir: 'S', elseDir: 'E', param: 48 },
-        { row: 0, col: 2, op: 'move_approach', dir: 'E' },
+        { row: 0, col: 2, op: 'move_stop', dir: 'E' },
         { row: 0, col: 3, op: 'torso_track', dir: 'S' },
         { row: 1, col: 3, op: 'fire_group_1', dir: 'S', durationSec: 0.45 },
         { row: 2, col: 3, op: 'wire', dir: 'S' },
@@ -674,7 +674,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     modelSolutionSummary: '機体 S3 に `useArg: true` の `move_maintain` を定義し、パイロットが状況に応じて ARG=260 と ARG=130 を切り替えながら 2つの標的バルーンを撃破します。',
     arenaPreset: 'plains_ridge',
     seed: 10402,
-    maxSeconds: 140,
+    maxSeconds: 70,
     recommendedCamera: 'follow',
     buildBrokenStarter: () => {
       const mech = structuredClone(PRESET_ABC);

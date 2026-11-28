@@ -6,6 +6,7 @@ import {
   MechSubroutineCell,
   PilotProfile,
 } from '../types/mech';
+import { CameraMode } from '../render3d/cameraFraming';
 import {
   DEFAULT_PILOT_PROFILE,
   PILOT_BASIC,
@@ -53,6 +54,7 @@ export interface CurriculumMissionSpec {
   arenaPreset: ArenaPresetId;
   seed: number;
   maxSeconds: number;
+  recommendedCamera: CameraMode;
   buildBrokenStarter: () => { mech: MechBlueprint; pilot: PilotProfile };
   buildModelSolution: () => { mech: MechBlueprint; pilot: PilotProfile };
 }
@@ -177,6 +179,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'urban_pillars',
     seed: 10101,
     maxSeconds: 60,
+    recommendedCamera: 'follow',
     buildBrokenStarter: () => ({
       mech: cloneWithS1(PRESET_ABC, '訓練1号機 (1-1)', 'direct_4x4', [
         { row: 0, col: 0, op: 'start', dir: 'E' },
@@ -208,6 +211,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'urban_pillars',
     seed: 10102,
     maxSeconds: 80,
+    recommendedCamera: 'follow',
     buildBrokenStarter: () => ({
       mech: cloneWithS1(PRESET_ABC, '訓練2号機 (1-2)', 'direct_4x4', [
         { row: 0, col: 0, op: 'start', dir: 'E' },
@@ -242,6 +246,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'urban_pillars',
     seed: 10103,
     maxSeconds: 100,
+    recommendedCamera: 'follow',
     buildBrokenStarter: () => {
       const m = cloneWithS1(PRESET_ABC, 'バグ修理機 (1-3)', 'direct_4x4', [
         { row: 0, col: 0, op: 'start', dir: 'E' },
@@ -293,6 +298,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'plains_ridge',
     seed: 10201,
     maxSeconds: 100,
+    recommendedCamera: 'follow',
     buildBrokenStarter: () => {
       const m = cloneWithS1(PRESET_ABC, '武器分岐訓練機 (2-1)', 'direct_4x4', [
         { row: 0, col: 0, op: 'start', dir: 'E' },
@@ -355,6 +361,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'urban_pillars',
     seed: 10202,
     maxSeconds: 60,
+    recommendedCamera: 'follow',
     buildBrokenStarter: () => {
       const m = cloneWithS1(PRESET_ABL, '壁前足止め機 (2-2)', 'direct_4x4', [
         { row: 0, col: 0, op: 'start', dir: 'E' },
@@ -391,6 +398,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'plains_ridge',
     seed: 10203,
     maxSeconds: 110,
+    recommendedCamera: 'follow',
     buildBrokenStarter: () => ({
       mech: cloneWithS1(PRESET_ABC, '固定砲台バグ機 (2-3)', 'direct_4x4', [
         { row: 0, col: 0, op: 'start', dir: 'E' },
@@ -432,6 +440,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'urban_pillars',
     seed: 10301,
     maxSeconds: 26,
+    recommendedCamera: 'follow',
     buildBrokenStarter: () => {
       const m = cloneWithS1(PRESET_ABC, '遅すぎ待機機 (3-1)', 'direct_4x4', [
         { row: 0, col: 0, op: 'start', dir: 'E' },
@@ -497,6 +506,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'twin_mesas',
     seed: 10302,
     maxSeconds: 140,
+    recommendedCamera: 'follow',
     buildBrokenStarter: () => {
       const m = cloneWithS1(PRESET_ABC, 'ABC (高発熱仕様)', 'direct_4x4', [
         { row: 0, col: 0, op: 'start', dir: 'E' },
@@ -580,6 +590,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'urban_pillars',
     seed: 10303,
     maxSeconds: 20,
+    recommendedCamera: 'follow',
     buildBrokenStarter: () => ({
       mech: cloneWithS1(PRESET_ABC, '素通り暴走機 (3-3)', 'direct_4x4', [
         { row: 0, col: 0, op: 'start', dir: 'E' },
@@ -623,6 +634,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'plains_ridge',
     seed: 10401,
     maxSeconds: 150,
+    recommendedCamera: 'director',
     buildBrokenStarter: () => {
       const mech = structuredClone(PRESET_ABC);
       mech.controlTier = 'pilot_full';
@@ -663,6 +675,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'plains_ridge',
     seed: 10402,
     maxSeconds: 140,
+    recommendedCamera: 'follow',
     buildBrokenStarter: () => {
       const mech = structuredClone(PRESET_ABC);
       mech.controlTier = 'pilot_full';
@@ -749,6 +762,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'plains_ridge',
     seed: 10403,
     maxSeconds: 180,
+    recommendedCamera: 'director',
     buildBrokenStarter: () => {
       const mech = structuredClone(PRESET_ABC);
       mech.controlTier = 'pilot_full';
@@ -817,6 +831,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'urban_pillars',
     seed: 20501,
     maxSeconds: 85,
+    recommendedCamera: 'follow',
     buildBrokenStarter: () => {
       const mech = cloneWithS1(PRESET_ABC, '正面突撃機 (5-1)', 'pilot_full', [
         { row: 0, col: 0, op: 'start', dir: 'E' },
@@ -921,6 +936,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'plains_ridge',
     seed: 20502,
     maxSeconds: 130,
+    recommendedCamera: 'director',
     buildBrokenStarter: () => {
       const m = structuredClone(PRESET_ABC);
       m.controlTier = 'pilot_full';
@@ -1000,6 +1016,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'urban_pillars',
     seed: 20503,
     maxSeconds: 120,
+    recommendedCamera: 'director',
     buildBrokenStarter: () => {
       const m = structuredClone(PRESET_ABH);
       m.controlTier = 'pilot_full';
@@ -1151,6 +1168,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'urban_pillars',
     seed: 20601,
     maxSeconds: 95,
+    recommendedCamera: 'director',
     buildBrokenStarter: () => {
       const m = structuredClone(PRESET_ABC);
       m.controlTier = 'pilot_full';
@@ -1258,6 +1276,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'urban_pillars',
     seed: 20602,
     maxSeconds: 140,
+    recommendedCamera: 'director',
     buildBrokenStarter: () => {
       const m = structuredClone(PRESET_ABL);
       m.controlTier = 'pilot_full';
@@ -1296,6 +1315,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'plains_ridge',
     seed: 20603,
     maxSeconds: 150,
+    recommendedCamera: 'director',
     buildBrokenStarter: () => {
       const m = structuredClone(PRESET_ABC);
       m.controlTier = 'pilot_full';
@@ -1438,6 +1458,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'twin_mesas',
     seed: 20701,
     maxSeconds: 95,
+    recommendedCamera: 'director',
     buildBrokenStarter: () => {
       const m = structuredClone(PRESET_ABC);
       m.controlTier = 'pilot_full';
@@ -1528,6 +1549,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'plains_ridge',
     seed: 20702,
     maxSeconds: 120,
+    recommendedCamera: 'director',
     buildBrokenStarter: () => {
       const m = structuredClone(PRESET_ABC);
       m.controlTier = 'pilot_full';
@@ -1633,6 +1655,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'plains_ridge',
     seed: 20703,
     maxSeconds: 120,
+    recommendedCamera: 'director',
     buildBrokenStarter: () => {
       const m = structuredClone(PRESET_ABC);
       m.controlTier = 'pilot_full';
@@ -1695,6 +1718,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'plains_ridge',
     seed: 20801,
     maxSeconds: 150,
+    recommendedCamera: 'director',
     buildBrokenStarter: () => {
       const m = structuredClone(PRESET_ABC);
       m.controlTier = 'pilot_full';
@@ -1752,6 +1776,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'plains_ridge',
     seed: 20802,
     maxSeconds: 180,
+    recommendedCamera: 'director',
     buildBrokenStarter: () => {
       const m = structuredClone(PRESET_ABC);
       m.controlTier = 'pilot_full';
@@ -1791,6 +1816,7 @@ export const CURRICULUM_MISSIONS: readonly CurriculumMissionSpec[] = [
     arenaPreset: 'twin_mesas',
     seed: 20803,
     maxSeconds: 200,
+    recommendedCamera: 'director',
     buildBrokenStarter: () => {
       const m = structuredClone(PRESET_ABC);
       m.controlTier = 'pilot_full';

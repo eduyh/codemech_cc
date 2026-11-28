@@ -482,7 +482,9 @@ export default function App() {
       slowMoUntilRef.current = 0;
       pilotProfilesRef.current = built.pilotProfiles;
       pilotRuntimesRef.current = built.pilotRuntimes;
-      setFocusedMechId(built.sim.mechs[0]?.id ?? 'player');
+      setFocusedMechId(
+        built.sim.mechs.find((m) => m.id === 'player')?.id ?? built.sim.mechs[0]?.id ?? 'player'
+      );
       setPlayerDebugTrace(null);
       setPlaying(autoPlay);
       setRenderTick((n) => n + 1);
@@ -1618,6 +1620,16 @@ export default function App() {
                     focusedMechId={focusedMechId}
                     onSelectMech={setFocusedMechId}
                     onSwitchTo2D={() => setViewMode('2d')}
+                    preferredCameraMode={
+                      studioTab === 'curriculum'
+                        ? activeMissionArena?.recommendedCamera
+                        : 'director'
+                    }
+                    cameraResetKey={
+                      studioTab === 'curriculum'
+                        ? (activeMissionArena?.missionId ?? 'curriculum')
+                        : 'studio'
+                    }
                   />
                 ) : (
                   <div className="cm-2d-stage">

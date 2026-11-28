@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
+import { CURRICULUM_MISSIONS } from '../../data/curriculum';
 import { STARTER_MECHS } from '../../data/presets';
+import { buildCurriculumMissionScenario } from '../../engine/curriculumVerifier';
 import { createSimulation } from '../../engine/mechSim';
-import { createTerrain } from '../../engine/terrain';
+import { createTerrain, getSurfaceHeight } from '../../engine/terrain';
 import { ArenaPresetId } from '../../types/mech';
+import {
+  computeDirectorCameraTarget,
+  computeFollowCameraTarget,
+  pickStableBroadsideYaw,
+} from '../cameraFraming';
 import { disposeObject3D, simToThreePos, simYawToThreeRotY } from '../coords';
 import { EffectsManager3D } from '../effectsPool';
 import { buildProceduralMechRig, updateMechRigAnimation } from '../mechMeshBuilder';
@@ -287,5 +295,168 @@ describe('Three.js procedural 3D builders', () => {
       );
     }
     effects.dispose();
+  });
+
+  it('frames director camera without clipping across close, mid, and long ranges', () => {
+    const aspects = [4 / 3, 16 / 9];
+    const spans = [80, 250, 450];
+
+    for (const aspect of aspects) {
+      for (const span of spans) {
+        const sim = createSimulation({
+          seed: 7,
+          entries: [
+            {
+              id: 'a',
+              name: 'A',
+              teamId: 'T1',
+              blueprint: STARTER_MECHS[0],
+              spawnOverride: { x: 300, y: 300 + span * 0.5, yaw: 0 },
+            },
+            {
+              id: 'b',
+              name: 'B',
+              teamId: 'T2',
+              blueprint: STARTER_MECHS[1],
+              spawnOverride: { x: 300, y: 300 - span * 0.5, yaw: 180 },
+            },
+          ],
+        });
+
+        const cam = new THREE.PerspectiveCamera(48, aspect, 1, 6500);
+        const target = computeDirectorCameraTarget({
+          state: sim,
+          primary: sim.mechs[0],
+          secondary: sim.mechs[1],
+          killFocusPos: null,
+          prevCameraYawRad: null,
+          orbitAngle: 0.4,
+          fovDeg: cam.fov,
+          aspect,
+        });
+        cam.position.copy(target.camPos);
+        cam.lookAt(target.lookAt);
+        cam.updateMatrixWorld();
+
+        for (const mech of sim.mechs) {
+          const base = simToThreePos(mech.pos, sim.terrain);
+          const headTop = new THREE.Vector3(base.x, base.y + 13 * mech.stats.sizeScale, base.z);
+          for (const pt of [base, headTop]) {
+            const p = pt.clone().project(cam);
+            expect(p.z).toBeGreaterThan(-1);
+            expect(p.z).toBeLessThan(1);
+            expect(Math.abs(p.x)).toBeLessThanOrEqual(0.85);
+            expect(Math.abs(p.y)).toBeLessThanOrEqual(0.85);
+          }
+        }
+      }
+    }
+
+    // Crossing stability: avoid 180-degree flips
+    const yaw1 = pickStableBroadsideYaw(10, 100, null);
+    const yaw2 = pickStableBroadsideYaw(-10, -100, yaw1);
+    const diff = Math.abs(Math.atan2(Math.sin(yaw2 - yaw1), Math.cos(yaw2 - yaw1)));
+    expect(diff).toBeLessThan(0.5);
+  });
+
+  it('frames solo player + capture zone and multi-balloon curriculum stages inside FOV', () => {
+    const stage1 = CURRICULUM_MISSIONS.find((m) => m.id === 'p1_1_capture_walk')!;
+    const starter1 = stage1.buildBrokenStarter();
+    const scenario1 = buildCurriculumMissionScenario(stage1.id, starter1.mech, starter1.pilot);
+    const sim1 = createSimulation({
+      seed: scenario1.spec.seed,
+      rules: scenario1.replay.rules,
+      entries: scenario1.entries,
+      captureZones: scenario1.captureZones,
+    });
+
+    const aspect = 4 / 3;
+    const cam1 = new THREE.PerspectiveCamera(48, aspect, 1, 6500);
+    const t1 = computeDirectorCameraTarget({
+      state: sim1,
+      primary: sim1.mechs[0],
+      secondary: undefined,
+      killFocusPos: null,
+      prevCameraYawRad: null,
+      orbitAngle: 0.2,
+      fovDeg: cam1.fov,
+      aspect,
+    });
+    cam1.position.copy(t1.camPos);
+    cam1.lookAt(t1.lookAt);
+    cam1.updateMatrixWorld();
+
+    const pProj = simToThreePos(sim1.mechs[0].pos, sim1.terrain).project(cam1);
+    const z0 = sim1.captureZones![0];
+    const zProj = simToThreePos(
+      { x: z0.x, y: z0.y, z: z0.z ?? getSurfaceHeight(sim1.terrain, z0.x, z0.y) },
+      sim1.terrain
+    ).project(cam1);
+    expect(Math.abs(pProj.x)).toBeLessThanOrEqual(0.85);
+    expect(Math.abs(zProj.x)).toBeLessThanOrEqual(0.85);
+
+    // 3-balloon stage should keep all 3 balloons inside frame
+    const stage3 = CURRICULUM_MISSIONS.find((m) => m.id === 'p1_3_debug_order')!;
+    const starter3 = stage3.buildBrokenStarter();
+    const scenario3 = buildCurriculumMissionScenario(stage3.id, starter3.mech, starter3.pilot);
+    const sim3 = createSimulation({
+      seed: scenario3.spec.seed,
+      rules: scenario3.replay.rules,
+      entries: scenario3.entries,
+    });
+    const t3 = computeDirectorCameraTarget({
+      state: sim3,
+      primary: sim3.mechs[0],
+      secondary: sim3.mechs[1],
+      killFocusPos: null,
+      prevCameraYawRad: null,
+      orbitAngle: 0.2,
+      fovDeg: cam1.fov,
+      aspect,
+    });
+    cam1.position.copy(t3.camPos);
+    cam1.lookAt(t3.lookAt);
+    cam1.updateMatrixWorld();
+    for (const m of sim3.mechs) {
+      const proj = simToThreePos(m.pos, sim3.terrain).project(cam1);
+      expect(Math.abs(proj.x)).toBeLessThanOrEqual(0.85);
+      expect(Math.abs(proj.y)).toBeLessThanOrEqual(0.85);
+    }
+  });
+
+  it('positions follow (背面) camera behind mech above terrain and sets recommendedCamera on all 24 missions', () => {
+    const sim = createSimulation({
+      seed: 10202,
+      rules: { arenaPreset: 'urban_pillars' },
+      entries: [
+        {
+          id: 'player',
+          name: 'P',
+          teamId: 'T_PLAYER',
+          blueprint: STARTER_MECHS[0],
+          spawnOverride: { x: 300, y: 250, yaw: 0 },
+        },
+      ],
+    });
+    const mech = sim.mechs[0];
+    const follow = computeFollowCameraTarget({
+      mech,
+      terrain: sim.terrain,
+      prevHeadingRad: null,
+    });
+    const mechPos = simToThreePos(mech.pos, sim.terrain);
+    // North-facing mech (yaw=0) faces -Z in Three.js, so behind-camera sits at +Z
+    expect(follow.camPos.z).toBeGreaterThan(mechPos.z);
+    expect(follow.lookAt.z).toBeLessThan(mechPos.z);
+    const camSimX = follow.camPos.x + sim.terrain.width * 0.5;
+    const camSimY = follow.camPos.z + sim.terrain.depth * 0.5;
+    expect(follow.camPos.y).toBeGreaterThanOrEqual(
+      getSurfaceHeight(sim.terrain, camSimX, camSimY) + 10.9
+    );
+
+    expect(CURRICULUM_MISSIONS).toHaveLength(24);
+    for (const m of CURRICULUM_MISSIONS) {
+      expect(['director', 'follow', 'overview', 'orbit']).toContain(m.recommendedCamera);
+    }
   });
 });

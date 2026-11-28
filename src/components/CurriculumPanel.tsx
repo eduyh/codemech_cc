@@ -40,6 +40,7 @@ import {
 } from '../types/mech';
 import { buildCurriculumClearCodePayload, encodeClearCode } from '../utils/clearCode';
 import { UserProfile, getShortUserId } from '../utils/userProfile';
+import { CameraMode } from '../render3d/cameraFraming';
 import {
   CurriculumProgressMap,
   FailedAttemptRejectReason,
@@ -63,6 +64,7 @@ export interface MissionArenaSyncPayload {
   title: string;
   arenaPreset: ArenaPresetId;
   seed: number;
+  recommendedCamera: CameraMode;
   replay: ReplayPackageData;
 }
 
@@ -146,6 +148,7 @@ export function CurriculumPanel({
         title: mission.title,
         arenaPreset: mission.arenaPreset,
         seed: mission.seed,
+        recommendedCamera: mission.recommendedCamera,
         replay: scenario.replay,
       },
       autoPlay
@@ -256,6 +259,7 @@ export function CurriculumPanel({
         title: activeMission.title,
         arenaPreset: activeMission.arenaPreset,
         seed: activeMission.seed,
+        recommendedCamera: activeMission.recommendedCamera,
         replay: res.replay,
       },
       true

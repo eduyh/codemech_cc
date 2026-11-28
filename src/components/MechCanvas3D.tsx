@@ -10,6 +10,11 @@ import {
 import { clamp, degToRad, distance2D } from '../engine/math';
 import { getSurfaceHeight } from '../engine/terrain';
 import {
+  CameraMode,
+  computeDirectorCameraTarget,
+  computeFollowCameraTarget,
+} from '../render3d/cameraFraming';
+import {
   disposeObject3D,
   getTeamColorHex,
   simToThreePos,
@@ -27,14 +32,14 @@ import { battleAudio } from '../utils/battleAudio';
 import { formatKillBanner, formatKillFeedLine } from '../utils/combatText';
 import { MvpArenaCanvas } from './MvpArenaCanvas';
 
-type CameraMode = 'director' | 'overview' | 'follow' | 'orbit';
-
 interface MechCanvas3DProps {
   simState: SimState;
   renderTick?: number;
   focusedMechId: string;
   onSelectMech: (mechId: string) => void;
   onSwitchTo2D?: () => void;
+  preferredCameraMode?: CameraMode;
+  cameraResetKey?: string;
 }
 
 interface ProjectedMechTag {
@@ -104,9 +109,11 @@ export function MechCanvas3D({
   focusedMechId,
   onSelectMech,
   onSwitchTo2D,
+  preferredCameraMode,
+  cameraResetKey,
 }: MechCanvas3DProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const [cameraMode, setCameraMode] = useState<CameraMode>('director');
+  const [cameraMode, setCameraMode] = useState<CameraMode>(() => preferredCameraMode ?? 'director');
   const [showTacticalOverlay, setShowTacticalOverlay] = useState<boolean>(true);
   const [showMinimap, setShowMinimap] = useState<boolean>(true);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => battleAudio.isEnabled());
@@ -153,8 +160,17 @@ export function MechCanvas3D({
     killFocusPos: null as Vec3 | null,
     killFocusUntilTick: -1,
     orbitAngle: 0.6,
+    cameraYawRad: null as number | null,
     shakeIntensity: 0,
     lastTick: -1,
+    smoothCamPos: new THREE.Vector3(),
+    smoothLookAt: new THREE.Vector3(),
+    initialized: false,
+  });
+
+  const followStateRef = useRef({
+    focusedId: '',
+    headingRad: null as number | null,
     smoothCamPos: new THREE.Vector3(),
     smoothLookAt: new THREE.Vector3(),
     initialized: false,
@@ -428,8 +444,11 @@ export function MechCanvas3D({
       dirState.primaryId = '';
       dirState.secondaryId = '';
       dirState.switchAfterTick = 0;
+      dirState.cameraYawRad = null;
       dirState.shakeIntensity = 0;
       dirState.initialized = false;
+      followStateRef.current.initialized = false;
+      followStateRef.current.headingRad = null;
     }
     if (state.tick !== dirState.lastTick) {
       dirState.lastTick = state.tick;
@@ -632,27 +651,18 @@ export function MechCanvas3D({
       }
     }
 
+    const aspect = Math.max(0.5, w / h);
+
     if (mode === 'director') {
       const alive = state.mechs.filter((m) => m.alive);
-      let desiredCamPos: THREE.Vector3;
-      let desiredLookAt: THREE.Vector3;
+      let pMech: MechRuntimeState | undefined;
+      let sMech: MechRuntimeState | undefined;
 
-      if (dirState.killFocusPos && state.tick <= dirState.killFocusUntilTick) {
-        const kVec = new THREE.Vector3();
-        simToThreePos(dirState.killFocusPos, state.terrain, kVec);
-        desiredLookAt = new THREE.Vector3(kVec.x, kVec.y + 4, kVec.z);
-        const angle = dirState.orbitAngle * 1.4;
-        const dist = 54;
-        desiredCamPos = new THREE.Vector3(
-          kVec.x + Math.sin(angle) * dist,
-          kVec.y + 22,
-          kVec.z + Math.cos(angle) * dist
-        );
-      } else {
+      if (!(dirState.killFocusPos && state.tick <= dirState.killFocusUntilTick)) {
         const findAlive = (id: string): MechRuntimeState | undefined =>
           alive.find((m) => m.id === id);
-        let pMech = findAlive(dirState.primaryId);
-        let sMech = findAlive(dirState.secondaryId);
+        pMech = findAlive(dirState.primaryId);
+        sMech = findAlive(dirState.secondaryId);
 
         if (
           !pMech ||
@@ -688,54 +698,30 @@ export function MechCanvas3D({
             sMech = undefined;
           }
         }
-
-        if (pMech && sMech) {
-          const vA = new THREE.Vector3();
-          const vB = new THREE.Vector3();
-          simToThreePos(pMech.pos, state.terrain, vA);
-          simToThreePos(sMech.pos, state.terrain, vB);
-          const pairDist = vA.distanceTo(vB);
-          desiredLookAt = new THREE.Vector3().addVectors(vA, vB).multiplyScalar(0.5);
-          desiredLookAt.y += 5.5;
-
-          const baseYaw = Math.atan2(vB.x - vA.x, vB.z - vA.z) + Math.PI * 0.36;
-          const angle = baseYaw + Math.sin(dirState.orbitAngle * 0.7) * 0.45;
-          const dist = clamp(pairDist * 0.62 + 48, 56, 210);
-          desiredCamPos = new THREE.Vector3(
-            desiredLookAt.x + Math.sin(angle) * dist,
-            desiredLookAt.y + clamp(dist * 0.28, 16, 62),
-            desiredLookAt.z + Math.cos(angle) * dist
-          );
-        } else if (pMech) {
-          const vP = new THREE.Vector3();
-          simToThreePos(pMech.pos, state.terrain, vP);
-          desiredLookAt = new THREE.Vector3(vP.x, vP.y + 6, vP.z);
-          desiredCamPos = new THREE.Vector3(
-            vP.x + Math.sin(dirState.orbitAngle) * 64,
-            vP.y + 24,
-            vP.z + Math.cos(dirState.orbitAngle) * 64
-          );
-        } else {
-          desiredLookAt = new THREE.Vector3(0, 6, 0);
-          desiredCamPos = new THREE.Vector3(0, 120, 180);
-        }
       }
 
-      // Prevent camera from clipping below local terrain / obstacle surface
-      const camSimX = desiredCamPos.x + state.terrain.width * 0.5;
-      const camSimY = desiredCamPos.z + state.terrain.depth * 0.5;
-      const minSurfaceY = getSurfaceHeight(state.terrain, camSimX, camSimY) + 12;
-      if (desiredCamPos.y < minSurfaceY) {
-        desiredCamPos.y = minSurfaceY;
-      }
+      const directorTarget = computeDirectorCameraTarget({
+        state,
+        primary: pMech,
+        secondary: sMech,
+        killFocusPos:
+          dirState.killFocusPos && state.tick <= dirState.killFocusUntilTick
+            ? dirState.killFocusPos
+            : null,
+        prevCameraYawRad: dirState.cameraYawRad,
+        orbitAngle: dirState.orbitAngle,
+        fovDeg: camera.fov,
+        aspect,
+      });
+      dirState.cameraYawRad = directorTarget.cameraYawRad;
 
       if (!dirState.initialized) {
-        dirState.smoothCamPos.copy(desiredCamPos);
-        dirState.smoothLookAt.copy(desiredLookAt);
+        dirState.smoothCamPos.copy(directorTarget.camPos);
+        dirState.smoothLookAt.copy(directorTarget.lookAt);
         dirState.initialized = true;
       } else {
-        dirState.smoothCamPos.lerp(desiredCamPos, 0.13);
-        dirState.smoothLookAt.lerp(desiredLookAt, 0.16);
+        dirState.smoothCamPos.lerp(directorTarget.camPos, 0.14);
+        dirState.smoothLookAt.lerp(directorTarget.lookAt, 0.18);
       }
 
       const shakeX =
@@ -753,18 +739,40 @@ export function MechCanvas3D({
         dirState.smoothLookAt.z
       );
     } else if (mode === 'follow' && focusedMech) {
-      simToThreePos(focusedMech.pos, state.terrain, targetVec);
-      const yawRad = degToRad(focusedMech.yawDeg);
-      const fwdX = Math.sin(yawRad);
-      const fwdZ = -Math.cos(yawRad);
+      const followState = followStateRef.current;
+      if (focusedMech.id !== followState.focusedId) {
+        followState.focusedId = focusedMech.id;
+        followState.headingRad = null;
+        followState.initialized = false;
+      }
+      const followTarget = computeFollowCameraTarget({
+        mech: focusedMech,
+        terrain: state.terrain,
+        prevHeadingRad: followState.headingRad,
+      });
+      followState.headingRad = followTarget.headingRad;
+
+      if (!followState.initialized) {
+        followState.smoothCamPos.copy(followTarget.camPos);
+        followState.smoothLookAt.copy(followTarget.lookAt);
+        followState.initialized = true;
+      } else {
+        followState.smoothCamPos.lerp(followTarget.camPos, 0.2);
+        followState.smoothLookAt.lerp(followTarget.lookAt, 0.24);
+      }
+
       const shakeY =
         dirState.shakeIntensity > 0 ? Math.cos(state.tick * 3.5) * dirState.shakeIntensity * 0.6 : 0;
       camera.position.set(
-        targetVec.x - fwdX * 42,
-        targetVec.y + 22 + shakeY,
-        targetVec.z - fwdZ * 42
+        followState.smoothCamPos.x,
+        followState.smoothCamPos.y + shakeY,
+        followState.smoothCamPos.z
       );
-      camera.lookAt(targetVec.x + fwdX * 26, targetVec.y + 6, targetVec.z + fwdZ * 26);
+      camera.lookAt(
+        followState.smoothLookAt.x,
+        followState.smoothLookAt.y,
+        followState.smoothLookAt.z
+      );
     } else if (mode === 'orbit' && focusedMech) {
       simToThreePos(focusedMech.pos, state.terrain, targetVec);
       targetVec.y += 5.5;
@@ -1027,6 +1035,29 @@ export function MechCanvas3D({
     };
   }, [renderFrame]);
 
+  const handleSelectCameraMode = useCallback(
+    (nextMode: CameraMode) => {
+      directorStateRef.current.initialized = false;
+      followStateRef.current.initialized = false;
+      cameraModeRef.current = nextMode;
+      setCameraMode(nextMode);
+    },
+    []
+  );
+
+  useEffect(() => {
+    const nextMode = preferredCameraMode ?? 'director';
+    directorStateRef.current.initialized = false;
+    directorStateRef.current.cameraYawRad = null;
+    directorStateRef.current.primaryId = '';
+    directorStateRef.current.secondaryId = '';
+    followStateRef.current.initialized = false;
+    followStateRef.current.headingRad = null;
+    cameraModeRef.current = nextMode;
+    setCameraMode(nextMode);
+    renderFrame();
+  }, [cameraResetKey, renderFrame]);
+
   useEffect(() => {
     renderFrame();
   }, [simState, simState.tick, renderTick, focusedMechId, cameraMode, showTacticalOverlay, renderFrame]);
@@ -1109,29 +1140,32 @@ export function MechCanvas3D({
         <button
           type="button"
           className={cameraMode === 'director' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
-          onClick={() => setCameraMode('director')}
-          title="交戦中の機体を自動で追う中継カメラ"
+          onClick={() => handleSelectCameraMode('director')}
+          title="交戦中の機体を見切れず自動で追う中継カメラ"
         >
           中継
         </button>
         <button
           type="button"
+          className={cameraMode === 'follow' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
+          onClick={() => handleSelectCameraMode('follow')}
+          title="注目機の背後から前方を見通す背面カメラ"
+        >
+          背面
+        </button>
+        <button
+          type="button"
           className={cameraMode === 'overview' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
-          onClick={() => setCameraMode('overview')}
+          onClick={() => handleSelectCameraMode('overview')}
+          title="戦場全体を見渡す俯瞰カメラ"
         >
           俯瞰
         </button>
         <button
           type="button"
-          className={cameraMode === 'follow' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
-          onClick={() => setCameraMode('follow')}
-        >
-          追従
-        </button>
-        <button
-          type="button"
           className={cameraMode === 'orbit' ? 'cm-seg-btn is-active' : 'cm-seg-btn'}
-          onClick={() => setCameraMode('orbit')}
+          onClick={() => handleSelectCameraMode('orbit')}
+          title="注目機の周囲をドラッグ回転できるカメラ"
         >
           回転
         </button>

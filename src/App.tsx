@@ -1617,6 +1617,7 @@ export default function App() {
                               {actorLabel} {targetLabel ? `→ ${targetLabel}` : ''}{' '}
                               {ev.partId ? `[${ev.partId}${ev.face && ev.face !== 'all' ? `:${ev.face}` : ''}]` : ''}{' '}
                               {ev.damage ? `${Math.round(ev.damage)}dmg` : ''}
+                              {ev.type === 'hit' && ev.detail === 'critical' ? ' CRIT!' : ''}
                             </>
                           )}
                         </span>

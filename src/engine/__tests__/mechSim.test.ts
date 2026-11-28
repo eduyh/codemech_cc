@@ -14,7 +14,7 @@ import {
   PRESET_ABL,
   STARTER_MECHS,
 } from '../../data/presets';
-import { MAX_CHASSIS_TONNAGE, MatchParticipantEntry, MechControlInput } from '../../types/mech';
+import { MAX_CHASSIS_TONNAGE, MatchParticipantEntry, MechControlInput, SimCombatEvent } from '../../types/mech';
 import { validateAndRepairMechBlueprint } from '../../utils/shareMech';
 import { applyDamageToMechParts, getMechMobilityMultipliers, testProjectileHitMech } from '../hitbox';
 import { vectorToAngle2D } from '../math';
@@ -1760,5 +1760,75 @@ describe('deterministic 30 TPS mech simulator', () => {
         (p) => p === 'rightArm' || p === 'leftArm' || p === 'rightShoulder' || p === 'leftShoulder'
       )
     ).toBe(true);
+  });
+
+  it('triggers critical internal structure damage for mg_light (1/2) and lbx_shotgun (~1/3) only after armor is stripped', () => {
+    const critBp = structuredClone(PRESET_ABC);
+    critBp.parts.rightArmWeapon = 'mg_light';
+    critBp.parts.leftArmWeapon = 'lbx_shotgun';
+    critBp.parts.rightShoulderWeapon = 'shd_none';
+    critBp.parts.leftShoulderWeapon = 'shd_none';
+
+    const sim = createSimulation({
+      seed: 707,
+      rules: { arenaPreset: 'urban_pillars', arenaWidth: 800, arenaDepth: 800 },
+      entries: [
+        { id: 'critter', name: 'Critter', teamId: 'A', blueprint: critBp },
+        { id: 'target', name: 'Target', teamId: 'B', blueprint: structuredClone(PRESET_ABC) },
+      ],
+    });
+    sim.terrain.obstacles = [];
+    sim.terrain.heightAmplitude = 0;
+    sim.mechs[0].pos = { x: 400, y: 450, z: 0 };
+    sim.mechs[0].yawDeg = 0;
+    sim.mechs[1].pos = { x: 400, y: 400, z: 0 }; // 50m North
+    sim.mechs[1].yawDeg = 180;
+
+    // Phase 1: Armor intact -> no critical hits on MG / Shotgun volleys
+    stepSimulation(sim, {
+      critter: { ...EMPTY_CONTROL_INPUT, fireRightArm: true, fireLeftArm: true, lockTargetId: 'target' },
+    });
+    const intactCrits: SimCombatEvent[] = [];
+    for (let t = 0; t < 18; t++) {
+      stepSimulation(sim, { critter: EMPTY_CONTROL_INPUT, target: EMPTY_CONTROL_INPUT });
+      intactCrits.push(
+        ...sim.lastTickEvents.filter((e) => e.type === 'hit' && e.detail === 'critical')
+      );
+    }
+    expect(intactCrits).toHaveLength(0);
+
+    // Phase 2: Strip front armor of target upper parts -> both MG and Shotgun land boosted critical hits
+    const tParts = sim.mechs[1].parts;
+    tParts.torso.frontArmor = 0;
+    tParts.rightShoulder.frontArmor = 0;
+    tParts.leftShoulder.frontArmor = 0;
+    tParts.rightArm.armor = 0;
+    tParts.leftArm.armor = 0;
+    tParts.head.armor = 0;
+    tParts.torso.structure = 500;
+    tParts.rightShoulder.structure = 500;
+    tParts.leftShoulder.structure = 500;
+
+    const critEvents: SimCombatEvent[] = [];
+    for (let volley = 0; volley < 6; volley++) {
+      sim.mechs[0].weapons.rightArm.cooldownRemaining = 0;
+      sim.mechs[0].weapons.leftArm.cooldownRemaining = 0;
+      stepSimulation(sim, {
+        critter: { ...EMPTY_CONTROL_INPUT, fireRightArm: true, fireLeftArm: true, lockTargetId: 'target' },
+      });
+      for (let t = 0; t < 18; t++) {
+        stepSimulation(sim, { critter: EMPTY_CONTROL_INPUT, target: EMPTY_CONTROL_INPUT });
+        critEvents.push(
+          ...sim.lastTickEvents.filter((e) => e.type === 'hit' && e.detail === 'critical')
+        );
+      }
+    }
+
+    const mgCrits = critEvents.filter((e) => e.weaponId === 'mg_light');
+    const sgCrits = critEvents.filter((e) => e.weaponId === 'lbx_shotgun');
+    expect(mgCrits.length).toBeGreaterThanOrEqual(1);
+    expect(sgCrits.length).toBeGreaterThanOrEqual(1);
+    expect(mgCrits.some((e) => (e.damage ?? 0) > 6)).toBe(true); // base 5 -> ~11
+    expect(sgCrits.some((e) => (e.damage ?? 0) > 15)).toBe(true); // base 12 -> ~22.2
   });
 });

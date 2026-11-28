@@ -339,7 +339,9 @@ export class BattleAudioEngine {
           }
         }
       } else if (ev.type === 'hit') {
-        if ((ev.damage ?? 0) >= 6 && this.canTrigger('hit')) {
+        if (ev.detail === 'critical' && this.canTrigger('hit')) {
+          this.playStepSequence(ctx, 'pulse25', [1318, 1760, 2093], 0.018, 0.048);
+        } else if ((ev.damage ?? 0) >= 6 && this.canTrigger('hit')) {
           this.playStepSequence(ctx, 'square', [330, 220, 131], 0.02, 0.038);
         }
       } else if (ev.type === 'thermal_shutdown') {

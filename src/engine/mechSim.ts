@@ -43,6 +43,7 @@ import {
   getMechCollisionRadius,
   getMechEyeZ,
   getMechMobilityMultipliers,
+  getTargetArmorRemaining,
   mechLocalToWorld,
   PartHitResult,
   testProjectileHitMech,
@@ -1507,7 +1508,26 @@ function resolveHitOnMech(
   }
 
   const splashRatio = weaponId === 'ac10' || weaponId === 'ac20' || weaponId === 'ppc' ? 0.15 : 0;
-  const dmgResult = applyDamageToMechParts(target, hit, evalResult.finalDamage, state.rules, splashRatio);
+  let structureCritMult = 1;
+  if (weaponId && !target.parts[hit.partId].destroyed) {
+    const spec = getWeaponSpec(weaponId);
+    const critChance = spec.structureCritChance ?? 0;
+    const critMult = spec.structureCritMultiplier ?? 1;
+    const intactArmor = getTargetArmorRemaining(target.parts, hit.partId, hit.face);
+    if (critChance > 0 && critMult > 1 && evalResult.finalDamage > intactArmor) {
+      if (nextMechRand(attacker ?? target) < critChance) {
+        structureCritMult = critMult;
+      }
+    }
+  }
+  const dmgResult = applyDamageToMechParts(
+    target,
+    hit,
+    evalResult.finalDamage,
+    state.rules,
+    splashRatio,
+    structureCritMult
+  );
 
   target.lastHitTick = state.tick;
   if (attacker) {
@@ -1527,6 +1547,7 @@ function resolveHitOnMech(
     damage: dmgResult.appliedDamage,
     pos: { ...hit.hitWorldPos },
     ...(weaponId ? { weaponId } : {}),
+    ...(dmgResult.criticalHit ? { detail: 'critical' } : {}),
   });
 
   for (const brokenPart of dmgResult.newlyDestroyedParts) {

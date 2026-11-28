@@ -100,6 +100,8 @@ export interface WeaponPartSpec {
   burstCount: number;
   canRicochet: boolean;
   ricochetAngleDeg: number;
+  structureCritChance?: number;
+  structureCritMultiplier?: number;
   homingTurnDegPerSec: number;
   streamIntervalTicks?: number;
   ammoPerTon?: number;

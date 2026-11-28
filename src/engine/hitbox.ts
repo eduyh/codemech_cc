@@ -408,6 +408,7 @@ export interface DamageApplicationResult {
   appliedDamage: number;
   newlyDestroyedParts: MechPartId[];
   mechKilled: boolean;
+  criticalHit?: boolean;
 }
 
 const ADJACENT_SPLASH_PARTS: Record<MechPartId, readonly MechPartId[]> = {
@@ -426,13 +427,14 @@ function applyDamageToSinglePart(
   partId: MechPartId,
   face: ArmorFace,
   damage: number,
-  newlyDestroyed: MechPartId[]
-): number {
-  if (damage <= 0) return 0;
+  newlyDestroyed: MechPartId[],
+  structureCritMult = 1
+): { overflow: number; bonusDamage: number; criticalApplied: boolean } {
+  if (damage <= 0) return { overflow: 0, bonusDamage: 0, criticalApplied: false };
   const part = parts[partId];
 
   if (part.destroyed) {
-    return damage; // Full damage becomes overflow/transfer for already destroyed part
+    return { overflow: damage, bonusDamage: 0, criticalApplied: false };
   }
 
   let rem = damage;
@@ -453,18 +455,26 @@ function applyDamageToSinglePart(
   }
 
   let overflow = 0;
+  let bonusDamage = 0;
+  let criticalApplied = false;
   if (rem > 0) {
-    if (rem >= part.structure) {
-      overflow = rem - part.structure;
+    const mult = structureCritMult > 1 ? structureCritMult : 1;
+    const boostedRem = rem * mult;
+    if (mult > 1) {
+      bonusDamage = boostedRem - rem;
+      criticalApplied = true;
+    }
+    if (boostedRem >= part.structure) {
+      overflow = boostedRem - part.structure;
       part.structure = 0;
       part.destroyed = true;
       newlyDestroyed.push(partId);
     } else {
-      part.structure -= rem;
+      part.structure -= boostedRem;
     }
   }
 
-  return overflow;
+  return { overflow, bonusDamage, criticalApplied };
 }
 
 export function applyDamageToMechParts(
@@ -472,11 +482,12 @@ export function applyDamageToMechParts(
   hit: PartHitResult,
   damage: number,
   rules: Pick<MatchRules, 'headDestructionKills'>,
-  splashRatio = 0
+  splashRatio = 0,
+  structureCritMult = 1
 ): DamageApplicationResult {
   const newlyDestroyed: MechPartId[] = [];
   if (!mech.alive || damage <= 0) {
-    return { appliedDamage: 0, newlyDestroyedParts: [], mechKilled: false };
+    return { appliedDamage: 0, newlyDestroyedParts: [], mechKilled: false, criticalHit: false };
   }
 
   const clampedSplash = clamp(splashRatio, 0, 0.5);
@@ -487,13 +498,15 @@ export function applyDamageToMechParts(
   const directDamage = intactAdjacent.length > 0 ? damage * (1 - clampedSplash) : damage;
   const splashDamage = intactAdjacent.length > 0 ? damage - directDamage : 0;
 
-  const overflow = applyDamageToSinglePart(
+  const directRes = applyDamageToSinglePart(
     mech.parts,
     hit.partId,
     hit.face,
     directDamage,
-    newlyDestroyed
+    newlyDestroyed,
+    structureCritMult
   );
+  const overflow = directRes.overflow;
 
   if (splashDamage > 0 && intactAdjacent.length > 0) {
     const splashEach = splashDamage / intactAdjacent.length;
@@ -511,33 +524,34 @@ export function applyDamageToMechParts(
       const transferFace: ArmorFace = hit.face === 'rear' ? 'rear' : 'front';
       applyDamageToSinglePart(mech.parts, 'torso', transferFace, overflow * 0.5, newlyDestroyed);
     } else if (hit.partId === 'rightArm') {
-      const shoulderOverflow = applyDamageToSinglePart(
+      const shoulderRes = applyDamageToSinglePart(
         mech.parts,
         'rightShoulder',
         'front',
         overflow * 0.35,
         newlyDestroyed
       );
-      if (shoulderOverflow > 0) {
-        applyDamageToSinglePart(mech.parts, 'torso', 'front', shoulderOverflow * 0.5, newlyDestroyed);
+      if (shoulderRes.overflow > 0) {
+        applyDamageToSinglePart(mech.parts, 'torso', 'front', shoulderRes.overflow * 0.5, newlyDestroyed);
       }
     } else if (hit.partId === 'leftArm') {
-      const shoulderOverflow = applyDamageToSinglePart(
+      const shoulderRes = applyDamageToSinglePart(
         mech.parts,
         'leftShoulder',
         'front',
         overflow * 0.35,
         newlyDestroyed
       );
-      if (shoulderOverflow > 0) {
-        applyDamageToSinglePart(mech.parts, 'torso', 'front', shoulderOverflow * 0.5, newlyDestroyed);
+      if (shoulderRes.overflow > 0) {
+        applyDamageToSinglePart(mech.parts, 'torso', 'front', shoulderRes.overflow * 0.5, newlyDestroyed);
       }
     } else if (hit.partId === 'rightLeg' || hit.partId === 'leftLeg') {
       applyDamageToSinglePart(mech.parts, 'torso', 'front', overflow * 0.35, newlyDestroyed);
     }
   }
 
-  mech.damageTaken += damage;
+  const totalApplied = damage + directRes.bonusDamage;
+  mech.damageTaken += totalApplied;
 
   let mechKilled = false;
   if (mech.parts.torso.destroyed) {
@@ -551,9 +565,10 @@ export function applyDamageToMechParts(
   }
 
   return {
-    appliedDamage: damage,
+    appliedDamage: totalApplied,
     newlyDestroyedParts: newlyDestroyed,
     mechKilled,
+    criticalHit: directRes.criticalApplied,
   };
 }
 

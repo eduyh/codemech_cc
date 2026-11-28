@@ -319,6 +319,7 @@ export interface MechBlueprint {
   version: number;
   id: string;
   name: string;
+  authorId?: string;
   authorName?: string;
   color: string;
   chassisId: string;

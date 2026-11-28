@@ -12,6 +12,8 @@ import type {
   BattlefieldRuleConfig,
   ReplayPackageData,
 } from '../utils/shareMech';
+import { computeTeamTonnage, evaluateTeamTonnageLimit } from '../utils/teamStorage';
+import { getShortUserId, normalizeUserName, resolveUniqueTeamName } from '../utils/userProfile';
 import { deriveEntityRngSeed, normalizeMatchSeed } from './math';
 import { buildMechSensorState, createSimulation, stepSimulation } from './mechSim';
 import {
@@ -28,6 +30,17 @@ export interface BattlefieldRosterEntry {
   teamTag: string;
   battleOnly: boolean;
   sourceLabel: string;
+  isRandomGenerated?: boolean;
+}
+
+export interface TeamTonnageCheckResult {
+  teamId: string;
+  teamName: string;
+  totalTonnage: number;
+  effectiveCap: number;
+  allowed: boolean;
+  overBy: number;
+  isRandomTeam: boolean;
 }
 
 export interface BattlefieldTeamUnit {
@@ -112,26 +125,84 @@ export function groupRosterIntoTeams(
   }
 
   const teams: BattlefieldTeamUnit[] = [];
+  const usedTeamNames: string[] = [];
   let teamIdx = 1;
+  const size = Math.max(1, teamUnitSize);
 
-  for (const [tag, members] of tagged.entries()) {
+  const pushTeam = (desiredName: string, members: BattlefieldRosterEntry[]) => {
+    const uniqueName = resolveUniqueTeamName(desiredName, usedTeamNames);
+    usedTeamNames.push(uniqueName);
     teams.push({
       teamId: `T${teamIdx}`,
-      teamName: tag,
+      teamName: uniqueName,
       members,
     });
     teamIdx += 1;
+  };
+
+  for (const [tag, members] of tagged.entries()) {
+    if (members.length <= size) {
+      pushTeam(tag, members);
+      continue;
+    }
+
+    // Tag collision across multiple squads: split cleanly by distinct UUID (authorId) first, then distinct authorName
+    const byAuthorId = new Map<string, BattlefieldRosterEntry[]>();
+    for (const m of members) {
+      const aid = m.mech.authorId?.trim() ?? '';
+      const key = aid || '__no_id__';
+      if (!byAuthorId.has(key)) byAuthorId.set(key, []);
+      byAuthorId.get(key)!.push(m);
+    }
+
+    const distinctUuids = Array.from(byAuthorId.keys()).filter((k) => k !== '__no_id__');
+    if (distinctUuids.length >= 2) {
+      for (const [aid, group] of byAuthorId.entries()) {
+        for (let i = 0; i < group.length; i += size) {
+          const chunk = group.slice(i, i + size);
+          const rawAuthor = chunk[0]?.mech.authorName?.trim() ?? '';
+          const authorLabel =
+            rawAuthor && rawAuthor !== 'Commander' && rawAuthor !== 'CodeMech Official' && rawAuthor !== 'Custom'
+              ? `${normalizeUserName(rawAuthor)}-${getShortUserId(aid)}`
+              : aid === '__no_id__'
+                ? `${teamIdx}`
+                : getShortUserId(aid);
+          pushTeam(`${tag}-${authorLabel}`, chunk);
+        }
+      }
+      continue;
+    }
+
+    const byAuthor = new Map<string, BattlefieldRosterEntry[]>();
+    for (const m of members) {
+      const rawAuthor = m.mech.authorName?.trim() ?? '';
+      const isGeneric =
+        !rawAuthor || rawAuthor === 'CodeMech Official' || rawAuthor === 'Custom';
+      const key = isGeneric ? '__unknown__' : normalizeUserName(rawAuthor) || '__unknown__';
+      if (!byAuthor.has(key)) byAuthor.set(key, []);
+      byAuthor.get(key)!.push(m);
+    }
+
+    const distinctRealAuthors = Array.from(byAuthor.keys()).filter((k) => k !== '__unknown__');
+    if (distinctRealAuthors.length >= 2) {
+      for (const [authorKey, group] of byAuthor.entries()) {
+        for (let i = 0; i < group.length; i += size) {
+          const chunk = group.slice(i, i + size);
+          const suffix = authorKey === '__unknown__' ? `${teamIdx}` : authorKey;
+          pushTeam(`${tag}-${suffix}`, chunk);
+        }
+      }
+    } else {
+      for (let i = 0; i < members.length; i += size) {
+        const chunk = members.slice(i, i + size);
+        pushTeam(`${tag}-${Math.floor(i / size) + 1}`, chunk);
+      }
+    }
   }
 
-  const size = Math.max(1, teamUnitSize);
   for (let i = 0; i < untagged.length; i += size) {
     const chunk = untagged.slice(i, i + size);
-    teams.push({
-      teamId: `T${teamIdx}`,
-      teamName: `第${teamIdx}小隊`,
-      members: chunk,
-    });
-    teamIdx += 1;
+    pushTeam(`第${teamIdx}小隊`, chunk);
   }
 
   return teams;
@@ -473,4 +544,38 @@ export function runShortLeague(
   );
 
   return { matches, standings };
+}
+
+export function validateTeamTonnageRules(
+  teams: readonly BattlefieldTeamUnit[],
+  rule: Pick<
+    BattlefieldRuleConfig,
+    'format' | 'maxTeamTonnage' | 'randomTeamTonnageMultiplier'
+  >
+): { checks: TeamTonnageCheckResult[]; violations: TeamTonnageCheckResult[] } {
+  const cap = rule.format === 'battle_royale' ? 0 : rule.maxTeamTonnage;
+  const checks: TeamTonnageCheckResult[] = teams.map((team) => {
+    const isRandomTeam =
+      team.members.length > 0 && team.members.every((m) => Boolean(m.isRandomGenerated));
+    const totalTonnage = computeTeamTonnage(team.members.map((m) => m.mech));
+    const evalRes = evaluateTeamTonnageLimit(
+      totalTonnage,
+      cap,
+      isRandomTeam,
+      rule.randomTeamTonnageMultiplier
+    );
+    return {
+      teamId: team.teamId,
+      teamName: team.teamName,
+      totalTonnage: evalRes.totalTonnage,
+      effectiveCap: evalRes.effectiveCap,
+      allowed: evalRes.allowed,
+      overBy: evalRes.overBy,
+      isRandomTeam: evalRes.isRandomTeam,
+    };
+  });
+  return {
+    checks,
+    violations: checks.filter((c) => !c.allowed),
+  };
 }

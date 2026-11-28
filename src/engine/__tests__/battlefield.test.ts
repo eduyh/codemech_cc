@@ -8,6 +8,7 @@ import {
   runHeadlessBattlefieldMatch,
   runShortLeague,
   runTournament,
+  validateTeamTonnageRules,
 } from '../battlefield';
 import { buildMechSensorState, createSimulation, stepSimulation } from '../mechSim';
 import { evaluatePilotTick } from '../pilotRuntime';
@@ -143,5 +144,96 @@ describe('battlefield tournament, short league, commentary & E2E closed-network 
     const commentary = buildBattleCommentary(sim, { T1: 'T1', T2: 'T2' });
     expect(commentary.highlights.some((h) => h.includes('熱融解'))).toBe(true);
     expect(commentary.highlights.some((h) => h.includes('コア撃破'))).toBe(false);
+  });
+
+  it('enforces 180t cap on manual teams while allowing 1.35x (243t) on random squads', () => {
+    const heavyMech = STARTER_MECHS[2]; // 75t
+    const midMech = STARTER_MECHS[0]; // 55t
+    const makeMember = (id: string, mech: typeof heavyMech, teamTag: string, isRandomGenerated = false): BattlefieldRosterEntry => ({
+      id,
+      mech: structuredClone(mech),
+      pilot: structuredClone(STARTER_PILOTS[0]),
+      teamTag,
+      battleOnly: false,
+      sourceLabel: 'test',
+      isRandomGenerated,
+    });
+
+    // Manual 75+75+55 = 205t > 180t -> violation
+    const manualOver = [
+      makeMember('a1', heavyMech, 'OverManual', false),
+      makeMember('a2', heavyMech, 'OverManual', false),
+      makeMember('a3', midMech, 'OverManual', false),
+    ];
+    // Random 75+75+75 = 225t <= 243t (180 * 1.35) -> allowed
+    const randomOk = [
+      makeMember('r1', heavyMech, 'RandomOk', true),
+      makeMember('r2', heavyMech, 'RandomOk', true),
+      makeMember('r3', heavyMech, 'RandomOk', true),
+    ];
+    const teams = groupRosterIntoTeams([...manualOver, ...randomOk], 'team_match', 3);
+    const res = validateTeamTonnageRules(teams, {
+      ...DEFAULT_BATTLEFIELD_RULE,
+      maxTeamTonnage: 180,
+      randomTeamTonnageMultiplier: 1.35,
+    });
+    expect(res.violations).toHaveLength(1);
+    expect(res.violations[0].teamName).toBe('OverManual');
+    expect(res.violations[0].overBy).toBe(25);
+  });
+
+  it('automatically splits and deduplicates colliding team tags by UUID, author, or sequence', () => {
+    const makeEntry = (
+      id: string,
+      teamTag: string,
+      authorName: string,
+      authorId?: string
+    ): BattlefieldRosterEntry => ({
+      id,
+      mech: {
+        ...structuredClone(STARTER_MECHS[0]),
+        authorName,
+        ...(authorId ? { authorId } : {}),
+      },
+      pilot: structuredClone(STARTER_PILOTS[0]),
+      teamTag,
+      battleOnly: false,
+      sourceLabel: 'test',
+    });
+
+    // Case A: Two different default "Commander" users (different UUIDs) share the same tag -> splits cleanly by short UUID
+    const byUuidRoster = [
+      makeEntry('c1', '第1小隊', 'Commander', 'aaaa1111-0000-4000-8000-000000000001'),
+      makeEntry('c2', '第1小隊', 'Commander', 'aaaa1111-0000-4000-8000-000000000001'),
+      makeEntry('c3', '第1小隊', 'Commander', 'aaaa1111-0000-4000-8000-000000000001'),
+      makeEntry('d1', '第1小隊', 'Commander', 'bbbb2222-0000-4000-8000-000000000002'),
+      makeEntry('d2', '第1小隊', 'Commander', 'bbbb2222-0000-4000-8000-000000000002'),
+      makeEntry('d3', '第1小隊', 'Commander', 'bbbb2222-0000-4000-8000-000000000002'),
+    ];
+    const splitByUuid = groupRosterIntoTeams(byUuidRoster, 'team_match', 3);
+    expect(splitByUuid).toHaveLength(2);
+    expect(splitByUuid.map((t) => t.teamName)).toEqual(['第1小隊-AAAA', '第1小隊-BBBB']);
+
+    // Case B: 2 distinct authors without UUID both submitted with colliding tag "第1小隊" -> splits into 2 teams
+    const byAuthorRoster = [
+      makeEntry('a1', '第1小隊', 'Alpha'),
+      makeEntry('a2', '第1小隊', 'Alpha'),
+      makeEntry('a3', '第1小隊', 'Alpha'),
+      makeEntry('b1', '第1小隊', 'Bravo'),
+      makeEntry('b2', '第1小隊', 'Bravo'),
+      makeEntry('b3', '第1小隊', 'Bravo'),
+    ];
+    const splitByAuthor = groupRosterIntoTeams(byAuthorRoster, 'team_match', 3);
+    expect(splitByAuthor).toHaveLength(2);
+    expect(splitByAuthor.map((t) => t.teamName)).toEqual(['第1小隊-Alpha', '第1小隊-Bravo']);
+    expect(splitByAuthor.every((t) => t.members.length === 3)).toBe(true);
+
+    // Case C: colliding tag without distinct authors or UUIDs -> splits numerically by teamUnitSize
+    const anonymousRoster = Array.from({ length: 6 }, (_, i) =>
+      makeEntry(`x${i}`, '共通小隊', 'CodeMech Official')
+    );
+    const splitNum = groupRosterIntoTeams(anonymousRoster, 'team_match', 3);
+    expect(splitNum).toHaveLength(2);
+    expect(splitNum.map((t) => t.teamName)).toEqual(['共通小隊-1', '共通小隊-2']);
   });
 });

@@ -67,6 +67,8 @@ export interface BattlefieldRuleConfig {
   teamUnitSize: number;
   leagueMaxRounds: number;
   randomizeSeedPerMatch: boolean;
+  maxTeamTonnage: number;
+  randomTeamTonnageMultiplier: number;
 }
 
 export const DEFAULT_BATTLEFIELD_RULE: BattlefieldRuleConfig = {
@@ -78,6 +80,8 @@ export const DEFAULT_BATTLEFIELD_RULE: BattlefieldRuleConfig = {
   teamUnitSize: 3,
   leagueMaxRounds: 3,
   randomizeSeedPerMatch: false,
+  maxTeamTonnage: 180,
+  randomTeamTonnageMultiplier: 1.35,
 };
 
 export interface MechPackageData {
@@ -346,6 +350,9 @@ export function validateAndRepairMechBlueprint(raw: MechBlueprint): MechBlueprin
     version: 2,
     id: typeof raw?.id === 'string' && raw.id.trim() ? raw.id.trim().slice(0, 64) : def.id,
     name: typeof raw?.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 40) : def.name,
+    ...(typeof raw?.authorId === 'string' && raw.authorId.trim()
+      ? { authorId: raw.authorId.trim().slice(0, 64) }
+      : {}),
     authorName: typeof raw?.authorName === 'string' ? raw.authorName.trim().slice(0, 40) : undefined,
     color: typeof raw?.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(raw.color) ? raw.color : def.color,
     chassisId: chassis.id,
@@ -440,6 +447,14 @@ export function normalizeBattlefieldRule(raw?: Partial<BattlefieldRuleConfig>): 
     teamUnitSize: clamp(Math.round(raw?.teamUnitSize ?? DEFAULT_BATTLEFIELD_RULE.teamUnitSize), 1, 6),
     leagueMaxRounds: clamp(Math.round(raw?.leagueMaxRounds ?? DEFAULT_BATTLEFIELD_RULE.leagueMaxRounds), 1, 10),
     randomizeSeedPerMatch: Boolean(raw?.randomizeSeedPerMatch),
+    maxTeamTonnage:
+      raw?.maxTeamTonnage !== undefined
+        ? clamp(Math.round(raw.maxTeamTonnage), 0, 600)
+        : DEFAULT_BATTLEFIELD_RULE.maxTeamTonnage,
+    randomTeamTonnageMultiplier:
+      raw?.randomTeamTonnageMultiplier !== undefined
+        ? clamp(Number(raw.randomTeamTonnageMultiplier) || 1.35, 1.2, 1.5)
+        : DEFAULT_BATTLEFIELD_RULE.randomTeamTonnageMultiplier,
   };
 }
 

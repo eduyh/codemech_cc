@@ -5,6 +5,7 @@ import {
   Cpu,
   Grid2X2,
   Maximize2,
+  Menu,
   Pause,
   Play,
   RotateCcw,
@@ -12,6 +13,8 @@ import {
   Shuffle,
   StepForward,
   Swords,
+  User,
+  Users,
   Wrench,
   X,
 } from 'lucide-react';
@@ -22,6 +25,8 @@ import { MechGarage } from './components/MechGarage';
 import { MechPartsHud } from './components/MechPartsHud';
 import { MvpArenaCanvas } from './components/MvpArenaCanvas';
 import { ShareModal } from './components/ShareModal';
+import { StudioMenuDrawer } from './components/StudioMenuDrawer';
+import { TeamBuilderPanel } from './components/TeamBuilderPanel';
 import { battleAudio } from './utils/battleAudio';
 import { formatKillFeedLine } from './utils/combatText';
 import { CURRICULUM_MISSIONS } from './data/curriculum';
@@ -71,6 +76,19 @@ import {
   loadUserPilots,
   saveUserPilot,
 } from './utils/pilotLibrary';
+import {
+  SavedTeamEntry,
+  SavedTeamMember,
+  deleteUserTeam,
+  loadSavedTeams,
+  queueTeamForBattlefield,
+  saveUserTeam,
+} from './utils/teamStorage';
+import {
+  UserProfile,
+  loadUserProfile,
+  saveUserProfile,
+} from './utils/userProfile';
 import { createSimFromReplay } from './engine/battlefield';
 import { buildMechSensorState, createSimulation, stepSimulation } from './engine/mechSim';
 import {
@@ -223,7 +241,7 @@ function buildMatchSetup(
   return { sim, pilotProfiles, pilotRuntimes };
 }
 
-type StudioTab = 'program' | 'garage' | 'curriculum';
+type StudioTab = 'program' | 'garage' | 'team' | 'curriculum';
 
 export default function App() {
   const [formatId, setFormatId] = useState<FormatId>('1v1');
@@ -236,6 +254,9 @@ export default function App() {
     resolveMechBlueprintRoms(structuredClone(PRESET_ABC), getAllRoms(loadUserRoms()))
   );
   const [savedMechs, setSavedMechs] = useState<SavedCustomMech[]>(() => loadSavedCustomMechs());
+  const [savedTeams, setSavedTeams] = useState<SavedTeamEntry[]>(() => loadSavedTeams());
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => loadUserProfile());
+  const [menuOpen, setMenuOpen] = useState(false);
   const [starterEdited, setStarterEdited] = useState(false);
   const [setupTag, setSetupTag] = useState(() => getEditableModelTagFromBlueprint(playerMech));
   const [setupSaveNotice, setSetupSaveNotice] = useState('');
@@ -503,9 +524,14 @@ export default function App() {
 
   const handleSaveCustomMech = useCallback(
     (tag: string) => {
+      const bpToSave = {
+        ...playerMechRef.current,
+        authorName: userProfile.userName,
+        authorId: userProfile.userId,
+      };
       const res = saveCustomMech(
         savedMechs,
-        playerMechRef.current,
+        bpToSave,
         tag,
         Date.now(),
         playerPilotRef.current.id
@@ -518,7 +544,7 @@ export default function App() {
       resetMatch(formatId, arenaPreset, savedClone, seed);
       return { saved: res.saved, updated: res.updated };
     },
-    [savedMechs, allRoms, formatId, arenaPreset, seed, resetMatch]
+    [savedMechs, allRoms, formatId, arenaPreset, seed, resetMatch, userProfile.userName, userProfile.userId]
   );
 
   const handleMountSetupRom = useCallback(
@@ -683,9 +709,94 @@ export default function App() {
     [playerResolvedGroups, handleUpdatePlayerMech]
   );
 
+  const handleSaveUserTeam = useCallback(
+    (input: {
+      id?: string;
+      name: string;
+      members: readonly SavedTeamMember[];
+      userName?: string;
+      userId?: string;
+    }) => {
+      const res = saveUserTeam(savedTeams, {
+        ...input,
+        userName: input.userName ?? userProfile.userName,
+        userId: input.userId ?? userProfile.userId,
+      });
+      setSavedTeams(res.nextList);
+      return { saved: res.saved, updated: res.updated };
+    },
+    [savedTeams, userProfile.userName, userProfile.userId]
+  );
+
+  const handleSaveUserName = useCallback((rawName: string) => {
+    const saved = saveUserProfile(rawName);
+    setUserProfile(saved);
+    return saved;
+  }, []);
+
+  const handleBackupRestored = useCallback(() => {
+    setUserProfile(loadUserProfile());
+    setSavedMechs(loadSavedCustomMechs());
+    setUserPilots(loadUserPilots());
+    const nextRoms = loadUserRoms();
+    setUserRoms(nextRoms);
+    setSavedTeams(loadSavedTeams());
+  }, []);
+
+  const handleDeleteUserTeam = useCallback(
+    (teamId: string) => {
+      setSavedTeams((prev) => deleteUserTeam(prev, teamId));
+    },
+    []
+  );
+
+  const handleTestTeamInStudio = useCallback(
+    (
+      _teamName: string,
+      members: Array<{ mech: MechBlueprint; pilot: PilotProfile; mechEntryId: string }>
+    ) => {
+      const m0 = members[0];
+      if (!m0) return;
+      const clonedM0 = resolveMechBlueprintRoms(structuredClone(m0.mech), allRoms);
+      const clonedP0 = structuredClone(m0.pilot);
+      const nextAllies = [
+        members[1]?.mechEntryId ?? STARTER_MECHS[1]?.id ?? STARTER_MECHS[0].id,
+        members[2]?.mechEntryId ?? STARTER_MECHS[2]?.id ?? STARTER_MECHS[0].id,
+      ];
+      setPlayerMech(clonedM0);
+      playerMechRef.current = clonedM0;
+      setSetupTag(getEditableModelTagFromBlueprint(clonedM0));
+      setStarterEdited(false);
+      setPlayerPilot(clonedP0);
+      playerPilotRef.current = clonedP0;
+      allyMechIdsRef.current = nextAllies;
+      setAllyMechIds(nextAllies);
+      setFormatId('3v3');
+      resetMatch(
+        '3v3',
+        arenaPreset,
+        clonedM0,
+        seed,
+        false,
+        clonedP0,
+        nextAllies,
+        enemyMechIdsRef.current
+      );
+      setStudioTab('program');
+    },
+    [allRoms, arenaPreset, seed, resetMatch]
+  );
+
+  const handleRegisterTeamToBattlefield = useCallback((team: SavedTeamEntry) => {
+    queueTeamForBattlefield(team.id);
+    window.location.href = window.location.pathname.endsWith('index.html')
+      ? './battlefield.html'
+      : '?app=battlefield';
+  }, []);
+
   const isStarterMech = isStarterMechId(playerMech.id);
   const isStarterDirty = isStarterMech && starterEdited;
-  const isGarageFull = studioTab === 'garage';
+  const isGarageFull = studioTab === 'garage' || studioTab === 'team';
   const currentFormatSpec = FORMAT_OPTIONS.find((f) => f.id === formatId) ?? FORMAT_OPTIONS[0];
   const mechNameById = useMemo(
     () => new Map(sim.mechs.map((m) => [m.id, m.name])),
@@ -727,6 +838,16 @@ export default function App() {
             >
               <Wrench size={15} /> 機体ガレージ
             </button>
+            <button
+              type="button"
+              className={studioTab === 'team' ? 'cm-studio-tab is-active' : 'cm-studio-tab'}
+              onClick={() => {
+                setPlaying(false);
+                setStudioTab('team');
+              }}
+            >
+              <Users size={15} /> チーム編成 (180t)
+            </button>
             <a className="cm-studio-tab cm-studio-tab--arena" href="?app=battlefield">
               <Swords size={15} /> バトルフィールド
             </a>
@@ -745,6 +866,16 @@ export default function App() {
             onClick={() => setShareOpen(true)}
           >
             <Share2 size={15} /> 共有・読込
+          </button>
+          <button
+            type="button"
+            className="cm-menu-btn"
+            onClick={() => setMenuOpen(true)}
+            title={`ユーザー名設定 ＆ バックアップメニュー (UUID: ${userProfile.userId})`}
+          >
+            <Menu size={16} />
+            <User size={14} />
+            <span>{userProfile.userName}</span>
           </button>
         </div>
       </header>
@@ -786,6 +917,22 @@ export default function App() {
                 handleSelectPilot(found);
                 if (isStarterMech) setStarterEdited(true);
               }}
+            />
+          )}
+
+          {studioTab === 'team' && (
+            <TeamBuilderPanel
+              savedTeams={savedTeams}
+              savedMechs={savedMechs}
+              allPilots={allPilots}
+              allRoms={allRoms}
+              userName={userProfile.userName}
+              userId={userProfile.userId}
+              onOpenUserMenu={() => setMenuOpen(true)}
+              onSaveTeam={handleSaveUserTeam}
+              onDeleteTeam={handleDeleteUserTeam}
+              onTestTeamInStudio={handleTestTeamInStudio}
+              onRegisterToBattlefield={handleRegisterTeamToBattlefield}
             />
           )}
 
@@ -1421,7 +1568,28 @@ export default function App() {
                 </div>
               </div>
 
-              <MechPartsHud mech={focusedMech} />
+              {formatId === '1v1' && sim.mechs.length === 2 ? (
+                <div className="cm-dual-parts-hud">
+                  <MechPartsHud
+                    mech={sim.mechs[0]}
+                    roleLabel="味方"
+                    accent="ally"
+                    compact
+                    selected={sim.mechs[0].id === focusedMechId}
+                    onSelect={() => setFocusedMechId(sim.mechs[0].id)}
+                  />
+                  <MechPartsHud
+                    mech={sim.mechs[1]}
+                    roleLabel="敵機"
+                    accent="enemy"
+                    compact
+                    selected={sim.mechs[1].id === focusedMechId}
+                    onSelect={() => setFocusedMechId(sim.mechs[1].id)}
+                  />
+                </div>
+              ) : (
+                <MechPartsHud mech={focusedMech} />
+              )}
 
               <div className="cm-event-log">
                 <div className="cm-event-title">戦況ログ (直近)</div>
@@ -1479,6 +1647,22 @@ export default function App() {
           playerPilotRef.current = nextPilot;
           resetMatch(formatId, arenaPreset, playerMechRef.current, seed, false, nextPilot);
         }}
+      />
+
+      <StudioMenuDrawer
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        appVersion={pkg.version}
+        userProfile={userProfile}
+        onSaveUserName={handleSaveUserName}
+        counts={{
+          mechs: savedMechs.length,
+          pilots: userPilots.length,
+          roms: userRoms.length,
+          teams: savedTeams.length,
+        }}
+        onBackupRestored={handleBackupRestored}
+        onOpenShareModal={() => setShareOpen(true)}
       />
 
       {expanded2D && (

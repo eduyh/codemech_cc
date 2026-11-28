@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import pkg from '../../package.json';
 import {
   Check,
@@ -7,17 +7,21 @@ import {
   Download,
   Lock,
   Maximize2,
+  Menu,
   Pause,
   Play,
+  Plus,
   RotateCcw,
+  Shuffle,
   StepForward,
   Swords,
   Trash2,
   Trophy,
   Upload,
+  User,
   X,
 } from 'lucide-react';
-import { STARTER_MECHS, STARTER_PILOTS } from '../data/presets';
+import { DEFAULT_PILOT_PROFILE, STARTER_MECHS, STARTER_PILOTS } from '../data/presets';
 import {
   BattlefieldMatchSummary,
   BattlefieldRosterEntry,
@@ -27,10 +31,19 @@ import {
   runHeadlessBattlefieldMatch,
   runShortLeague,
   runTournament,
+  validateTeamTonnageRules,
 } from '../engine/battlefield';
 import { buildMechSensorState, createSimulation, stepSimulation } from '../engine/mechSim';
 import { PilotRuntimeState, evaluatePilotTick } from '../engine/pilotRuntime';
 import { ArenaPresetId, MAX_MECHS, MechControlInput, PilotProfile, SIM_TPS, SimState } from '../types/mech';
+import {
+  SavedCustomMech,
+  formatCustomMechName,
+  formatMechDropdownLabel,
+  loadSavedCustomMechs,
+} from '../utils/customMechStorage';
+import { getAllPilots, loadUserPilots } from '../utils/pilotLibrary';
+import { getAllRoms, loadUserRoms } from '../utils/romLibrary';
 import {
   BattlefieldFormat,
   BattlefieldRuleConfig,
@@ -46,6 +59,22 @@ import {
   parseReplayFileText,
   serializeReplayFile,
 } from '../utils/shareMech';
+import {
+  SavedTeamEntry,
+  TEAM_SQUAD_SIZE,
+  buildRandomSquad,
+  consumeQueuedBattlefieldTeamId,
+  getMechChassisTonnage,
+  loadSavedTeams,
+  resolveTeamMemberAssets,
+} from '../utils/teamStorage';
+import {
+  UserProfile,
+  loadUserProfile,
+  resolveUniqueTeamName,
+  saveUserProfile,
+} from '../utils/userProfile';
+import { StudioMenuDrawer } from './StudioMenuDrawer';
 import { MechCanvas3D } from './MechCanvas3D';
 import { MechPartsHud } from './MechPartsHud';
 import { MvpArenaCanvas } from './MvpArenaCanvas';
@@ -81,7 +110,103 @@ export function BattlefieldApp() {
     ? './index.html'
     : '?app=studio';
 
-  const [roster, setRoster] = useState<BattlefieldRosterEntry[]>(() => buildSampleRoster(4, 3));
+  const [savedTeams, setSavedTeams] = useState<SavedTeamEntry[]>(() => loadSavedTeams());
+  const [savedMechs, setSavedMechs] = useState<SavedCustomMech[]>(() => loadSavedCustomMechs());
+  const [userRoms, setUserRoms] = useState(() => loadUserRoms());
+  const allRoms = useMemo(() => getAllRoms(userRoms), [userRoms]);
+  const [userPilots, setUserPilots] = useState(() => loadUserPilots());
+  const allPilots = useMemo(() => getAllPilots(userPilots), [userPilots]);
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => loadUserProfile());
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const squadPool = useMemo(() => {
+    const customPool = savedMechs.map((m) =>
+      resolveTeamMemberAssets(
+        { mechId: m.id, pilotId: m.pilotId ?? DEFAULT_PILOT_PROFILE.id },
+        savedMechs,
+        allPilots,
+        allRoms
+      )
+    );
+    const starterPool = STARTER_MECHS.map((bp) =>
+      resolveTeamMemberAssets(
+        { mechId: bp.id, pilotId: bp.defaultPilotId ?? DEFAULT_PILOT_PROFILE.id },
+        savedMechs,
+        allPilots,
+        allRoms
+      )
+    );
+    return [...customPool, ...starterPool];
+  }, [savedMechs, allPilots, allRoms]);
+
+  const [selectedLocalTeamId, setSelectedLocalTeamId] = useState<string>(() => loadSavedTeams()[0]?.id ?? '');
+  const [selectedLocalMechId, setSelectedLocalMechId] = useState<string>(
+    () => loadSavedCustomMechs()[0]?.id ?? STARTER_MECHS[0].id
+  );
+  const [localTagInput, setLocalTagInput] = useState('自作班');
+
+  const initialQueuedBoot = useMemo(() => {
+    const queuedId = consumeQueuedBattlefieldTeamId();
+    if (!queuedId) return null;
+    const teams = loadSavedTeams();
+    const found = teams.find((t) => t.id === queuedId);
+    if (!found) return null;
+    const localMechs = loadSavedCustomMechs();
+    const roms = getAllRoms(loadUserRoms());
+    const pilots = getAllPilots(loadUserPilots());
+    const pool = [
+      ...localMechs.map((m) =>
+        resolveTeamMemberAssets(
+          { mechId: m.id, pilotId: m.pilotId ?? DEFAULT_PILOT_PROFILE.id },
+          localMechs,
+          pilots,
+          roms
+        )
+      ),
+      ...STARTER_MECHS.map((bp) =>
+        resolveTeamMemberAssets(
+          { mechId: bp.id, pilotId: bp.defaultPilotId ?? DEFAULT_PILOT_PROFILE.id },
+          localMechs,
+          pilots,
+          roms
+        )
+      ),
+    ];
+    const teamEntries: BattlefieldRosterEntry[] = found.members.map((mem, idx) => {
+      const assets = resolveTeamMemberAssets(mem, localMechs, pilots, roms);
+      return {
+        id: `local_${found.id}_${idx}_${Date.now().toString(36)}`,
+        mech: assets.mech,
+        pilot: assets.pilot,
+        teamTag: found.name,
+        battleOnly: false,
+        sourceLabel: 'ローカルチーム',
+      };
+    });
+    const enemyPicked = buildRandomSquad(
+      pool,
+      TEAM_SQUAD_SIZE,
+      DEFAULT_BATTLEFIELD_RULE.maxTeamTonnage,
+      DEFAULT_BATTLEFIELD_RULE.randomTeamTonnageMultiplier
+    );
+    const enemyEntries: BattlefieldRosterEntry[] = enemyPicked.map((a, idx) => ({
+      id: `rand_boot_${idx}_${Date.now().toString(36)}`,
+      mech: structuredClone(a.mech),
+      pilot: structuredClone(a.pilot),
+      teamTag: 'ランダム敵部隊',
+      battleOnly: false,
+      sourceLabel: 'ランダム編成',
+      isRandomGenerated: true,
+    }));
+    return {
+      teamName: found.name,
+      roster: [...teamEntries, ...enemyEntries],
+    };
+  }, []);
+
+  const [roster, setRoster] = useState<BattlefieldRosterEntry[]>(
+    () => initialQueuedBoot?.roster ?? buildSampleRoster(4, 3)
+  );
   const [rule, setRule] = useState<BattlefieldRuleConfig>(DEFAULT_BATTLEFIELD_RULE);
   const [seed, setSeed] = useState(2026);
 
@@ -89,7 +214,11 @@ export function BattlefieldApp() {
   const [dedupMode, setDedupMode] = useState<'latest' | 'all'>('latest');
   const [ruleCodeInput, setRuleCodeInput] = useState('');
   const [replayCodeInput, setReplayCodeInput] = useState('');
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(() =>
+    initialQueuedBoot
+      ? `スタジオからチーム「${initialQueuedBoot.teamName}」をエントリーし、ランダム敵部隊と対戦準備しました。`
+      : null
+  );
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -126,28 +255,50 @@ export function BattlefieldApp() {
     setRenderTick((n) => n + 1);
   }, []);
 
-  const startLiveMatch = useCallback(() => {
-    battleAudio.unlock();
-    setErrorMsg(null);
-    if (roster.length < 2) {
-      setErrorMsg('対戦には最低 2 機のエントリーが必要です。');
-      return;
-    }
-    const teams = groupRosterIntoTeams(roster, rule.format, rule.teamUnitSize);
-    if (teams.length < 2) {
-      setErrorMsg('対戦可能な 2 チーム以上が必要です（チームタグや人数を確認してください）。');
-      return;
-    }
+  const groupedTeams = useMemo(
+    () => groupRosterIntoTeams(roster, rule.format, rule.teamUnitSize),
+    [roster, rule.format, rule.teamUnitSize]
+  );
+  const tonnageValidation = useMemo(
+    () => validateTeamTonnageRules(groupedTeams, rule),
+    [groupedTeams, rule]
+  );
 
-    const matchSeed = rule.randomizeSeedPerMatch
-      ? ((seed * 1664525 + 1013904223 + Date.now()) >>> 0) % 1000000
-      : seed;
-    if (rule.randomizeSeedPerMatch) setSeed(matchSeed);
+  const startLiveMatch = useCallback(
+    (overrideRoster?: BattlefieldRosterEntry[], overrideRule?: BattlefieldRuleConfig) => {
+      battleAudio.unlock();
+      setErrorMsg(null);
+      const targetRoster = overrideRoster ?? roster;
+      const targetRule = overrideRule ?? rule;
+      if (targetRoster.length < 2) {
+        setErrorMsg('対戦には最低 2 機のエントリーが必要です。');
+        return;
+      }
+      const teams = groupRosterIntoTeams(targetRoster, targetRule.format, targetRule.teamUnitSize);
+      if (teams.length < 2) {
+        setErrorMsg('対戦可能な 2 チーム以上が必要です（チームタグや人数を確認してください）。');
+        return;
+      }
+      const { violations } = validateTeamTonnageRules(teams, targetRule);
+      if (violations.length > 0) {
+        const msg = violations
+          .map((v) => `${v.teamName}(${v.totalTonnage}/${v.effectiveCap}t)`)
+          .join('、');
+        setErrorMsg(`チーム重量上限オーバーのため開始できません: ${msg}`);
+        return;
+      }
 
-    const { summary } = runHeadlessBattlefieldMatch(teams, rule, matchSeed, 'ライブ観戦試合');
-    setLiveSummary(summary);
-    loadReplayIntoStage(summary.replay, true);
-  }, [roster, rule, seed, loadReplayIntoStage]);
+      const matchSeed = targetRule.randomizeSeedPerMatch
+        ? ((seed * 1664525 + 1013904223 + Date.now()) >>> 0) % 1000000
+        : seed;
+      if (targetRule.randomizeSeedPerMatch) setSeed(matchSeed);
+
+      const { summary } = runHeadlessBattlefieldMatch(teams, targetRule, matchSeed, 'ライブ観戦試合');
+      setLiveSummary(summary);
+      loadReplayIntoStage(summary.replay, true);
+    },
+    [roster, rule, seed, loadReplayIntoStage]
+  );
 
   // Initialize first stage preview once
   useEffect(() => {
@@ -226,19 +377,182 @@ export function BattlefieldApp() {
       setErrorMsg(res.warnings[0]?.reason ?? '有効な機体コード (CMM1- / CMM1B-) が見つかりませんでした。');
       return;
     }
-    const newEntries: BattlefieldRosterEntry[] = deduped.map((c, idx) => ({
-      id: `imp_${Date.now().toString(36)}_${idx}`,
-      mech: c.mech,
-      pilot: c.pilot,
-      teamTag: c.teamTag,
-      battleOnly: c.battleOnly,
-      sourceLabel: c.battleOnly ? '非公開コード' : 'チャット取込',
-    }));
+    const existingTags = Array.from(
+      new Set(roster.map((r) => r.teamTag.trim()).filter(Boolean))
+    );
+    const tagRemap = new Map<string, string>();
+    const adjustedTags: string[] = [];
+    const newEntries: BattlefieldRosterEntry[] = deduped.map((c, idx) => {
+      const rawTag = c.teamTag.trim();
+      let finalTag = rawTag;
+      if (rawTag) {
+        if (!tagRemap.has(rawTag)) {
+          const unique = resolveUniqueTeamName(rawTag, existingTags);
+          tagRemap.set(rawTag, unique);
+          existingTags.push(unique);
+          if (unique !== rawTag) {
+            adjustedTags.push(`${rawTag}→${unique}`);
+          }
+        }
+        finalTag = tagRemap.get(rawTag)!;
+      }
+      return {
+        id: `imp_${Date.now().toString(36)}_${idx}`,
+        mech: c.mech,
+        pilot: c.pilot,
+        teamTag: finalTag,
+        battleOnly: c.battleOnly,
+        sourceLabel: c.battleOnly ? '非公開コード' : 'チャット取込',
+      };
+    });
     setRoster((prev) => [...prev, ...newEntries].slice(0, MAX_MECHS));
     const warnMsg =
       res.warnings.length > 0 ? `（警告 ${res.warnings.length} 件: ${res.warnings[0].reason}）` : '';
-    setNotice(`${newEntries.length} 機をエントリーへ追加しました。${warnMsg}`);
+    const adjMsg =
+      adjustedTags.length > 0 ? `（重複チーム名を自動調整: ${adjustedTags.join(', ')}）` : '';
+    setNotice(`${newEntries.length} 機をエントリーへ追加しました。${adjMsg}${warnMsg}`);
     setBulkInput('');
+  };
+
+  const handleAddLocalTeam = () => {
+    setErrorMsg(null);
+    setNotice(null);
+    const team = savedTeams.find((t) => t.id === selectedLocalTeamId);
+    if (!team) {
+      setErrorMsg('追加できる保存済みローカルチームがありません。スタジオの「チーム編成」タブで保存してください。');
+      return;
+    }
+    const existingTags = Array.from(
+      new Set(roster.map((r) => r.teamTag.trim()).filter(Boolean))
+    );
+    const uniqueTag = resolveUniqueTeamName(team.name, existingTags);
+    const entries: BattlefieldRosterEntry[] = team.members.map((mem, idx) => {
+      const assets = resolveTeamMemberAssets(mem, savedMechs, allPilots, allRoms);
+      return {
+        id: `local_${team.id}_${idx}_${Date.now().toString(36)}`,
+        mech: assets.mech,
+        pilot: assets.pilot,
+        teamTag: uniqueTag,
+        battleOnly: false,
+        sourceLabel: 'ローカルチーム',
+      };
+    });
+    setRoster((prev) => [...prev, ...entries].slice(0, MAX_MECHS));
+    const renamedNote =
+      uniqueTag !== team.name ? `（重複回避のため「${uniqueTag}」へ自動調整）` : '';
+    setNotice(
+      `ローカルチーム「${uniqueTag}」(${entries.length}機) を出場プールへ追加しました。${renamedNote}`
+    );
+  };
+
+  const handleAddLocalSingleMech = () => {
+    setErrorMsg(null);
+    setNotice(null);
+    const custom = savedMechs.find((m) => m.id === selectedLocalMechId);
+    const assets = resolveTeamMemberAssets(
+      {
+        mechId: selectedLocalMechId,
+        pilotId: custom?.pilotId ?? DEFAULT_PILOT_PROFILE.id,
+      },
+      savedMechs,
+      allPilots,
+      allRoms
+    );
+    const entry: BattlefieldRosterEntry = {
+      id: `local_single_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`,
+      mech: assets.mech,
+      pilot: assets.pilot,
+      teamTag: localTagInput.trim() || '自作班',
+      battleOnly: false,
+      sourceLabel: custom ? '自作機体' : '標準機体',
+    };
+    setRoster((prev) => [...prev, entry].slice(0, MAX_MECHS));
+    setNotice(`「${assets.mech.name}」(${getMechChassisTonnage(assets.mech)}t) を追加しました。`);
+  };
+
+  const handleAddRandomSquad = () => {
+    setErrorMsg(null);
+    setNotice(null);
+    const size = Math.max(1, Math.min(3, rule.format === 'battle_royale' ? 1 : rule.teamUnitSize || 3));
+    const picked = buildRandomSquad(
+      squadPool,
+      size,
+      rule.maxTeamTonnage,
+      rule.randomTeamTonnageMultiplier
+    );
+    const randTag = `ランダム${((Date.now() / 100) | 0) % 90 + 10}班`;
+    const entries: BattlefieldRosterEntry[] = picked.map((a, idx) => ({
+      id: `rand_${Date.now().toString(36)}_${idx}`,
+      mech: structuredClone(a.mech),
+      pilot: structuredClone(a.pilot),
+      teamTag: randTag,
+      battleOnly: false,
+      sourceLabel: 'ランダム編成',
+      isRandomGenerated: true,
+    }));
+    const tonSum = entries.reduce((acc, e) => acc + getMechChassisTonnage(e.mech), 0);
+    setRoster((prev) => [...prev, ...entries].slice(0, MAX_MECHS));
+    setNotice(
+      `ランダム小隊「${randTag}」(${entries.length}機 / 計${tonSum}t) を追加しました（ランダム許容 ${Math.round(rule.randomTeamTonnageMultiplier * 100)}%）。`
+    );
+  };
+
+  const handleQuickLocalRandom3v3 = () => {
+    setErrorMsg(null);
+    setNotice(null);
+    const team = savedTeams.find((t) => t.id === selectedLocalTeamId) ?? savedTeams[0];
+    const allyEntries: BattlefieldRosterEntry[] = team
+      ? team.members.map((mem, idx) => {
+          const assets = resolveTeamMemberAssets(mem, savedMechs, allPilots, allRoms);
+          return {
+            id: `ql_ally_${idx}_${Date.now().toString(36)}`,
+            mech: assets.mech,
+            pilot: assets.pilot,
+            teamTag: team.name,
+            battleOnly: false,
+            sourceLabel: 'ローカルチーム',
+          };
+        })
+      : buildRandomSquad(
+          squadPool,
+          TEAM_SQUAD_SIZE,
+          rule.maxTeamTonnage,
+          1.2
+        ).map((a, idx) => ({
+          id: `ql_ally_${idx}_${Date.now().toString(36)}`,
+          mech: structuredClone(a.mech),
+          pilot: structuredClone(a.pilot),
+          teamTag: '味方ランダム',
+          battleOnly: false,
+          sourceLabel: 'ランダム編成',
+          isRandomGenerated: true,
+        }));
+
+    const enemyEntries: BattlefieldRosterEntry[] = buildRandomSquad(
+      squadPool,
+      TEAM_SQUAD_SIZE,
+      rule.maxTeamTonnage,
+      rule.randomTeamTonnageMultiplier
+    ).map((a, idx) => ({
+      id: `ql_enemy_${idx}_${Date.now().toString(36)}`,
+      mech: structuredClone(a.mech),
+      pilot: structuredClone(a.pilot),
+      teamTag: '敵ランダム隊',
+      battleOnly: false,
+      sourceLabel: 'ランダム編成',
+      isRandomGenerated: true,
+    }));
+
+    const nextRoster = [...allyEntries, ...enemyEntries];
+    const nextRule: BattlefieldRuleConfig = {
+      ...rule,
+      format: 'team_match',
+      teamUnitSize: 3,
+      randomizeSeedPerMatch: true,
+    };
+    setRoster(nextRoster);
+    setRule(nextRule);
+    startLiveMatch(nextRoster, nextRule);
   };
 
   const handleRunTournamentOrLeague = () => {
@@ -247,6 +561,14 @@ export function BattlefieldApp() {
     const teams = groupRosterIntoTeams(roster, rule.format, rule.teamUnitSize);
     if (teams.length < 2) {
       setErrorMsg('大会実行には 2 チーム以上が必要です。');
+      return;
+    }
+    const { violations } = validateTeamTonnageRules(teams, rule);
+    if (violations.length > 0) {
+      const msg = violations
+        .map((v) => `${v.teamName}(${v.totalTonnage}/${v.effectiveCap}t)`)
+        .join('、');
+      setErrorMsg(`チーム重量上限オーバーのため大会を実行できません: ${msg}`);
       return;
     }
     if (rule.format === 'short_league') {
@@ -341,6 +663,16 @@ export function BattlefieldApp() {
           <a className="cm-link-btn" href={backHref}>
             <Cpu size={15} /> 開発スタジオへ戻る
           </a>
+          <button
+            type="button"
+            className="cm-menu-btn"
+            onClick={() => setMenuOpen(true)}
+            title={`ユーザー名設定 ＆ バックアップメニュー (UUID: ${userProfile.userId})`}
+          >
+            <Menu size={16} />
+            <User size={14} />
+            <span>{userProfile.userName}</span>
+          </button>
         </div>
       </header>
 
@@ -356,21 +688,30 @@ export function BattlefieldApp() {
                 <button
                   type="button"
                   className="cm-btn-xs"
-                  onClick={() => setRoster(buildSampleRoster(4, 3))}
+                  onClick={() => {
+                    setRule((r) => ({ ...r, teamUnitSize: 3, maxTeamTonnage: 180 }));
+                    setRoster(buildSampleRoster(4, 3));
+                  }}
                 >
                   3機×4T
                 </button>
                 <button
                   type="button"
                   className="cm-btn-xs"
-                  onClick={() => setRoster(buildSampleRoster(6, 2))}
+                  onClick={() => {
+                    setRule((r) => ({ ...r, teamUnitSize: 2, maxTeamTonnage: 120 }));
+                    setRoster(buildSampleRoster(6, 2));
+                  }}
                 >
                   2機×6T
                 </button>
                 <button
                   type="button"
                   className="cm-btn-xs"
-                  onClick={() => setRoster(buildSampleRoster(2, 6))}
+                  onClick={() => {
+                    setRule((r) => ({ ...r, teamUnitSize: 6, maxTeamTonnage: 360 }));
+                    setRoster(buildSampleRoster(2, 6));
+                  }}
                 >
                   6機×2T
                 </button>
@@ -390,6 +731,109 @@ export function BattlefieldApp() {
               </div>
             </div>
 
+            <div className="cm-bf-local-bar">
+              <div className="cm-subhead">ローカル登録 ＆ ランダムマッチ (規制180t / ランダム1.2〜1.5倍許容)</div>
+              <div className="cm-bf-local-row">
+                <select
+                  aria-label="ローカル保存チーム選択"
+                  className="cm-mini-select"
+                  value={selectedLocalTeamId}
+                  onChange={(e) => setSelectedLocalTeamId(e.target.value)}
+                >
+                  {savedTeams.length === 0 ? (
+                    <option value="">保存チームなし (スタジオで作成)</option>
+                  ) : (
+                    savedTeams.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} ({t.members.length}機)
+                      </option>
+                    ))
+                  )}
+                </select>
+                <button
+                  type="button"
+                  className="cm-btn-xs"
+                  disabled={savedTeams.length === 0}
+                  onClick={handleAddLocalTeam}
+                >
+                  <Plus size={12} /> チーム追加
+                </button>
+                <button
+                  type="button"
+                  className="cm-btn-xs"
+                  onClick={handleAddRandomSquad}
+                >
+                  <Shuffle size={12} /> ランダム小隊
+                </button>
+                <button
+                  type="button"
+                  className="cm-btn-primary-xs"
+                  onClick={handleQuickLocalRandom3v3}
+                >
+                  <Swords size={12} /> 即3vs3ランダム戦
+                </button>
+              </div>
+
+              <div className="cm-bf-local-row">
+                <select
+                  aria-label="ローカル機体選択"
+                  className="cm-mini-select"
+                  value={selectedLocalMechId}
+                  onChange={(e) => setSelectedLocalMechId(e.target.value)}
+                >
+                  {savedMechs.length > 0 && (
+                    <optgroup label="自作機体">
+                      {savedMechs.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {formatMechDropdownLabel(
+                            m.chassisId,
+                            formatCustomMechName(m.baseName, m.tag)
+                          )}{' '}
+                          ({getMechChassisTonnage(m.blueprint)}t)
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <optgroup label="標準機体">
+                    {STARTER_MECHS.map((bp) => (
+                      <option key={bp.id} value={bp.id}>
+                        {formatMechDropdownLabel(bp.chassisId, bp.name)} (
+                        {getMechChassisTonnage(bp)}t)
+                      </option>
+                    ))}
+                  </optgroup>
+                </select>
+                <input
+                  type="text"
+                  className="cm-bf-tag-input"
+                  value={localTagInput}
+                  onChange={(e) => setLocalTagInput(e.target.value)}
+                  placeholder="チームタグ"
+                />
+                <button type="button" className="cm-btn-xs" onClick={handleAddLocalSingleMech}>
+                  <Plus size={12} /> 1機追加
+                </button>
+              </div>
+            </div>
+
+            {tonnageValidation.checks.length > 0 && rule.format !== 'battle_royale' && (
+              <div className="cm-bf-team-badges">
+                {tonnageValidation.checks.map((chk) => (
+                  <span
+                    key={chk.teamId}
+                    className={`cm-bf-team-badge ${
+                      !chk.allowed ? 'is-over' : chk.isRandomTeam ? 'is-random' : 'is-ok'
+                    }`}
+                  >
+                    {chk.teamName}: {chk.totalTonnage}
+                    {chk.effectiveCap > 0 ? `/${chk.effectiveCap}t` : 't'}
+                    {chk.isRandomTeam ? ' (ランダム枠)' : ''}
+                    {!chk.allowed ? ' 超過!' : ''}
+                  </span>
+                ))}
+              </div>
+            )}
+
             <div className="cm-bf-roster">
               {roster.map((entry) => (
                 <div key={entry.id} className="cm-bf-entry">
@@ -400,6 +844,7 @@ export function BattlefieldApp() {
                       </span>
                     )}
                     {entry.mech.name}
+                    <small className="cm-bf-ton"> ({getMechChassisTonnage(entry.mech)}t)</small>
                   </span>
                   <input
                     type="text"
@@ -503,6 +948,38 @@ export function BattlefieldApp() {
                     />
                   </div>
                 </label>
+                <label className="cm-select-row">
+                  <span>チーム上限</span>
+                  <select
+                    value={rule.maxTeamTonnage}
+                    onChange={(e) =>
+                      setRule({ ...rule, maxTeamTonnage: Number(e.target.value) })
+                    }
+                  >
+                    <option value={180}>180t (3機標準)</option>
+                    <option value={165}>165t (厳格)</option>
+                    <option value={200}>200t (重装)</option>
+                    <option value={120}>120t (2機用)</option>
+                    <option value={360}>360t (6機用)</option>
+                    <option value={0}>制限なし</option>
+                  </select>
+                </label>
+                <label className="cm-select-row">
+                  <span>ランダム許容</span>
+                  <select
+                    value={rule.randomTeamTonnageMultiplier}
+                    onChange={(e) =>
+                      setRule({
+                        ...rule,
+                        randomTeamTonnageMultiplier: Number(e.target.value) || 1.35,
+                      })
+                    }
+                  >
+                    <option value={1.2}>1.2倍 ({Math.round(rule.maxTeamTonnage * 1.2)}t)</option>
+                    <option value={1.35}>1.35倍 ({Math.round(rule.maxTeamTonnage * 1.35)}t)</option>
+                    <option value={1.5}>1.5倍 ({Math.round(rule.maxTeamTonnage * 1.5)}t)</option>
+                  </select>
+                </label>
                 <label className="cm-check-inline">
                   <input
                     type="checkbox"
@@ -551,7 +1028,7 @@ export function BattlefieldApp() {
               </div>
 
               <div className="cm-bf-run-btns">
-                <button type="button" className="cm-btn-primary" onClick={startLiveMatch}>
+                <button type="button" className="cm-btn-primary" onClick={() => startLiveMatch()}>
                   <Play size={15} /> ライブ対戦開始 (観戦)
                 </button>
                 <button
@@ -808,6 +1285,35 @@ export function BattlefieldApp() {
           </section>
         </div>
       </main>
+      <StudioMenuDrawer
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        appVersion={pkg.version}
+        userProfile={userProfile}
+        onSaveUserName={(raw) => {
+          const saved = saveUserProfile(raw);
+          setUserProfile(saved);
+          return saved;
+        }}
+        counts={{
+          mechs: savedMechs.length,
+          pilots: userPilots.length,
+          roms: userRoms.length,
+          teams: savedTeams.length,
+        }}
+        onBackupRestored={() => {
+          setUserProfile(loadUserProfile());
+          const nextTeams = loadSavedTeams();
+          setSavedTeams(nextTeams);
+          setSavedMechs(loadSavedCustomMechs());
+          setUserRoms(loadUserRoms());
+          setUserPilots(loadUserPilots());
+          if (nextTeams.length > 0 && !selectedLocalTeamId) {
+            setSelectedLocalTeamId(nextTeams[0].id);
+          }
+        }}
+      />
+
       {expanded2D && (
         <div
           className="cm-2d-modal-backdrop"
